@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AdaptiveBudgetController,
   advanceCreatureSimulation,
+  creatureSimulationPhase,
   advanceSentientCoarseSimulation,
   applyResourceMode,
   DEFAULT_FRAME_WORK_BUDGET,
@@ -137,7 +138,9 @@ test("telemetry interval summaries drain instead of overlapping", () => {
   const sampler = new PerformanceSampler(60);
   sampler.record({ frameMilliseconds: 10 });
   sampler.record({ frameMilliseconds: 20 });
-  assert.equal(sampler.drainSummary().averageFrameMilliseconds, 15);
+  const first = sampler.drainSummary();
+  assert.equal(first.averageFrameMilliseconds, 15);
+  assert.equal(first.frameHistogram.find((bucket) => bucket.upperBoundMilliseconds === 25)?.count, 2);
   assert.equal(sampler.size, 0);
   sampler.record({ frameMilliseconds: 30 });
   assert.equal(sampler.drainSummary().averageFrameMilliseconds, 30);
@@ -157,12 +160,29 @@ test("ordinary wildlife uses deterministic full, active, coarse, and sleep tiers
     if (step.advance) activeUpdates += 1;
   }
   assert.equal(activeUpdates, 10);
+  assert.notEqual(creatureSimulationPhase(1, "active"), creatureSimulationPhase(2, "active"));
+  assert.equal(creatureSimulationPhase(9, "active"), creatureSimulationPhase(1, "active"));
 });
 
 test("resource modes trade CPU or memory for steadier traversal", () => {
   const cpu = applyResourceMode("cpu", DEFAULT_FRAME_WORK_BUDGET);
-  assert.ok(cpu.chunkMeshSections >= 5);
-  assert.ok(cpu.liquidOperations >= 384);
+  assert.deepEqual(cpu, DEFAULT_FRAME_WORK_BUDGET, "CPU reserve must not override adaptive retreat with hard minimums");
+  const headroom = applyResourceMode("cpu", {
+    chunkGenerations: 8,
+    chunkMeshSections: 12,
+    liquidOperations: 1_024,
+    entitySteps: 1_024,
+    structureColumns: 512,
+    streamingFrameMilliseconds: 20,
+  });
+  assert.deepEqual(headroom, {
+    chunkGenerations: 2,
+    chunkMeshSections: 5,
+    liquidOperations: 384,
+    entitySteps: 256,
+    structureColumns: 64,
+    streamingFrameMilliseconds: 7.5,
+  });
   assert.deepEqual(applyResourceMode("memory", DEFAULT_FRAME_WORK_BUDGET), DEFAULT_FRAME_WORK_BUDGET);
   assert.equal(chunkRetentionPadding("auto"), 2);
   assert.equal(chunkRetentionPadding("memory"), 6);

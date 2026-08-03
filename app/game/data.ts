@@ -832,7 +832,7 @@ assertUniqueItemIds();
 export type ItemCode = number;
 export type GameMode = "builder" | "survival";
 export type Weather = "clear" | "rain";
-export type RenderLayer = "opaque" | "cutout" | "transparent" | "emissive" | "none";
+export type RenderLayer = "opaque" | "cutout" | "transparent" | "translucentSolid" | "emissive" | "none";
 export type ToolKind = "pickaxe" | "axe" | "shovel" | "sword" | "crossbow" | "spear" | "bow" | "firearm" | "staff";
 export type BlockTool = "pickaxe" | "axe" | "shovel" | "hand";
 export type EquipmentSlot = "head" | "chest" | "legs" | "feet";
@@ -1072,7 +1072,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.MushroomCap]: block(BlockId.MushroomCap, "Giant Mooncap", GIANT_MUSHROOM_TOP_TILE, GIANT_MUSHROOM_SIDE_TILE, GIANT_MUSHROOM_GILLS_TILE, 0.55, "#a94e62", "axe", 0, { shape: "mooncap", lightDampening: 15 }),
   [BlockId.Moss]: block(BlockId.Moss, "Cave Moss", 46, 46, 46, 0.35, "#4b8245", "shovel"),
   [BlockId.Gravel]: block(BlockId.Gravel, "Gravel", 47, 47, 47, 0.6, "#85817c", "shovel"),
-  [BlockId.Ice]: block(BlockId.Ice, "Ice", 48, 48, 48, 0.45, "#8fd0e2", "pickaxe", 0, { layer: "transparent" }),
+  [BlockId.Ice]: block(BlockId.Ice, "Ice", 48, 48, 48, 0.45, "#8fd0e2", "pickaxe", 0, { layer: "translucentSolid", lightDampening: 2 }),
   [BlockId.Basalt]: block(BlockId.Basalt, "Basalt", 49, 49, 49, 2.35, "#3a3437", "pickaxe", 2),
   [BlockId.Obsidian]: block(BlockId.Obsidian, "Obsidian", 50, 50, 50, 7.5, "#29213d", "pickaxe", 4),
   [BlockId.CrystalBlock]: block(BlockId.CrystalBlock, "Star Crystal Block", STAR_CRYSTAL_BLOCK_TOP_TILE, STAR_CRYSTAL_BLOCK_SIDE_TILE, STAR_CRYSTAL_BLOCK_BOTTOM_TILE, 3.2, "#61dce5", "pickaxe", 3, { layer: "emissive" }),

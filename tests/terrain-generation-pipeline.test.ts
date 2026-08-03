@@ -11,6 +11,7 @@ class FailingWorker {
   constructor() { FailingWorker.instances.push(this); }
   postMessage() {}
   terminate() {}
+  ready() { this.onmessage?.({ data: { type: "ready", protocol: 1 } } as MessageEvent); }
   fail() { this.onerror?.({} as ErrorEvent); }
 }
 
@@ -32,7 +33,8 @@ const withFakeBrowserWorker = (run: () => void) => {
 
 test("a failed generation worker releases its job to the synchronous fallback", () => {
   withFakeBrowserWorker(() => {
-    const pipeline = new TerrainGenerationPipeline(1);
+    const pipeline = new TerrainGenerationPipeline(1, 0);
+    FailingWorker.instances[0].ready();
     let failed = 0;
     assert.equal(pipeline.submit({
       namespace: "test",

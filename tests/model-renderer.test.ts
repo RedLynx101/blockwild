@@ -44,6 +44,21 @@ test("the inspector captures all four production player poses on the ground plan
   );
 });
 
+test("repeated wildlife reuse immutable primitive geometry", () => {
+  const first = createMobVisual("ridgeback", 1);
+  const second = createMobVisual("ridgeback", 2);
+  const firstMeshes: THREE.Mesh[] = [];
+  const secondMeshes: THREE.Mesh[] = [];
+  first.visual.traverse((object) => { if (object instanceof THREE.Mesh) firstMeshes.push(object); });
+  second.visual.traverse((object) => { if (object instanceof THREE.Mesh) secondMeshes.push(object); });
+  assert.equal(firstMeshes.length, secondMeshes.length);
+  assert.ok(firstMeshes.length > 8);
+  for (let index = 0; index < firstMeshes.length; index += 1) {
+    assert.equal(firstMeshes[index].geometry, secondMeshes[index].geometry);
+    assert.ok(firstMeshes[index].geometry.userData.blockwildSharedGeometry);
+  }
+});
+
 test("the inspector includes every butterfly species with runtime dimensions and colors", () => {
   for (const kind of BUTTERFLY_ORDER) {
     const spec = createButterflyInspectionSpec(kind);

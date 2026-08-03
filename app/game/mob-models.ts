@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sharedBoxGeometry } from "./shared-model-geometry";
 import { applyAdventureMobPose, createAdventureMobVisual } from "./adventure-models";
 import { applyLivingBestiaryPose, createLivingBestiaryMobVisual, LIVING_BESTIARY_VISUAL_KINDS, type LivingBestiaryVisualKind } from "./living-bestiary-models";
 import {
@@ -462,7 +463,7 @@ export function createSentientLodVisual(kind: MobKind, id: number, bounds: THREE
     basic = false,
   ) => {
     const material = basic ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    const mesh = new THREE.Mesh(sharedBoxGeometry(...size), material);
     mesh.name = `${kind}-lod-${name}`;
     mesh.position.set(...position);
     mesh.userData.mobId = id;
@@ -528,7 +529,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     part?: keyof MobVisualParts,
     name?: string,
   ) => {
-    const geometry = new THREE.BoxGeometry(...size);
+    const geometry = sharedBoxGeometry(...size);
     const mesh = new THREE.Mesh(geometry, meshMaterial);
     mesh.position.set(...position);
     mesh.name = name ?? `${kind}-${part ?? "detail"}`;

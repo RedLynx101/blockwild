@@ -1125,7 +1125,7 @@ test("Creative damage authority rejects the shared direct damage path", () => {
 });
 
 test("water and ground share world-space biome tint vertices across chunk seams", () => {
-  for (const [type, layer] of [[BlockId.Water, "transparent"], [BlockId.Grass, "opaque"]] as const) {
+  for (const [type, layer] of [[BlockId.Water, "water"], [BlockId.Grass, "opaque"]] as const) {
     const world = new ChunkWorld();
     world.reset(`VERTEX-TINT-SEAM-${type}`, undefined, { structures: false });
     const left = world.generateChunk(0, 0);
@@ -1374,7 +1374,7 @@ test("submerged waterlogged plants meet stacked water without an air seam", () =
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
   world.rebuildSection(chunk, section);
 
-  const positions = chunk.sections.get(section)?.transparent?.geometry.getAttribute("position");
+  const positions = chunk.sections.get(section)?.water?.geometry.getAttribute("position");
   assert.ok(positions, "the waterlogged plant should emit its implicit water boundary");
   const boundaryY = Array.from({ length: positions?.count ?? 0 }, (_, index) => ({
     x: positions?.getX(index) ?? Number.NaN,
@@ -1397,7 +1397,7 @@ test("waterlogged flora does not draw pale implicit-water faces against solid gr
   world.setBlock(2, -1, 2, BlockId.Stone, false, false);
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
   world.rebuildSection(chunk, section);
-  const normals = chunk.sections.get(section)?.transparent?.geometry.getAttribute("normal");
+  const normals = chunk.sections.get(section)?.water?.geometry.getAttribute("normal");
   assert.ok(normals);
   const emitted = Array.from({ length: normals?.count ?? 0 }, (_, index) => [
     normals?.getX(index) ?? 0,
@@ -2256,7 +2256,7 @@ test("flowing water renders a seven-level taper with closed step faces", () => {
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
   world.rebuildSection(chunk, section);
 
-  const positions = chunk.sections.get(section)?.transparent?.geometry.getAttribute("position");
+  const positions = chunk.sections.get(section)?.water?.geometry.getAttribute("position");
   assert.ok(positions);
   const vertices = Array.from({ length: positions?.count ?? 0 }, (_, index) => ({
     x: positions?.getX(index) ?? Number.NaN,
@@ -2335,7 +2335,7 @@ test("a late neighboring chunk urgently removes speculative water and terrain ed
   world.setBlock(15, 0, 0, BlockId.Water, false, false);
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
   world.rebuildSection(left, section);
-  assert.equal(left.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 24, "the absent neighbor initially exposes six water faces");
+  assert.equal(left.sections.get(section)?.water?.geometry.getAttribute("position").count, 24, "the absent neighbor initially exposes six water faces");
 
   const right = world.generateChunk(1, 0);
   right.blocks.fill(BlockId.Air);
@@ -2353,12 +2353,12 @@ test("a late neighboring chunk urgently removes speculative water and terrain ed
   assert.equal(world.seamPresentationPending.has(`${right.key}:${section}`), true, "the arriving section must wait for the old edge replacement");
   assert.equal(world.meshQueued.has(`${right.key}:${section}`), false, "both sides of an unresolved seam must never be presented together");
   for (let slice = 0; slice < 20; slice += 1) world.processMesh(left.key);
-  assert.equal(left.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 20, "water beside water must have no internal chunk-wall quad");
+  assert.equal(left.sections.get(section)?.water?.geometry.getAttribute("position").count, 20, "water beside water must have no internal chunk-wall quad");
   assert.equal(world.seamMeshRebuilds.has(`${left.key}:${section}`), false);
   assert.equal(world.seamPresentationPending.has(`${right.key}:${section}`), false, "installing the corrected edge must release its arriving section");
   assert.equal(world.meshQueued.has(`${right.key}:${section}`), true, "the coherent arriving section should become eligible immediately");
   for (let slice = 0; slice < 20; slice += 1) world.processMesh(right.key);
-  assert.equal(right.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 20);
+  assert.equal(right.sections.get(section)?.water?.geometry.getAttribute("position").count, 20);
   world.dispose();
 });
 
@@ -2439,13 +2439,13 @@ test("immediate edits keep unaffected consolidated render layers installed", () 
   world.setBlock(3, 0, 4, BlockId.Stone, false, true);
   world.setBlock(9, 20, 9, BlockId.Water, false, true);
   for (let guard = 0; guard < 40 && world.processConsolidation(); guard += 1) assert.ok(guard < 39);
-  const transparent = chunk.combinedMeshes.transparent;
-  assert.ok(chunk.combinedMeshes.opaque && transparent, "the fixture must begin with independently consolidated solid and water layers");
+  const water = chunk.combinedMeshes.water;
+  assert.ok(chunk.combinedMeshes.opaque && water, "the fixture must begin with independently consolidated solid and water layers");
 
   world.setBlock(3, 0, 4, BlockId.Air, true, true);
 
   assert.equal(chunk.combinedMeshes.opaque, undefined, "the edited opaque layer must be detached immediately");
-  assert.equal(chunk.combinedMeshes.transparent, transparent, "an unrelated water layer must stay consolidated and submitted once");
+  assert.equal(chunk.combinedMeshes.water, water, "an unrelated water layer must stay consolidated and submitted once");
   world.dispose();
 });
 

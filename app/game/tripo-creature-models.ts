@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sharedBoxGeometry } from "./shared-model-geometry";
 
 type Parts = Record<"legs" | "wings" | "arms" | "head" | "body", THREE.Object3D[]>;
 
@@ -18,7 +19,7 @@ function box(
   position: readonly [number, number, number],
   name: string,
 ) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+  const mesh = new THREE.Mesh(sharedBoxGeometry(...size), material);
   mesh.position.set(...position);
   mesh.name = name;
   parent.add(mesh);

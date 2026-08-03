@@ -55,6 +55,13 @@ export function advanceCreatureSimulation(tier: CreatureSimulationTier, accumula
   return { advance: true, elapsedSeconds: next, accumulator: Math.max(0, next - stepSeconds) } as const;
 }
 
+/** Stable phase offsets prevent every throttled creature waking on one frame. */
+export function creatureSimulationPhase(entityId: number, tier: Extract<CreatureSimulationTier, "active" | "coarse">) {
+  const step = tier === "active" ? CREATURE_ACTIVE_STEP_SECONDS : CREATURE_COARSE_STEP_SECONDS;
+  const slot = Math.abs(Math.trunc(entityId)) % 8;
+  return slot / 8 * step;
+}
+
 export function sentientSimulationTier(input: Readonly<{
   distance: number;
   simulationRadius: number;
@@ -169,7 +176,10 @@ export type PerformanceSummary = Readonly<{
   peakDrawCalls: number;
   peakGeometries: number;
   peakTextures: number;
+  frameHistogram: readonly Readonly<{ upperBoundMilliseconds: number; count: number }>[];
 }>;
+
+export const FRAME_HISTOGRAM_BOUNDS_MS = Object.freeze([8, 12, 16.7, 25, 33.3, 50, 75, 100, 150, 250, 500, 1_000, 5_000, 60_000]);
 
 const percentile = (sorted: readonly number[], fraction: number) => {
   if (sorted.length === 0) return 0;
@@ -264,6 +274,10 @@ export class PerformanceSampler {
       peakDrawCalls: max((sample) => sample.drawCalls ?? 0),
       peakGeometries: max((sample) => sample.geometries ?? 0),
       peakTextures: max((sample) => sample.textures ?? 0),
+      frameHistogram: FRAME_HISTOGRAM_BOUNDS_MS.map((upperBoundMilliseconds) => ({
+        upperBoundMilliseconds,
+        count: frames.filter((frame) => frame <= upperBoundMilliseconds).length,
+      })),
     };
   }
 
@@ -281,6 +295,7 @@ export type LongAnimationFrameSummary = Readonly<{
   totalDurationMilliseconds: number;
   peakDurationMilliseconds: number;
   totalBlockingDurationMilliseconds: number;
+  topScripts: readonly Readonly<{ key: string; durationMilliseconds: number; blockingDurationMilliseconds: number; occurrences: number }>[];
 }>;
 
 /** Browser-native long-frame observer. Unsupported engines remain a clean no-op. */
@@ -290,6 +305,7 @@ export class LongAnimationFrameSampler {
   private totalDurationMilliseconds = 0;
   private peakDurationMilliseconds = 0;
   private totalBlockingDurationMilliseconds = 0;
+  private scripts = new Map<string, { durationMilliseconds: number; blockingDurationMilliseconds: number; occurrences: number }>();
   readonly supported: boolean;
 
   constructor() {
@@ -299,11 +315,23 @@ export class LongAnimationFrameSampler {
     try {
       this.observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
-          const blockingDuration = Number((entry as PerformanceEntry & { blockingDuration?: number }).blockingDuration ?? 0);
+          const typedEntry = entry as PerformanceEntry & {
+            blockingDuration?: number;
+            scripts?: readonly Readonly<{ sourceURL?: string; sourceFunctionName?: string; invoker?: string; duration?: number; forcedStyleAndLayoutDuration?: number; pauseDuration?: number }>[];
+          };
+          const blockingDuration = Number(typedEntry.blockingDuration ?? 0);
           this.count += 1;
           this.totalDurationMilliseconds += Math.max(0, entry.duration);
           this.peakDurationMilliseconds = Math.max(this.peakDurationMilliseconds, entry.duration);
           this.totalBlockingDurationMilliseconds += Math.max(0, blockingDuration);
+          for (const script of typedEntry.scripts ?? []) {
+            const key = `${script.sourceFunctionName || script.invoker || "anonymous"}@${script.sourceURL || "inline"}`.slice(0, 240);
+            const current = this.scripts.get(key) ?? { durationMilliseconds: 0, blockingDurationMilliseconds: 0, occurrences: 0 };
+            current.durationMilliseconds += Math.max(0, Number(script.duration ?? 0));
+            current.blockingDurationMilliseconds += Math.max(0, Number(script.forcedStyleAndLayoutDuration ?? 0) + Number(script.pauseDuration ?? 0));
+            current.occurrences += 1;
+            this.scripts.set(key, current);
+          }
         }
       });
       this.observer.observe({ type: "long-animation-frame", buffered: true });
@@ -321,11 +349,16 @@ export class LongAnimationFrameSampler {
       totalDurationMilliseconds: this.totalDurationMilliseconds,
       peakDurationMilliseconds: this.peakDurationMilliseconds,
       totalBlockingDurationMilliseconds: this.totalBlockingDurationMilliseconds,
+      topScripts: [...this.scripts.entries()]
+        .map(([key, value]) => ({ key, ...value }))
+        .sort((a, b) => b.durationMilliseconds - a.durationMilliseconds)
+        .slice(0, 8),
     });
     this.count = 0;
     this.totalDurationMilliseconds = 0;
     this.peakDurationMilliseconds = 0;
     this.totalBlockingDurationMilliseconds = 0;
+    this.scripts.clear();
     return result;
   }
 
@@ -343,13 +376,15 @@ export type FrameWorkBudget = Readonly<{
 
 export function applyResourceMode(mode: ResourceMode, adaptive: FrameWorkBudget): FrameWorkBudget {
   if (mode !== "cpu") return adaptive;
+  // CPU reserve is an allowance, never a floor. The adaptive controller must
+  // remain free to retreat to its 2 ms safety budget when frames are late.
   return {
-    chunkGenerations: Math.max(2, adaptive.chunkGenerations),
-    chunkMeshSections: Math.max(5, adaptive.chunkMeshSections),
-    liquidOperations: Math.max(384, adaptive.liquidOperations),
-    entitySteps: Math.max(256, adaptive.entitySteps),
-    structureColumns: Math.max(64, adaptive.structureColumns),
-    streamingFrameMilliseconds: Math.max(7.5, adaptive.streamingFrameMilliseconds),
+    chunkGenerations: Math.min(2, adaptive.chunkGenerations),
+    chunkMeshSections: Math.min(5, adaptive.chunkMeshSections),
+    liquidOperations: Math.min(384, adaptive.liquidOperations),
+    entitySteps: Math.min(256, adaptive.entitySteps),
+    structureColumns: Math.min(64, adaptive.structureColumns),
+    streamingFrameMilliseconds: Math.min(7.5, adaptive.streamingFrameMilliseconds),
   };
 }
 

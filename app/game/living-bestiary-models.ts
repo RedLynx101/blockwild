@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sharedBoxGeometry, sharedLivingGeometry } from "./shared-model-geometry";
 import { MOB_DEFS, type LegendaryCreatureKind, type LivingRosterKind, type MobKind, type SummonedCreatureKind } from "./mobs";
 import type { MobVisual, MobVisualParts } from "./mob-models";
 
@@ -57,27 +58,7 @@ function livingShapeFor(name: string): LivingShape {
 }
 
 function livingGeometry(shape: LivingShape) {
-  if (shape === "hard") return new THREE.BoxGeometry(1, 1, 1, 2, 2, 2);
-  if (shape === "gem") return new THREE.OctahedronGeometry(.5, 1);
-  if (shape === "ring") return new THREE.TorusGeometry(.34, .16, 6, 14);
-  if (shape === "joint") return new THREE.SphereGeometry(.5, 8, 5);
-  if (shape === "limb-y" || shape === "limb-x" || shape === "limb-z") {
-    // Eight-sided tapered bones preserve Blockwild's readable faceting while
-    // giving limbs a clear direction and load path instead of an oval blob.
-    const geometry = new THREE.CylinderGeometry(.38, .5, 1, 8, 2, false);
-    if (shape === "limb-x") geometry.rotateZ(Math.PI / 2);
-    if (shape === "limb-z") geometry.rotateX(Math.PI / 2);
-    return geometry;
-  }
-  if (shape === "spike-up") return new THREE.ConeGeometry(.5, 1, 8, 2);
-  if (shape === "spike-forward") {
-    const geometry = new THREE.ConeGeometry(.5, 1, 8, 2);
-    geometry.rotateX(-Math.PI / 2);
-    return geometry;
-  }
-  // A deliberately modest segment count keeps herd rendering affordable while
-  // replacing the cuboid anatomy with a softly faceted, voxel-adjacent style.
-  return new THREE.SphereGeometry(.5, 10, 6);
+  return sharedLivingGeometry(shape);
 }
 
 function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
@@ -121,7 +102,7 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
   const add = (parent: THREE.Object3D, size: [number, number, number], material: THREE.Material, position: [number, number, number], name: string, part?: keyof MobVisualParts, shapeOverride?: LivingShape) => {
     const authoredShape = shapeOverride ?? livingShapeFor(name);
     const resolvedShape: LivingShape = cubicStorybook ? "hard" : authoredShape;
-    const mesh = new THREE.Mesh(cubicStorybook ? new THREE.BoxGeometry(1, 1, 1) : livingGeometry(authoredShape), material);
+    const mesh = new THREE.Mesh(cubicStorybook ? sharedBoxGeometry() : livingGeometry(authoredShape), material);
     mesh.scale.set(...size);
     mesh.position.set(...position);
     mesh.name = `${kind}-${name}`;

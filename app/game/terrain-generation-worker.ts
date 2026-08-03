@@ -3,19 +3,22 @@ import type { TerrainGenerationRequest } from "./terrain-generation-pipeline";
 
 type Request = Readonly<{ id: number; request: TerrainGenerationRequest }>;
 
+self.postMessage({ type: "ready", protocol: 1 });
+
 self.onmessage = (event: MessageEvent<Request>) => {
   const { id, request } = event.data;
-  const world = new ChunkWorld();
-  const savedEdits = request.edits.length
-    ? { [request.key]: request.edits.map(([index, type]) => [index, type] as [number, number]) }
-    : undefined;
-  world.reset(request.seedText, savedEdits, request.generationOptions as Partial<WorldGenerationOptions>);
-  const chunk = world.generateChunk(request.cx, request.cz);
-  const structureMarkers = [...world.structureMarkers.entries()].filter(([, marker]) => (
-    Math.floor(marker.position.x / CHUNK_SIZE) === chunk.cx
-    && Math.floor(marker.position.z / CHUNK_SIZE) === chunk.cz
-  ));
-  const result = {
+  try {
+    const world = new ChunkWorld();
+    const savedEdits = request.edits.length
+      ? { [request.key]: request.edits.map(([index, type]) => [index, type] as [number, number]) }
+      : undefined;
+    world.reset(request.seedText, savedEdits, request.generationOptions as Partial<WorldGenerationOptions>);
+    const chunk = world.generateChunk(request.cx, request.cz);
+    const structureMarkers = [...world.structureMarkers.entries()].filter(([, marker]) => (
+      Math.floor(marker.position.x / CHUNK_SIZE) === chunk.cx
+      && Math.floor(marker.position.z / CHUNK_SIZE) === chunk.cz
+    ));
+    const result = {
     namespace: request.namespace,
     key: chunk.key,
     cx: chunk.cx,
@@ -29,10 +32,13 @@ self.onmessage = (event: MessageEvent<Request>) => {
     lightIndices: [...chunk.lightIndices],
     leafIndices: [...chunk.leafIndices],
     structureMarkers,
-  };
-  world.chunks.delete(chunk.key);
-  world.group.remove(chunk.group);
-  world.dispose();
-  const transfer = [result.blocks.buffer, result.heightmap.buffer, result.biomes.buffer, result.sectionBlockCounts.buffer, result.skyTops.buffer, result.light.buffer];
-  self.postMessage({ id, result }, { transfer });
+    };
+    world.chunks.delete(chunk.key);
+    world.group.remove(chunk.group);
+    world.dispose();
+    const transfer = [result.blocks.buffer, result.heightmap.buffer, result.biomes.buffer, result.sectionBlockCounts.buffer, result.skyTops.buffer, result.light.buffer];
+    self.postMessage({ type: "result", id, result }, { transfer });
+  } catch (error) {
+    self.postMessage({ type: "task-error", id, message: error instanceof Error ? error.message : String(error) });
+  }
 };

@@ -12,6 +12,8 @@ import {
   type LiquidWorldAdapter,
   type SwimmerState,
 } from "../app/game/liquids.ts";
+import { BlockId } from "../app/game/data.ts";
+import { ChunkWorld, voxelInterfaceFaceOwner } from "../app/game/world.ts";
 
 const key = (position: LiquidPosition) => `${position.x},${position.y},${position.z}`;
 
@@ -100,6 +102,22 @@ test("water animation is periodic, spatially varied, and seam-safe", () => {
   assert.ok(Math.abs(sample.heightOffset) < 0.04);
   assert.ok(Math.abs(sample.uvOffset.u) <= 0.018);
   assert.ok(Math.abs(sample.uvOffset.v) <= 0.014);
+});
+
+test("ice and water share one deterministic interface owner", () => {
+  assert.equal(voxelInterfaceFaceOwner(BlockId.Ice, BlockId.Water), "current");
+  assert.equal(voxelInterfaceFaceOwner(BlockId.Water, BlockId.Ice), "neighbor");
+  assert.equal(voxelInterfaceFaceOwner(BlockId.Water, BlockId.Water), "none");
+  assert.equal(voxelInterfaceFaceOwner(BlockId.Ice, BlockId.Ice), "none");
+});
+
+test("water animation advances without re-uploading the block atlas", () => {
+  const world = new ChunkWorld();
+  const atlasVersion = world.atlas.version;
+  world.updateWaterAnimation(120);
+  world.updateWaterAnimation(240);
+  assert.equal(world.atlas.version, atlasVersion);
+  world.dispose();
 });
 
 test("swimming drains oxygen, applies drowning ticks, and boosts a same-level shore exit", () => {

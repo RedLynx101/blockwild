@@ -99,6 +99,30 @@ An automated 431.11-block Chromium route followed by a 20-second stop exercised 
 
 Use the same hardware and settings as `2026-07-21T18-51-21-933Z`, traverse a similar route, break grass and ordinary blocks, fell several trees, and include a settled 20-second stop. The acceptance readout is: no directional tree-fall darkness; current chunk never missing; p95/p99 and long-frame ratio no worse; visible action response within one presented frame; materially fewer visible section sources and final terrain submissions; old valid nearby work no longer accumulating without bound; and no regression in merge submissions, transfer bytes, stale merges, or geometry churn per minute.
 
+## 2026-08-03 render-object, worker, and ice-media pass
+
+The supplied `2026-08-03T18-44-34-637Z` schema-v2 capture covered 452.79 blocks over 145.26 seconds. It averaged 43.52 ms/frame (about 23 FPS), with 97.84% long frames, 18.11 ms measured active CPU, 8.75 ms chunk work, 4.35 ms render submission, and 3.56 ms mob simulation. Its generation worker submitted two jobs, failed both, and disabled itself. Final scene pressure reached 1,277 draws, 2,007 geometries, and 439,182 triangles; the run created 1,705 and disposed 841 terrain geometries while the oldest nearby job reached 149.1 seconds.
+
+This pass makes CPU reserve an upper allowance instead of a hard streaming floor; restores a versioned, bounded 2-4-worker graph with structured failures and fallback; shares immutable creature geometry; adds one instanced distant-wildlife batch per species; moves water animation from whole-atlas CPU uploads to a shader phase; separates water from depth-writing translucent ice; and captures true session histograms plus complete post-render/HUD timing. Autosave runs through bounded idle work and the visual HUD/catalog paths are rate-limited independently.
+
+The exact production browser completed 29-31 generation jobs and seven terrain-buffer jobs in each frozen-lake viewpoint with two ready generation workers, zero failures, and zero restarts. Its manually reviewed above-water and underwater scenes have no doubled water/ice interface, striped overlap, air seam, or page/console error artifact. SwiftShader renderer counts (roughly 100 peak draws and 60 geometries in the isolated scene) are useful structural evidence but are not a replacement for the player's hardware route.
+
+The new deterministic scenario suite reports:
+
+| Scenario | Average | p95 | Maximum |
+| --- | ---: | ---: | ---: |
+| Stationary settled | 6.70 ms | 9.71 ms | 51.41 ms |
+| Continuous walk | 6.55 ms | 9.08 ms | 15.52 ms |
+| Continuous sprint | 6.11 ms | 7.73 ms | 31.53 ms |
+| Dense 360-degree traversal | 6.66 ms | 9.87 ms | 19.05 ms |
+| Frozen boundary edits | 12.54 ms | 22.25 ms | 22.55 ms |
+| Settlement traversal | 6.98 ms | 11.30 ms | 95.72 ms |
+| Large-cavern traversal | 7.05 ms | 10.65 ms | 33.09 ms |
+| Player-edit burst | 6.12 ms | 9.78 ms | 11.95 ms |
+| 100-creature LOD/broadphase | 0.067 ms | 0.125 ms | 4.30 ms |
+
+The 100-creature case ends as one active batch with 128 allocated instance slots. These Node results establish deterministic CPU and queue behavior; a comparable schema-v3 player capture remains required before claiming the 1080p FPS, true session p95/p99, GPU heap, or ten-minute hardware acceptance targets.
+
 ## Commands
 
 ```text
@@ -107,4 +131,5 @@ npm run benchmark:player-edits
 npm run benchmark:streaming
 npm run benchmark:simulation
 npm run benchmark:spatial
+npm run benchmark:performance-scenarios
 ```

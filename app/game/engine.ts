@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { isSharedModelGeometry, sharedModelGeometryDiagnostics } from "./shared-model-geometry";
+import { CreatureLodBatcher, type CreatureLodInstance } from "./creature-lod-batcher";
 import { SynthAudio, type SampleKind } from "./audio";
 import { BasicWorldRenderer } from "./basic-world-renderer";
 import {
@@ -565,6 +567,7 @@ import {
   applyResourceMode,
   chunkRetentionPadding,
   creatureSimulationTier,
+  creatureSimulationPhase,
   sentientSimulationTier,
   type SentientSimulationTier,
   type CreatureSimulationTier,
@@ -1668,6 +1671,7 @@ type MobEntity = {
   sentientSimulationAccumulator: number;
   simulationTier: CreatureSimulationTier;
   simulationAccumulator: number;
+  renderLodActive: boolean;
   parts: Record<string, THREE.Object3D[]>;
   health: number;
   maxHealth: number;
@@ -2095,8 +2099,8 @@ export function survivalFoodUsagePerSecond(
 export function regenerationFoodUsage(survivalMultiplier = 1) {
   return 0.35 * FOOD_USAGE_MULTIPLIER / Math.max(0.01, survivalMultiplier);
 }
-/** Navigation and other motion-sensitive HUD elements render at roughly 29 Hz. */
-export const HUD_VISUAL_REFRESH_MS = 35;
+/** Navigation and other motion-sensitive HUD elements render at 20 Hz. */
+export const HUD_VISUAL_REFRESH_MS = 50;
 /** Open menus animate progress smoothly without rebuilding the full React tree every frame. */
 export const HUD_OVERLAY_REFRESH_MS = 100;
 /**
@@ -3943,6 +3947,7 @@ export class VoxelEngine {
   butterflies: ButterflySystem;
   ambienceGroup = new THREE.Group();
   creatureGroup = new THREE.Group();
+  creatureLodBatcher = new CreatureLodBatcher();
   dropGroup = new THREE.Group();
   boatGroup = new THREE.Group();
   exhibitGroup = new THREE.Group();
@@ -4232,7 +4237,10 @@ export class VoxelEngine {
   fallCuePlayed = false;
   wasInWater = false;
   lastHudTime = 0;
+  lastBestiarySnapshotTime = 0;
   saveTimer = 0;
+  autoSaveIdleHandle = 0;
+  autoSaveUsesIdleCallback = false;
   autoSaveAccumulator = 0;
   particles: Particle[] = [];
   leafParticles: LeafParticleVisual[] = [];
@@ -4489,7 +4497,7 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
     });
-    this.scene.add(this.camera, this.world.group, this.basicWorldRenderer.group, this.ambienceGroup, this.creatureGroup, this.dropGroup, this.boatGroup, this.exhibitGroup, this.projectileGroup);
+    this.scene.add(this.camera, this.world.group, this.basicWorldRenderer.group, this.ambienceGroup, this.creatureGroup, this.creatureLodBatcher.group, this.dropGroup, this.boatGroup, this.exhibitGroup, this.projectileGroup);
     this.scene.add(this.butterflies.group);
     this.localPlayerModel.group.visible = false;
     this.scene.add(this.localPlayerModel.group);
@@ -5498,6 +5506,35 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
+  /** Exact-runtime frozen shoreline spanning a real chunk seam. */
+  primeIceWaterAudit(underwater = false) {
+    this.world.setRenderDistance(4);
+    this.clearEntities();
+    const centerZ = Math.round(this.position.z);
+    const seamX = (Math.floor(this.position.x / CHUNK_SIZE) + 1) * CHUNK_SIZE;
+    const floorY = Math.round(this.position.y - 0.51) + 2;
+    const edits: BlockEdit[] = [];
+    for (let x = seamX - 14; x <= seamX + 14; x += 1) for (let z = centerZ - 14; z <= centerZ + 14; z += 1) {
+      edits.push({ x, y: floorY - 3, z, type: BlockId.Stone });
+      const iceShelf = z < centerZ - 2 || (x < seamX - 3 && z < centerZ + 4) || (x > seamX + 5 && z < centerZ + 1);
+      for (let y = floorY - 2; y <= floorY; y += 1) edits.push({ x, y, z, type: BlockId.Water });
+      edits.push({ x, y: floorY + 1, z, type: iceShelf ? BlockId.Ice : BlockId.Water });
+      for (let y = floorY + 2; y <= floorY + 8; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+    }
+    this.world.setBlocksBatch(edits, true, true);
+    // The two deterministic viewpoints exercise the same chunk-spanning
+    // interface from above and from beneath the frozen shelf.
+    this.creativeFlying = underwater;
+    this.position.set(seamX, underwater ? floorY - 0.2 : floorY + 2.51, underwater ? centerZ + 7 : centerZ - 11);
+    this.spawn.copy(this.position);
+    this.velocity.set(0, 0, 0);
+    this.yaw = underwater ? 0 : Math.PI;
+    this.pitch = underwater ? 0.08 : -0.22;
+    this.worldTime = 0.5;
+    this.visualWorldTime = this.worldTime;
+    this.emitHud(true);
+  }
+
   /** Deterministic submerged meadow for exact-runtime ocean-flora review. */
   primeOceanFloraAudit() {
     this.world.setRenderDistance(5);
@@ -6407,12 +6444,21 @@ export class VoxelEngine {
         userAgent: typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
         logicalProcessors: typeof navigator === "undefined" ? null : navigator.hardwareConcurrency,
         deviceMemoryGiB: navigatorMemory ?? null,
+        resourceMode: this.settings.resourceMode,
         pixelRatio: this.renderPixelRatio,
+        nativePixelRatio: typeof window === "undefined" ? null : window.devicePixelRatio,
+        canvasPixels: { width: this.renderer.domElement.width, height: this.renderer.domElement.height },
+        visibility: typeof document === "undefined" ? "unknown" : document.visibilityState,
+        fullscreen: this.fullscreen,
         webgl2: this.renderer.capabilities.isWebGL2,
       },
       performance: this.telemetryIntervalSampler.drainSummary(),
       longAnimationFrames: this.longAnimationFrameSampler.drain(),
       gpuTimingSupported: this.gpuTimer.supported,
+      gpuTiming: {
+        supported: this.gpuTimer.supported,
+        reason: this.gpuTimer.supported ? null : "EXT_disjoint_timer_query_webgl2 unavailable or disabled by the browser/GPU",
+      },
       renderer: {
         drawCalls: this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,
@@ -6420,6 +6466,7 @@ export class VoxelEngine {
         lines: this.renderer.info.render.lines,
         geometries: this.renderer.info.memory.geometries,
         textures: this.renderer.info.memory.textures,
+        sharedModelGeometries: sharedModelGeometryDiagnostics().geometries,
       },
       world: {
         loadedChunks: this.world.loadedCount,
@@ -6438,6 +6485,7 @@ export class VoxelEngine {
         projectiles: this.projectiles.length,
         boats: this.boats.size,
         sleepingCreatures: this.sleepingCreatures.length,
+        renderLod: this.creatureLodBatcher.diagnostics(),
         simulationTiers: this.mobs.reduce<Record<CreatureSimulationTier, number>>((counts, mob) => {
           counts[mob.simulationTier] += 1;
           return counts;
@@ -25391,6 +25439,48 @@ export class VoxelEngine {
     mob.sentientLod.visible = tier === "coarse";
   }
 
+  updateCreatureRenderLods() {
+    const instances: CreatureLodInstance[] = [];
+    for (const mob of this.mobs) {
+      if (mob.definition.sentient) continue;
+      const distance = Math.hypot(this.position.x - mob.group.position.x, this.position.z - mob.group.position.z);
+      const protectedPresentation = this.targetMob === mob
+        || this.activePet === mob
+        || mob.id === this.mountedCreatureId
+        || this.leadAnchors.has(mob.id)
+        || Boolean(mob.dragonState || mob.legendaryEncounterId || mob.primeAnchorId || mob.groundedSummonLineageId)
+        || mob.persistentPoiResident
+        || mob.creatureTamed
+        || Boolean(mob.creatureOwnerId)
+        || mob.hurtTimer > 0
+        || mob.fleeTimer > 0
+        || (mob.hostile && distance < 80);
+      const useLod = mob.group.visible && distance >= 48 && !protectedPresentation;
+      mob.renderLodActive = useLod;
+      mob.visual.visible = !useLod;
+      if (!useLod) continue;
+      const authoredScale = clamp(Number(mob.visual.userData.authoredScale) || 1, 0.1, 2);
+      const scale = mob.visual.scale.x / authoredScale;
+      const height = Math.max(0.16, mob.definition.height * scale);
+      const width = Math.max(0.16, mob.definition.radius * 2 * scale);
+      const depth = width * (mob.definition.aquatic ? 1.55 : 0.9);
+      instances.push({
+        kind: mob.kind,
+        color: mob.definition.colors[0],
+        position: {
+          x: mob.group.position.x,
+          y: mob.group.position.y - mob.definition.footOffset * scale,
+          z: mob.group.position.z,
+        },
+        yaw: mob.group.rotation.y,
+        width,
+        height,
+        depth,
+      });
+    }
+    this.creatureLodBatcher.update(instances);
+  }
+
   /** Scale around the creature's original foot plane, never around its belly. */
   applyMobScale(mob: MobEntity, scale: number) {
     const safeScale = clamp(scale, mob.leviathanGrowth ? 0.08 : 0.25, 3.2);
@@ -25569,7 +25659,7 @@ export class VoxelEngine {
     const mob: MobEntity = {
       id, specimenId, kind, name: options.name?.trim() || primeProfile?.name || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, presentationRoot, visual,
       sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0,
-      simulationTier: "full", simulationAccumulator: 0, parts,
+      simulationTier: "full", simulationAccumulator: 0, renderLodActive: false, parts,
       health: options.health ?? dragonState?.health ?? petState?.health ?? ordinaryMaximumHealth,
       maxHealth: dragonState?.maxHealth ?? petState?.maxHealth ?? ordinaryMaximumHealth,
       damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage * creatureOutputMultiplier(profile.stats, progression.level), angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
@@ -28625,7 +28715,11 @@ export class VoxelEngine {
           simulationRadius: followerSlot ? Math.max(simulationRadius, distance) : simulationRadius,
           requiresFullDetail,
         });
+        const previousTier = mob.simulationTier;
         mob.simulationTier = tier;
+        if (previousTier === "full" && (tier === "active" || tier === "coarse")) {
+          mob.simulationAccumulator = creatureSimulationPhase(mob.id, tier);
+        }
         const step = advanceCreatureSimulation(tier, mob.simulationAccumulator, dt);
         mob.simulationAccumulator = step.accumulator;
         if (!step.advance) continue;
@@ -29889,7 +29983,7 @@ export class VoxelEngine {
   disposeObject(root: THREE.Object3D) {
     root.traverse((object) => {
       const renderable = object as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
-      renderable.geometry?.dispose();
+      if (!isSharedModelGeometry(renderable.geometry)) renderable.geometry?.dispose();
       if (!renderable.material) return;
       const materials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
       for (const material of materials) material.dispose();
@@ -31227,6 +31321,7 @@ export class VoxelEngine {
         mobSimulationMilliseconds = performance.now() - mobSimulationStartedAt;
         this.updateRemotePlayerMobDamage();
       }
+      this.updateCreatureRenderLods();
       this.updateLeads();
       if (!multiplayerGuest) this.updateStructureSpawns(dt);
       this.smallEntityPositions.length = 0;
@@ -31272,11 +31367,11 @@ export class VoxelEngine {
       gpuMilliseconds = this.gpuTimer.poll() ?? gpuMilliseconds;
     }
     const renderSubmissionMilliseconds = Math.max(0, performance.now() - renderStartedAt);
-    this.lastPresentedFrameTime = performance.now();
+    const renderCompletedAt = performance.now();
+    this.lastPresentedFrameTime = renderCompletedAt;
     this.resetLookFrameBudget();
-    const sample = {
+    const sampleBase = {
       frameMilliseconds: rawDt * 1000,
-      activeCpuMilliseconds: Math.max(0, performance.now() - activeFrameStartedAt),
       simulationMilliseconds,
       mobSimulationMilliseconds,
       chunkWorkMilliseconds,
@@ -31294,8 +31389,6 @@ export class VoxelEngine {
       geometries: this.renderer.info.memory.geometries,
       textures: this.renderer.info.memory.textures,
     } as const;
-    this.performanceSampler.record(sample);
-    this.telemetryIntervalSampler.record(sample);
     this.performanceReportTimer += dt;
     if (this.performanceReportTimer >= 1.5) {
       this.performanceReportTimer = 0;
@@ -31313,10 +31406,18 @@ export class VoxelEngine {
       this.autoSaveAccumulator += dt;
       if (this.autoSaveAccumulator >= 30) {
         if (this.fallingTrees.length) this.autoSaveAccumulator = 29;
-        else { this.autoSaveAccumulator = 0; this.saveNow(false); }
+        else { this.autoSaveAccumulator = 0; this.scheduleAutoSave(); }
       }
     }
     this.emitHud(false, now);
+    const frameWorkCompletedAt = performance.now();
+    const sample = {
+      ...sampleBase,
+      activeCpuMilliseconds: Math.max(0, frameWorkCompletedAt - activeFrameStartedAt),
+      postRenderMilliseconds: Math.max(0, frameWorkCompletedAt - renderCompletedAt),
+    } as const;
+    this.performanceSampler.record(sample);
+    this.telemetryIntervalSampler.record(sample);
     this.animationFrame = requestAnimationFrame(this.animate);
   };
 
@@ -32280,10 +32381,13 @@ export class VoxelEngine {
         reloading: this.rangedReloadItem === selectedSlot.item,
       }
       : null;
-    const bestiarySignature = bestiaryProgressSignature(this.bestiary);
-    if (!this.hudBestiarySnapshot || bestiarySignature !== this.hudBestiarySignature) {
-      this.hudBestiarySignature = bestiarySignature;
-      this.hudBestiarySnapshot = Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])) as BestiaryProgress;
+    if (!this.hudBestiarySnapshot || now - this.lastBestiarySnapshotTime >= 500) {
+      this.lastBestiarySnapshotTime = now;
+      const bestiarySignature = bestiaryProgressSignature(this.bestiary);
+      if (!this.hudBestiarySnapshot || bestiarySignature !== this.hudBestiarySignature) {
+        this.hudBestiarySignature = bestiarySignature;
+        this.hudBestiarySnapshot = Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])) as BestiaryProgress;
+      }
     }
     const lighting = this.world.lightingProbeAt(this.position.x, this.position.y + 1, this.position.z);
     this.events.onHud({
@@ -32626,6 +32730,29 @@ export class VoxelEngine {
     this.events.onToast(weather === "rain" ? "A rainstorm rolls across the wild." : "The clouds begin to clear.");
   }
 
+  /** Keeps periodic serialization/storage commits out of the animation-frame call stack. */
+  scheduleAutoSave() {
+    if (!this.persistent || this.autoSaveIdleHandle) return;
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const commit = () => {
+      this.autoSaveIdleHandle = 0;
+      this.autoSaveUsesIdleCallback = false;
+      if (this.disposed || !this.persistent) return;
+      if (this.fallingTrees.length) {
+        this.autoSaveAccumulator = Math.max(this.autoSaveAccumulator, 29);
+        return;
+      }
+      this.saveNow(false);
+    };
+    if (idleWindow.requestIdleCallback) {
+      this.autoSaveUsesIdleCallback = true;
+      this.autoSaveIdleHandle = idleWindow.requestIdleCallback(commit, { timeout: 2_000 });
+    } else this.autoSaveIdleHandle = window.setTimeout(commit, 0);
+  }
+
   saveSoon(delayMilliseconds = 2_500) {
     if (!this.persistent) return;
     window.clearTimeout(this.saveTimer);
@@ -32778,6 +32905,13 @@ export class VoxelEngine {
   saveNow(notify = true) {
     if (!this.persistent) return;
     window.clearTimeout(this.saveTimer);
+    if (this.autoSaveIdleHandle) {
+      const idleWindow = window as Window & { cancelIdleCallback?: (handle: number) => void };
+      if (this.autoSaveUsesIdleCallback) idleWindow.cancelIdleCallback?.(this.autoSaveIdleHandle);
+      else window.clearTimeout(this.autoSaveIdleHandle);
+      this.autoSaveIdleHandle = 0;
+      this.autoSaveUsesIdleCallback = false;
+    }
     if (this.fallingTrees.length) this.settleAllFallingTrees();
     const save = this.serialize();
     try {
@@ -32808,8 +32942,15 @@ export class VoxelEngine {
     this.unlockFullscreenEscape();
     this.saveNow(false);
     this.worldStorage.dispose();
+    this.creatureLodBatcher.dispose();
     cancelAnimationFrame(this.animationFrame);
     window.clearTimeout(this.saveTimer);
+    if (this.autoSaveIdleHandle) {
+      const idleWindow = window as Window & { cancelIdleCallback?: (handle: number) => void };
+      if (this.autoSaveUsesIdleCallback) idleWindow.cancelIdleCallback?.(this.autoSaveIdleHandle);
+      else window.clearTimeout(this.autoSaveIdleHandle);
+      this.autoSaveIdleHandle = 0;
+    }
     this.unbindEvents();
     this.resizeObserver?.disconnect();
     this.audio.dispose();

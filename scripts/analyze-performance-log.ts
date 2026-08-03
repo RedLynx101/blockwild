@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 
-type Summary = Record<string, number | null | undefined> & Readonly<{ sampleCount?: number }>;
+type FrameHistogramBucket = Readonly<{ upperBoundMilliseconds: number; count: number }>;
+type Summary = Record<string, number | null | readonly FrameHistogramBucket[] | undefined> & Readonly<{
+  sampleCount?: number;
+  frameHistogram?: readonly FrameHistogramBucket[];
+}>;
 type Snapshot = Readonly<{
   performance?: Summary;
   renderer?: Record<string, number>;
@@ -30,6 +34,20 @@ const nestedNumber = (sample: Snapshot | undefined, path: readonly string[]) => 
   for (const key of path) value = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
   return number(value);
 };
+const mergedHistogram = new Map<number, number>();
+let histogramSamples = 0;
+for (const sample of samples) {
+  const histogram = sample.performance?.frameHistogram;
+  if (!Array.isArray(histogram)) continue;
+  histogramSamples += number(sample.performance?.sampleCount);
+  for (const bucket of histogram) mergedHistogram.set(bucket.upperBoundMilliseconds, (mergedHistogram.get(bucket.upperBoundMilliseconds) ?? 0) + bucket.count);
+}
+const histogramPercentile = (fraction: number) => {
+  if (!histogramSamples || !mergedHistogram.size) return 0;
+  const target = histogramSamples * fraction;
+  for (const [bound, count] of [...mergedHistogram].sort(([a], [b]) => a - b)) if (count >= target) return bound;
+  return [...mergedHistogram.keys()].sort((a, b) => a - b).at(-1) ?? 0;
+};
 const delta = (path: readonly string[]) => nestedNumber(final, path) - nestedNumber(first, path);
 let distance = 0;
 for (let index = 1; index < samples.length; index += 1) {
@@ -46,6 +64,10 @@ console.log(JSON.stringify({
   weightedFrameMilliseconds: weighted("averageFrameMilliseconds"),
   weightedP95FrameMilliseconds: weighted("p95FrameMilliseconds"),
   weightedP99FrameMilliseconds: weighted("p99FrameMilliseconds"),
+  sessionP50FrameMilliseconds: histogramPercentile(0.5),
+  sessionP95FrameMilliseconds: histogramPercentile(0.95),
+  sessionP99FrameMilliseconds: histogramPercentile(0.99),
+  histogramFrameSamples: histogramSamples,
   weightedLongFrameRatio: weighted("longFrameRatio"),
   weightedActiveCpuMilliseconds: weighted("averageActiveCpuMilliseconds"),
   weightedSimulationMilliseconds: weighted("averageSimulationMilliseconds"),

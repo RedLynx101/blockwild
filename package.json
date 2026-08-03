@@ -47,6 +47,7 @@
     "benchmark:streaming": "node --import tsx scripts/benchmark-streaming.ts",
     "benchmark:basic-world": "node --import tsx scripts/benchmark-basic-world.ts",
     "benchmark:player-edits": "node --import tsx scripts/benchmark-player-edits.ts",
+    "benchmark:performance-scenarios": "node --import tsx scripts/benchmark-performance-scenarios.ts",
     "benchmark:agents": "node --import tsx scripts/soak-agent-platform.ts",
     "analyze:performance": "node --import tsx scripts/analyze-performance-log.ts",
     "soak:living-world": "node --import tsx scripts/soak-living-world.ts",

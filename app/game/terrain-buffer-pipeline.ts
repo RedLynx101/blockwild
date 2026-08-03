@@ -45,7 +45,9 @@ export function mergeTerrainGeometry(parts: readonly TerrainSectionGeometry[]): 
   return merged;
 }
 
-type TerrainWorkerResponse = Readonly<{ id: number; geometry: TerrainMergedGeometry | null }>;
+type TerrainWorkerResponse = Readonly<{ type: "ready"; protocol: number }>
+  | Readonly<{ type: "result"; id: number; geometry: TerrainMergedGeometry | null }>
+  | Readonly<{ type: "task-error"; id: number; message: string }>;
 type TerrainWorkerCallback = Readonly<{
   complete: (geometry: TerrainMergedGeometry | null) => void;
   fail: () => void;
@@ -59,32 +61,64 @@ export class TerrainBufferPipeline {
   completed = 0;
   failed = 0;
   transferBytes = 0;
+  ready = false;
+  restarts = 0;
+  lastError: string | null = null;
 
   constructor() {
     if (typeof document === "undefined" || typeof Worker === "undefined") return;
+    this.startWorker();
+  }
+
+  private startWorker() {
     try {
       this.worker = new Worker(new URL("./terrain-buffer-worker.ts", import.meta.url), { type: "module" });
       this.worker.onmessage = (event: MessageEvent<TerrainWorkerResponse>) => {
+        if (event.data.type === "ready") {
+          if (event.data.protocol !== 1) {
+            this.lastError = `Terrain buffer worker protocol ${event.data.protocol} is incompatible with 1`;
+            this.failWorker();
+          } else this.ready = true;
+          return;
+        }
+        if (event.data.type === "task-error") {
+          this.lastError = event.data.message;
+          const callback = this.callbacks.get(event.data.id);
+          this.callbacks.delete(event.data.id);
+          if (callback) { this.failed += 1; callback.fail(); }
+          return;
+        }
         const callback = this.callbacks.get(event.data.id);
         if (!callback) return;
         this.callbacks.delete(event.data.id);
         this.completed += 1;
         callback.complete(event.data.geometry);
       };
-      this.worker.onerror = () => {
-        this.worker?.terminate();
-        this.worker = null;
-        const callbacks = [...this.callbacks.values()];
-        this.callbacks.clear();
-        this.failed += callbacks.length;
-        for (const callback of callbacks) callback.fail();
+      this.worker.onerror = (event) => {
+        this.lastError = event.message || "Terrain buffer worker failed without an error message";
+        this.failWorker();
       };
-    } catch {
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
       this.worker = null;
     }
   }
 
-  get supported() { return Boolean(this.worker); }
+  private failWorker() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.ready = false;
+    const callbacks = [...this.callbacks.values()];
+    this.callbacks.clear();
+    this.failed += callbacks.length;
+    for (const callback of callbacks) callback.fail();
+    if (this.restarts < 1) {
+      this.restarts += 1;
+      this.startWorker();
+    }
+  }
+
+  get supported() { return Boolean(this.worker && this.ready); }
 
   submit(
     parts: readonly TerrainSectionGeometry[],
@@ -92,7 +126,7 @@ export class TerrainBufferPipeline {
     fail: () => void = () => {},
   ) {
     this.submitted += 1;
-    if (!this.worker) {
+    if (!this.worker || !this.ready) {
       this.completed += 1;
       complete(mergeTerrainGeometry(parts));
       return;
@@ -124,12 +158,16 @@ export class TerrainBufferPipeline {
       failed: this.failed,
       pending: this.callbacks.size,
       transferBytes: this.transferBytes,
+      ready: this.ready,
+      restarts: this.restarts,
+      lastError: this.lastError,
     } as const;
   }
 
   dispose() {
     this.worker?.terminate();
     this.worker = null;
+    this.ready = false;
     this.callbacks.clear();
   }
 }

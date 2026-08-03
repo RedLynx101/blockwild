@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sharedBoxGeometry } from "./shared-model-geometry";
 import { MOB_DEFS, type AdventureMobKind } from "./mobs";
 
 type AdventureVisualParts = Record<"legs" | "wings" | "arms" | "head" | "body", THREE.Object3D[]>;
@@ -35,7 +36,7 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
   const glass = material(eyeColor, false, 0.58);
 
   const add = (parent: THREE.Object3D, size: readonly [number, number, number], position: readonly [number, number, number], meshMaterial: THREE.Material, name: string, part?: keyof AdventureVisualParts) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), meshMaterial);
+    const mesh = new THREE.Mesh(sharedBoxGeometry(...size), meshMaterial);
     mesh.name = name;
     mesh.position.set(...position);
     mesh.userData.mobId = id;

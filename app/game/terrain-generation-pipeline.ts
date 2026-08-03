@@ -27,12 +27,25 @@ export type TerrainGenerationResult = Readonly<{
   structureMarkers: readonly (readonly [string, StructureMarker])[];
 }>;
 
-type WorkerResponse = Readonly<{ id: number; result: TerrainGenerationResult }>;
+const TERRAIN_WORKER_PROTOCOL = 1;
+type WorkerResponse = Readonly<{ type: "ready"; protocol: number }>
+  | Readonly<{ type: "result"; id: number; result: TerrainGenerationResult }>
+  | Readonly<{ type: "task-error"; id: number; message: string }>;
 type WorkerCallback = Readonly<{
   complete: (result: TerrainGenerationResult) => void;
   fail: () => void;
 }>;
-type Slot = { worker: Worker; busy: boolean; currentId: number | null };
+type Slot = { worker: Worker; ready: boolean; busy: boolean; currentId: number | null };
+
+/** Reserves one of a bounded 2-4 worker graph for terrain-buffer merging. */
+export function recommendedTerrainWorkerCount(
+  logicalProcessors = typeof navigator === "undefined" ? 4 : navigator.hardwareConcurrency || 4,
+  deviceMemoryGiB = typeof navigator === "undefined" ? 4 : Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4),
+) {
+  if (logicalProcessors <= 4 || deviceMemoryGiB <= 4) return 1;
+  if (logicalProcessors <= 8 || deviceMemoryGiB <= 8) return 2;
+  return 3;
+}
 
 /** Two workers keep a player-priority lane available without oversubscribing CPUs. */
 export class TerrainGenerationPipeline {
@@ -44,8 +57,10 @@ export class TerrainGenerationPipeline {
   failed = 0;
   stale = 0;
   transferBytes = 0;
+  restarts = 0;
+  lastError: Readonly<{ message: string; filename: string | null; line: number | null; column: number | null; phase: "startup" | "task" }> | null = null;
 
-  constructor(workerCount = 2) {
+  constructor(workerCount = recommendedTerrainWorkerCount(), private readonly maximumRestarts = 2) {
     if (typeof document === "undefined" || typeof Worker === "undefined") return;
     for (let index = 0; index < workerCount; index += 1) this.addWorker();
   }
@@ -54,10 +69,28 @@ export class TerrainGenerationPipeline {
     try {
       const slot: Slot = {
         worker: new Worker(new URL("./terrain-generation-worker.ts", import.meta.url), { type: "module" }),
+        ready: false,
         busy: false,
         currentId: null,
       };
       slot.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        if (event.data.type === "ready") {
+          if (event.data.protocol !== TERRAIN_WORKER_PROTOCOL) {
+            this.failSlot(slot, new Error(`Terrain worker protocol ${event.data.protocol} is incompatible with ${TERRAIN_WORKER_PROTOCOL}`));
+            return;
+          }
+          slot.ready = true;
+          return;
+        }
+        if (event.data.type === "task-error") {
+          this.lastError = { message: event.data.message, filename: null, line: null, column: null, phase: "task" };
+          const callback = this.callbacks.get(event.data.id);
+          this.callbacks.delete(event.data.id);
+          slot.busy = false;
+          slot.currentId = null;
+          if (callback) { this.failed += 1; callback.fail(); }
+          return;
+        }
         slot.busy = false;
         slot.currentId = null;
         const callback = this.callbacks.get(event.data.id);
@@ -73,34 +106,47 @@ export class TerrainGenerationPipeline {
           + JSON.stringify(result.structureMarkers).length * 2;
         callback.complete(result);
       };
-      slot.worker.onerror = () => {
-        const failedId = slot.currentId;
-        slot.busy = false;
-        slot.currentId = null;
-        slot.worker.terminate();
-        this.slots = this.slots.filter((candidate) => candidate !== slot);
-        if (failedId === null) return;
-        const callback = this.callbacks.get(failedId);
-        this.callbacks.delete(failedId);
-        if (!callback) return;
-        this.failed += 1;
-        callback.fail();
-      };
+      slot.worker.onerror = (event) => this.failSlot(slot, event);
       this.slots.push(slot);
-    } catch {
+    } catch (error) {
+      this.lastError = { message: error instanceof Error ? error.message : String(error), filename: null, line: null, column: null, phase: "startup" };
       // Browser/CSP fallback remains the existing resumable main-thread path.
     }
   }
 
+  private failSlot(slot: Slot, event: ErrorEvent | Error) {
+    const failedId = slot.currentId;
+    this.lastError = {
+      message: event.message || "Terrain generation worker failed without an error message",
+      filename: "filename" in event ? event.filename || null : null,
+      line: "lineno" in event ? event.lineno || null : null,
+      column: "colno" in event ? event.colno || null : null,
+      phase: slot.ready ? "task" : "startup",
+    };
+    slot.busy = false;
+    slot.currentId = null;
+    slot.worker.terminate();
+    this.slots = this.slots.filter((candidate) => candidate !== slot);
+    if (failedId !== null) {
+      const callback = this.callbacks.get(failedId);
+      this.callbacks.delete(failedId);
+      if (callback) { this.failed += 1; callback.fail(); }
+    }
+    if (this.restarts < this.maximumRestarts) {
+      this.restarts += 1;
+      this.addWorker();
+    }
+  }
+
   get supported() { return this.slots.length > 0; }
-  get availableSlots() { return this.slots.filter((slot) => !slot.busy).length; }
+  get availableSlots() { return this.slots.filter((slot) => slot.ready && !slot.busy).length; }
 
   submit(
     request: TerrainGenerationRequest,
     complete: (result: TerrainGenerationResult) => void,
     fail: () => void = () => {},
   ) {
-    const slot = this.slots.find((candidate) => !candidate.busy);
+    const slot = this.slots.find((candidate) => candidate.ready && !candidate.busy);
     if (!slot) return false;
     const id = this.nextId++;
     slot.busy = true;
@@ -131,6 +177,9 @@ export class TerrainGenerationPipeline {
       failed: this.failed,
       stale: this.stale,
       transferBytes: this.transferBytes,
+      ready: this.slots.filter((slot) => slot.ready).length,
+      restarts: this.restarts,
+      lastError: this.lastError,
     } as const;
   }
 

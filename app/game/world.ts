@@ -536,11 +536,50 @@ function legendarySitePalette(encounterId: LegendaryEncounterId) {
   return { floor: BlockId.BoiledSugarbrick, accent: BlockId.CandywoodLog, light: BlockId.Glowstone } as const;
 }
 
-type WorldRenderLayer = Exclude<RenderLayer, "none"> | "glass";
-const WORLD_RENDER_LAYERS = ["opaque", "cutout", "transparent", "glass", "emissive"] as const satisfies readonly WorldRenderLayer[];
+type WorldRenderLayer = Exclude<RenderLayer, "none"> | "water" | "glass";
+const WORLD_RENDER_LAYERS = ["opaque", "cutout", "emissive", "translucentSolid", "water", "transparent", "glass"] as const satisfies readonly WorldRenderLayer[];
+const worldRenderOrder = (layer: WorldRenderLayer) => layer === "glass" ? 6
+  : layer === "transparent" ? 5
+    : layer === "water" ? 4
+      : layer === "translucentSolid" ? 3
+        : layer === "emissive" ? 2
+          : layer === "cutout" ? 1 : 0;
+
+export type VoxelInterfaceFaceOwner = "current" | "neighbor" | "none";
+
+/** Assigns a shared voxel interface to one side so translucent media cannot z-fight. */
+export function voxelInterfaceFaceOwner(type: BlockId, neighbor: BlockId): VoxelInterfaceFaceOwner {
+  if (neighbor === BlockId.Air) return "current";
+  if (blockContainsWater(type) && blockContainsWater(neighbor)) return "none";
+  const current = BLOCKS[type];
+  const next = BLOCKS[neighbor];
+  if (!current || !next) return "current";
+  const fullCube = (definition: typeof current) => !definition.shape || definition.shape === "cube";
+  const mediumRank = (block: BlockId, definition: typeof current) => blockContainsWater(block) ? 1
+    : definition.layer === "transparent" ? (block === BlockId.Glass ? 3 : 2)
+      : definition.layer === "translucentSolid" ? 4 : 0;
+  const currentRank = fullCube(current) ? mediumRank(type, current) : 0;
+  const nextRank = fullCube(next) ? mediumRank(neighbor, next) : 0;
+  if (currentRank > 0 && nextRank > 0) {
+    if (type === neighbor) return "none";
+    if (currentRank !== nextRank) return currentRank > nextRank ? "current" : "neighbor";
+    return type > neighbor ? "current" : "neighbor";
+  }
+  const nextOccludes = fullCube(next) && next.solid && next.layer !== "transparent"
+    && next.layer !== "translucentSolid" && next.layer !== "cutout";
+  if (current.layer === "transparent" || current.layer === "translucentSolid") {
+    return neighbor !== type && !nextOccludes ? "current" : "neighbor";
+  }
+  if (current.layer === "cutout" || (current.layer === "emissive" && !current.solid)) {
+    return neighbor !== type && !nextOccludes ? "current" : "neighbor";
+  }
+  return nextOccludes ? "neighbor" : "current";
+}
 type ChunkMeshes = {
   opaque?: THREE.Mesh;
   cutout?: THREE.Mesh;
+  translucentSolid?: THREE.Mesh;
+  water?: THREE.Mesh;
   transparent?: THREE.Mesh;
   glass?: THREE.Mesh;
   emissive?: THREE.Mesh;
@@ -810,12 +849,13 @@ type VoxelLightingUniforms = {
   voxelMachineLightColor: { value: THREE.Color };
   voxelMachineLightIntensity: { value: number };
   voxelMachineLightRadius: { value: number };
+  voxelWaterPhase: { value: number };
 };
 
 function createVoxelWorldMaterial(
   atlas: THREE.Texture,
   uniforms: VoxelLightingUniforms,
-  options: Readonly<{ alphaTest?: number; transparent?: boolean; opacity?: number; depthWrite?: boolean; side?: THREE.Side }> = {},
+  options: Readonly<{ alphaTest?: number; transparent?: boolean; opacity?: number; depthWrite?: boolean; side?: THREE.Side; animateWater?: boolean }> = {},
 ) {
   const material = new THREE.MeshBasicMaterial({
     map: atlas,
@@ -863,6 +903,7 @@ uniform vec3 voxelMachineLightPosition;
 uniform vec3 voxelMachineLightColor;
 uniform float voxelMachineLightIntensity;
 uniform float voxelMachineLightRadius;
+uniform float voxelWaterPhase;
 varying vec4 vVoxelLight;
 varying float vVoxelEmission;
 varying float vVoxelOcclusion;
@@ -898,6 +939,19 @@ voxelIllumination *= vVoxelOcclusion;
 outgoingLight *= voxelIllumination;
 outgoingLight += diffuseColor.rgb * vVoxelEmission;
 #include <opaque_fragment>`);
+    if (options.animateWater) shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", `
+#ifdef USE_MAP
+  vec2 voxelTile = floor(vMapUv * 16.0);
+  vec2 voxelLocalUv = fract(vMapUv * 16.0);
+  voxelLocalUv.x = fract(voxelLocalUv.x + voxelWaterPhase);
+  voxelLocalUv = clamp(voxelLocalUv, vec2(0.014), vec2(0.986));
+  vec2 voxelAnimatedUv = (voxelTile + voxelLocalUv) / 16.0;
+  vec4 sampledDiffuseColor = texture2D(map, voxelAnimatedUv);
+  #ifdef DECODE_VIDEO_TEXTURE
+    sampledDiffuseColor = sRGBTransferEOTF(sampledDiffuseColor);
+  #endif
+  diffuseColor *= sampledDiffuseColor;
+#endif`);
   };
   material.customProgramCacheKey = () => "blockwild-voxel-light-v4-machine";
   return material;
@@ -2944,6 +2998,7 @@ export class ChunkWorld {
     voxelMachineLightColor: { value: new THREE.Color(0xffa45a) },
     voxelMachineLightIntensity: { value: 0 },
     voxelMachineLightRadius: { value: 0 },
+    voxelWaterPhase: { value: 0 },
   };
   private readonly surfaceLightSample: [number, number, number, number] = [0, 0, 0, 0];
   /**
@@ -2969,6 +3024,8 @@ export class ChunkWorld {
     this.materials = {
       opaque: createVoxelWorldMaterial(this.atlas, this.lightingUniforms),
       cutout: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { alphaTest: 0.32, side: THREE.DoubleSide }),
+      translucentSolid: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { transparent: true, opacity: 0.86, depthWrite: true }),
+      water: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { transparent: true, opacity: 0.76, depthWrite: false, side: THREE.DoubleSide, animateWater: true }),
       transparent: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { transparent: true, opacity: 0.76, depthWrite: false, side: THREE.DoubleSide }),
       glass: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide }),
       emissive: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { alphaTest: 0.2, side: THREE.DoubleSide }),
@@ -3002,29 +3059,12 @@ export class ChunkWorld {
     this.lightingUniforms.voxelMinimumAmbient.value = Math.max(0, environment.minimumAmbient ?? 0.028);
   }
 
-  /** Redraws only the 16px water tile; the shared atlas then animates every water face in one upload. */
+  /** Advances a shader uniform; no canvas redraw or full-atlas GPU upload occurs. */
   updateWaterAnimation(timeMilliseconds: number) {
     const frame = Math.floor(timeMilliseconds / 120);
     if (frame === this.waterAnimationFrame) return;
-    const canvas = this.atlas.image;
-    if (typeof HTMLCanvasElement === "undefined" || !(canvas instanceof HTMLCanvasElement)) return;
-    const context = canvas.getContext("2d");
-    if (!context) return;
     this.waterAnimationFrame = frame;
-    const tile = 16;
-    const index = 8;
-    const ox = (index % ATLAS_GRID) * tile;
-    const oy = Math.floor(index / ATLAS_GRID) * tile;
-    const phase = frame % tile;
-    context.globalAlpha = 1;
-    context.fillStyle = "#3d85c8";
-    context.fillRect(ox, oy, tile, tile);
-    for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
-      const wave = (x + Math.floor(y * 0.55) + phase) % 8;
-      context.fillStyle = wave < 2 ? "rgba(128,198,235,.68)" : wave === 4 ? "rgba(42,111,180,.42)" : "rgba(78,157,213,.28)";
-      context.fillRect(ox + x, oy + y, 1, 1);
-    }
-    this.atlas.needsUpdate = true;
+    this.lightingUniforms.voxelWaterPhase.value = (frame % 16) / 16;
   }
 
   setRenderDistance(distance: number) {
@@ -4130,7 +4170,7 @@ export class ChunkWorld {
       this.activeMeshTask = {
         key: next.key,
         section: next.section,
-        buckets: { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() },
+        buckets: { opaque: emptyBucket(), cutout: emptyBucket(), emissive: emptyBucket(), translucentSolid: emptyBucket(), water: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket() },
         nextLocalX: 0,
       };
     }
@@ -4403,7 +4443,7 @@ export class ChunkWorld {
     geometry.computeBoundingSphere();
     this.registerTerrainGeometry(geometry);
     const mesh = new THREE.Mesh(geometry, this.materials[layer]);
-    mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
+    mesh.renderOrder = worldRenderOrder(layer);
     chunk.group.add(mesh);
     this.freezeTerrainTransform(mesh);
     chunk.combinedMeshes[layer] = mesh;
@@ -7654,16 +7694,7 @@ export class ChunkWorld {
   }
 
   faceVisible(type: BlockId, neighbor: BlockId) {
-    if (neighbor === BlockId.Air) return true;
-    if (blockContainsWater(type) && blockContainsWater(neighbor)) return false;
-    const current = BLOCKS[type];
-    const next = BLOCKS[neighbor];
-    if (!current || !next) return true;
-    const nextIsFullCube = !next.shape || next.shape === "cube";
-    const nextOccludes = nextIsFullCube && next.solid && next.layer !== "transparent" && next.layer !== "cutout";
-    if (current.layer === "transparent") return neighbor !== type && !nextOccludes;
-    if (current.layer === "cutout" || (current.layer === "emissive" && !current.solid)) return neighbor !== type && !nextOccludes;
-    return !nextOccludes;
+    return voxelInterfaceFaceOwner(type, neighbor) === "current";
   }
 
   rebuildSection(chunk: Chunk, section: number, slice?: Readonly<{
@@ -7685,7 +7716,7 @@ export class ChunkWorld {
       return;
     }
     const buckets: Record<WorldRenderLayer, GeometryBucket> = slice?.buckets
-      ?? { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() };
+      ?? { opaque: emptyBucket(), cutout: emptyBucket(), emissive: emptyBucket(), translucentSolid: emptyBucket(), water: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
     const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
@@ -7910,7 +7941,7 @@ export class ChunkWorld {
         // against opaque ground or walls. Those coplanar boundaries produced
         // the pale rectangular patch beside waterlogged flora.
         if (!this.faceVisible(BlockId.Water, neighbor)) continue;
-        addQuad(buckets.transparent, face.corners, face.direction, BLOCKS[BlockId.Water].side, face.shade, tint,
+        addQuad(buckets.water, face.corners, face.direction, BLOCKS[BlockId.Water].side, face.shade, tint,
           localX, y, localZ, surfaceInset, shadeAt(localX + dx, y + dy, localZ + dz));
       }
     };
@@ -7933,7 +7964,7 @@ export class ChunkWorld {
           && definition.layer !== "transparent"
           && definition.layer !== "cutout";
         if (definition.waterlogged) addImplicitWaterCell(lx, y, lz, tint);
-        const bucket = buckets[type === BlockId.Glass ? "glass" : definition.layer as Exclude<RenderLayer, "none">];
+        const bucket = buckets[definition.liquid === "water" ? "water" : type === BlockId.Glass ? "glass" : definition.layer as Exclude<RenderLayer, "none">];
         if (definition.shape === "torch") {
           const tile = definition.side;
           const environment = Math.max(0.82, shadeAt(lx, y, lz));
@@ -8593,7 +8624,7 @@ export class ChunkWorld {
         Math.sqrt(2 * (CHUNK_SIZE / 2) ** 2 + ((endY - startY + 1) / 2) ** 2),
       );
       const mesh = new THREE.Mesh(geometry, this.materials[layer]);
-      mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
+      mesh.renderOrder = worldRenderOrder(layer);
       mesh.visible = !chunk.combinedMeshes[layer];
       chunk.group.add(mesh);
       this.freezeTerrainTransform(mesh);
