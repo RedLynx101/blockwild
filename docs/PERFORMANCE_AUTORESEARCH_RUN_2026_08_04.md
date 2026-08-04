@@ -23,7 +23,8 @@ Status: contract frozen; ten-pass loop active
 
 | Pass | Hypothesis | Score vs champion | Worst scenario | Decision | Commit |
 | ---: | --- | ---: | ---: | --- | --- |
-| 1 | Replace the articulated batcher's sizing allocation with fixed movement-tier part counts. | 1.1003x | 1.3816x | Discarded; paired measurement regressed the targeted admission/articulation p95 from 0.2087 to 0.2705 ms. | pending |
+| 1 | Replace the articulated batcher's sizing allocation with fixed movement-tier part counts. | 1.1003x | 1.3816x | Discarded; paired measurement regressed the targeted admission/articulation p95 from 0.2087 to 0.2705 ms. | `e3b1201` |
+| 2 | Fuse admission candidate collection, visibility/critical counts, and live-id collection into one scan. | 0.9453x | 1.1286x | Discarded; admission p95 improved, but unrelated stationary/cavern tails breached the frozen 5% floor. | pending |
 
 ## Frozen baseline
 
