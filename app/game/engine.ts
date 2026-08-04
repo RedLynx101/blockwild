@@ -3,6 +3,7 @@ import { isSharedModelGeometry, sharedModelGeometryDiagnostics } from "./shared-
 import { CreatureLodBatcher, type CreatureLodInstance } from "./creature-lod-batcher";
 import { SynthAudio, type SampleKind } from "./audio";
 import { BasicWorldRenderer } from "./basic-world-renderer";
+import { currentBuildIdentity } from "./build-info";
 import {
   OPEN_CAMERA_ENVIRONMENT,
   cameraEnvironmentTarget as deriveCameraEnvironmentTarget,
@@ -6441,6 +6442,7 @@ export class VoxelEngine {
       capturedAt: new Date().toISOString(),
       runtime: {
         gameVersion: GAME_VERSION,
+        build: currentBuildIdentity(),
         userAgent: typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
         logicalProcessors: typeof navigator === "undefined" ? null : navigator.hardwareConcurrency,
         deviceMemoryGiB: navigatorMemory ?? null,

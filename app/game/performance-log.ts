@@ -1,3 +1,5 @@
+import { currentBuildIdentity, type BlockwildBuildIdentity } from "./build-info";
+
 export type ResourceTelemetrySnapshot = Readonly<Record<string, unknown>>;
 export type ResourceTelemetryStopReason = "manual" | "save-and-quit" | "time-limit" | "page-exit";
 
@@ -10,6 +12,7 @@ export type ResourceTelemetryReport = Readonly<{
   stopReason: ResourceTelemetryStopReason;
   sampleIntervalSeconds: 1;
   aggregation: "non-overlapping-frame-histograms";
+  build: BlockwildBuildIdentity;
   samples: readonly ResourceTelemetrySnapshot[];
 }>;
 
@@ -54,6 +57,7 @@ export class ResourceTelemetryLog {
       stopReason: reason,
       sampleIntervalSeconds: 1,
       aggregation: "non-overlapping-frame-histograms",
+      build: currentBuildIdentity(),
       samples,
     });
   }

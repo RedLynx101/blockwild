@@ -123,6 +123,14 @@ The new deterministic scenario suite reports:
 
 The 100-creature case ends as one active batch with 128 allocated instance slots. These Node results establish deterministic CPU and queue behavior; a comparable schema-v3 player capture remains required before claiming the 1080p FPS, true session p95/p99, GPU heap, or ten-minute hardware acceptance targets.
 
+## 2026-08-04 deployment-parity diagnosis
+
+The supplied `2026-08-04T01-23-57-982Z` capture is a schema-v2 run from the pre-overhaul runtime, not a result from the schema-v3 build above. It averaged 43.76 ms/frame (about 22.9 FPS), with a 62.82 ms weighted p95, 105.78 ms weighted p99, and 95.98% long-frame ratio. Measured active CPU was 20.24 ms: 8.09 ms chunk work, 5.70 ms render submission, and 4.96 ms mob simulation. Frame time correlates most strongly with render submission (0.880), draw calls (0.784), geometry count (0.709), loaded chunks (0.669), creature count (0.664), and mob simulation (0.590). The generation worker again submitted two jobs, failed both, and disabled itself; the run ended at 803 draws, 2,544 geometries, 141 creatures, and a 99.5-second oldest-near-job age.
+
+Exact-runtime probes established why. `blockwild.app` still exposed the legacy worker diagnostics and reproduced the two-failure disable path, while the same scene on the current Sites deployment started two ready generation workers, completed 31 jobs, and recorded zero failures or restarts. Vercel had received GitHub commit `53c2756`, but its production build failed inside Webpack `RealContentHashPlugin` after restoring a stale compiler cache that referenced a removed asset. The domain therefore remained on the last successful pre-overhaul deployment.
+
+The release fix clears only `.next/cache` through a canonicalized, workspace-bounded script before Vercel compilation. Performance exports now include commit SHA, runtime origin, deployment channel, telemetry schema, and worker protocol revisions; the analyzer reports those fields and explicitly warns on legacy captures. This prevents a stale endpoint from being mistaken for a failed optimization pass. Further engine retuning is intentionally deferred until a schema-v3 hardware capture from the synchronized endpoint: changing budgets against this old run would confound release failure with runtime behavior.
+
 ## Commands
 
 ```text

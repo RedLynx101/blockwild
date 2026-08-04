@@ -8,9 +8,16 @@ type Summary = Record<string, number | null | readonly FrameHistogramBucket[] | 
 type Snapshot = Readonly<{
   performance?: Summary;
   renderer?: Record<string, number>;
+  entities?: Readonly<{ creatures?: number }>;
   world?: { streaming?: Record<string, unknown>; player?: { x: number; z: number } };
 }>;
-type Report = Readonly<{ schema?: number; aggregation?: string; samples?: readonly Snapshot[]; elapsedSeconds?: number }>;
+type Report = Readonly<{
+  schema?: number;
+  aggregation?: string;
+  build?: Record<string, unknown>;
+  samples?: readonly Snapshot[];
+  elapsedSeconds?: number;
+}>;
 
 const path = process.argv[2];
 if (!path) throw new Error("Usage: npm run analyze:performance -- <blockwild-performance.json>");
@@ -49,6 +56,22 @@ const histogramPercentile = (fraction: number) => {
   return [...mergedHistogram.keys()].sort((a, b) => a - b).at(-1) ?? 0;
 };
 const delta = (path: readonly string[]) => nestedNumber(final, path) - nestedNumber(first, path);
+const correlation = (x: (sample: Snapshot) => number, y: (sample: Snapshot) => number) => {
+  const pairs = samples.map((sample) => [x(sample), y(sample)] as const).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+  if (pairs.length < 3) return null;
+  const meanX = pairs.reduce((sum, [value]) => sum + value, 0) / pairs.length;
+  const meanY = pairs.reduce((sum, [, value]) => sum + value, 0) / pairs.length;
+  let covariance = 0;
+  let varianceX = 0;
+  let varianceY = 0;
+  for (const [a, b] of pairs) {
+    covariance += (a - meanX) * (b - meanY);
+    varianceX += (a - meanX) ** 2;
+    varianceY += (b - meanY) ** 2;
+  }
+  return varianceX > 0 && varianceY > 0 ? covariance / Math.sqrt(varianceX * varianceY) : null;
+};
+const frame = (sample: Snapshot) => number(sample.performance?.averageFrameMilliseconds);
 let distance = 0;
 for (let index = 1; index < samples.length; index += 1) {
   const previous = samples[index - 1].world?.player;
@@ -57,6 +80,10 @@ for (let index = 1; index < samples.length; index += 1) {
 }
 console.log(JSON.stringify({
   schema: report.schema ?? 1,
+  build: report.build ?? null,
+  warning: (report.schema ?? 1) < 3
+    ? "Legacy capture: this run predates build provenance, true session histograms, worker readiness, and creature LOD diagnostics. Verify the deployed endpoint before further tuning."
+    : null,
   aggregation: report.aggregation ?? "legacy-overlapping-rolling-windows",
   elapsedSeconds: report.elapsedSeconds ?? 0,
   exportedWindows: samples.length,
@@ -75,6 +102,15 @@ console.log(JSON.stringify({
   weightedChunkMilliseconds: weighted("averageChunkWorkMilliseconds"),
   weightedRenderSubmissionMilliseconds: weighted("averageRenderSubmissionMilliseconds"),
   weightedGpuMilliseconds: weighted("averageGpuMilliseconds"),
+  correlations: {
+    frameVsRenderSubmission: correlation(frame, (sample) => number(sample.performance?.averageRenderSubmissionMilliseconds)),
+    frameVsChunkWork: correlation(frame, (sample) => number(sample.performance?.averageChunkWorkMilliseconds)),
+    frameVsMobSimulation: correlation(frame, (sample) => number(sample.performance?.averageMobSimulationMilliseconds)),
+    frameVsDrawCalls: correlation(frame, (sample) => number(sample.renderer?.drawCalls)),
+    frameVsGeometries: correlation(frame, (sample) => number(sample.renderer?.geometries)),
+    frameVsCreatures: correlation(frame, (sample) => number(sample.entities?.creatures)),
+    frameVsLoadedChunks: correlation(frame, (sample) => nestedNumber(sample, ["world", "loadedChunks"])),
+  },
   captureDeltas: {
     terrainMergeSubmissions: delta(["world", "streaming", "terrainWorker", "submitted"]),
     terrainTransferBytes: delta(["world", "streaming", "terrainWorker", "transferBytes"]),

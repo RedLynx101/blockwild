@@ -17,7 +17,7 @@
     "build:brand-icons": "node scripts/build-brand-icons.mjs",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
     "build": "bash scripts/build-verified.sh",
-    "build:vercel": "npm run build:wiki && next build --webpack",
+    "build:vercel": "node scripts/clean-next-build-cache.mjs && npm run build:wiki && next build --webpack",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "start:vercel": "next start",
     "test:basic-world": "node --import tsx --test tests/basic-world-geometry.test.ts tests/basic-world-renderer.test.ts tests/performance.test.ts",

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { ResourceTelemetryLog, telemetryFileName } from "../app/game/performance-log.ts";
+import { classifyDeploymentOrigin } from "../app/game/build-info.ts";
 
 test("resource telemetry is opt-in, one-session, and bounded by the configured emergency limit", () => {
   const log = new ResourceTelemetryLog();
@@ -13,10 +14,20 @@ test("resource telemetry is opt-in, one-session, and bounded by the configured e
   const report = log.stop("time-limit", 61_000);
   assert.equal(report?.schema, 3);
   assert.equal(report?.aggregation, "non-overlapping-frame-histograms");
+  assert.equal(report?.build.deployment, "local");
+  assert.equal(report?.build.telemetrySchema, 3);
   assert.equal(report?.samples.length, 1);
   assert.equal(report?.elapsedSeconds, 60);
   assert.equal(report?.stopReason, "time-limit");
   assert.equal(log.running, false);
+});
+
+test("performance provenance distinguishes production release channels", () => {
+  assert.equal(classifyDeploymentOrigin("https://blockwild.app"), "vercel");
+  assert.equal(classifyDeploymentOrigin("https://blockwild-git-main-redlynx101.vercel.app"), "vercel");
+  assert.equal(classifyDeploymentOrigin("https://blockwild.noahhicks.chatgpt.site"), "sites");
+  assert.equal(classifyDeploymentOrigin("http://localhost:3000"), "local");
+  assert.equal(classifyDeploymentOrigin("https://preview.example.com"), "other");
 });
 
 test("telemetry download names are deterministic and filesystem-safe", () => {
