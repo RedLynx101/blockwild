@@ -141,3 +141,28 @@ npm run benchmark:simulation
 npm run benchmark:spatial
 npm run benchmark:performance-scenarios
 ```
+
+## 2026-08-04 frame-admission and directional-streaming pass
+
+The supplied `2026-08-04T02-29-17-110Z` production capture is the exact schema-3 baseline at commit `8e9e8d8`. It covered 285.15 blocks over 135.78 seconds and averaged 35.35 ms/frame, with 56.78/81.46 ms weighted p95/p99, 78.22% long frames, 12.35 ms active CPU, 5.07 ms render submission, and 2.62 ms mob simulation. Frame time correlated 0.801 with render submission and 0.742 with draw calls. The run ended at 191 draws but peaked at 922, with 154 creatures, 268 generation jobs, 287 mesh sections, a 4.29-second readiness p95, 141.35 seconds of oldest valid nearby debt, and 569 canceled generation jobs against 137 completions. Its memory-cache diagnostic also recorded 11,653 misses caused by repeated absence checks.
+
+The implementation replaces the fixed creature presentation threshold with pressure-aware admission. Critical creatures always keep authored rigs. An ordinary middle-distance population shares one colored articulated cuboid batch, a farther population shares one colored silhouette batch across species, and irrelevant off-camera presentation can be hidden without changing simulation. The current 100-creature deterministic scenario retains nine authored heroes under a synthetic 32 ms/520-draw pressure state, puts 41 creatures into one articulated draw, 32 into one silhouette draw, and hides 18; admission plus articulated updates average 0.146 ms with a 0.322 ms p95 in the final isolated run.
+
+Streaming now guarantees a full omnidirectional four-chunk detail core and makes only the farther detailed halo directional. Camera and bounded velocity lookahead affect priority, player/immediate-ring generation and lighting can preempt resumable background work, one worker lane remains available for nearby correctness work, and terrain consolidation receives a bounded reserve under submission pressure. The final isolated deterministic run recorded zero false memory-cache misses, 24 queued generation jobs, and a 1.50-second readiness p95. Its final immediate ring was deliberately mid-edit-burst at 1/9; the exact production-browser world reached and retained 9/9 with two ready generation workers, 56 completed jobs, zero failures, and zero restarts.
+
+| Deterministic scenario v2 | Average | p95 | Maximum |
+| --- | ---: | ---: | ---: |
+| Stationary settled | 5.93 ms | 7.56 ms | 10.40 ms |
+| Continuous walk | 6.08 ms | 7.92 ms | 18.00 ms |
+| Continuous sprint | 6.25 ms | 8.34 ms | 11.48 ms |
+| Dense 360-degree traversal | 5.88 ms | 8.66 ms | 35.69 ms |
+| Frozen boundary edits | 9.65 ms | 14.55 ms | 14.68 ms |
+| Settlement traversal | 5.40 ms | 8.55 ms | 98.43 ms |
+| Large-cavern traversal | 6.51 ms | 9.14 ms | 15.91 ms |
+| Player-edit burst | 6.88 ms | 9.97 ms | 10.84 ms |
+| 100-creature LOD/broadphase | 0.034 ms | 0.048 ms | 1.45 ms |
+| 100-creature admission/articulation | 0.146 ms | 0.322 ms | 2.78 ms |
+
+The production browser was manually reviewed in a generated Flower Meadow after traversal. It showed clean terrain/flora presentation, one articulated batch under a 118-creature natural population, a fully ready immediate ring, active consolidation reserve, and no page/console error artifact. Its SwiftShader frame rate is excluded from player-hardware comparison. The next player capture should use this deployed commit and the same route class as the baseline; the new sparse phase telemetry will then attribute creature presentation, environment presentation, HUD, terrain-section draws, authored-creature draws, and both batch populations directly.
+
+The proposed controlled recursive workflow is tracked in [`PERFORMANCE_AUTORESEARCH_PROTOCOL.md`](PERFORMANCE_AUTORESEARCH_PROTOCOL.md). It keeps evaluation and fidelity gates immutable, ranks only valid candidates, and prohibits autonomous deployment.
