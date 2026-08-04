@@ -23,6 +23,7 @@ Status: contract frozen; ten-pass loop active
 
 | Pass | Hypothesis | Score vs champion | Worst scenario | Decision | Commit |
 | ---: | --- | ---: | ---: | --- | --- |
+| 1 | Replace the articulated batcher's sizing allocation with fixed movement-tier part counts. | 1.1003x | 1.3816x | Discarded; paired measurement regressed the targeted admission/articulation p95 from 0.2087 to 0.2705 ms. | pending |
 
 ## Frozen baseline
 
