@@ -7,7 +7,7 @@ type Summary = Record<string, number | null | readonly FrameHistogramBucket[] | 
 }>;
 type Snapshot = Readonly<{
   performance?: Summary;
-  renderer?: Record<string, number>;
+  renderer?: Record<string, unknown>;
   entities?: Readonly<{ creatures?: number }>;
   world?: { streaming?: Record<string, unknown>; player?: { x: number; z: number } };
 }>;
@@ -40,6 +40,17 @@ const nestedNumber = (sample: Snapshot | undefined, path: readonly string[]) => 
   let value: unknown = sample;
   for (const key of path) value = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
   return number(value);
+};
+const phaseWeighted = (field: string) => {
+  let total = 0;
+  let weight = 0;
+  for (const sample of samples) {
+    const count = number(sample.performance?.phaseSampleCount);
+    if (count <= 0) continue;
+    total += number(sample.performance?.[field]) * count;
+    weight += count;
+  }
+  return weight ? total / weight : 0;
 };
 const mergedHistogram = new Map<number, number>();
 let histogramSamples = 0;
@@ -101,6 +112,9 @@ console.log(JSON.stringify({
   weightedMobSimulationMilliseconds: weighted("averageMobSimulationMilliseconds"),
   weightedChunkMilliseconds: weighted("averageChunkWorkMilliseconds"),
   weightedRenderSubmissionMilliseconds: weighted("averageRenderSubmissionMilliseconds"),
+  sampledCreaturePresentationMilliseconds: phaseWeighted("averageCreaturePresentationMilliseconds"),
+  sampledEnvironmentPresentationMilliseconds: phaseWeighted("averageEnvironmentPresentationMilliseconds"),
+  sampledHudMilliseconds: phaseWeighted("averageHudMilliseconds"),
   weightedGpuMilliseconds: weighted("averageGpuMilliseconds"),
   correlations: {
     frameVsRenderSubmission: correlation(frame, (sample) => number(sample.performance?.averageRenderSubmissionMilliseconds)),
@@ -110,6 +124,12 @@ console.log(JSON.stringify({
     frameVsGeometries: correlation(frame, (sample) => number(sample.renderer?.geometries)),
     frameVsCreatures: correlation(frame, (sample) => number(sample.entities?.creatures)),
     frameVsLoadedChunks: correlation(frame, (sample) => nestedNumber(sample, ["world", "loadedChunks"])),
+    frameVsCreaturePresentation: correlation(frame, (sample) => number(sample.performance?.averageCreaturePresentationMilliseconds)),
+    frameVsEnvironmentPresentation: correlation(frame, (sample) => number(sample.performance?.averageEnvironmentPresentationMilliseconds)),
+    frameVsTerrainSectionDraws: correlation(frame, (sample) => number(sample.performance?.peakTerrainSectionDrawCalls)),
+    frameVsHeroCreatureDraws: correlation(frame, (sample) => number(sample.performance?.peakHeroCreatureDrawCalls)),
+    frameVsArticulatedCreatures: correlation(frame, (sample) => nestedNumber(sample, ["renderer", "articulatedRender", "activeCreatures"])),
+    frameVsSilhouetteCreatures: correlation(frame, (sample) => nestedNumber(sample, ["renderer", "renderLod", "activeInstances"])),
   },
   captureDeltas: {
     terrainMergeSubmissions: delta(["world", "streaming", "terrainWorker", "submitted"]),

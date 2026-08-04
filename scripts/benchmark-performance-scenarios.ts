@@ -1,6 +1,8 @@
 import { performance } from "node:perf_hooks";
 import { BlockId } from "../app/game/data.ts";
+import { CreatureArticulatedBatcher, type ArticulatedCreatureInstance } from "../app/game/creature-articulated-batcher.ts";
 import { CreatureLodBatcher, type CreatureLodInstance } from "../app/game/creature-lod-batcher.ts";
+import { CreatureRenderAdmissionController } from "../app/game/creature-render-admission.ts";
 import { XZSpatialIndex } from "../app/game/spatial-index.ts";
 import { ChunkWorld } from "../app/game/world.ts";
 
@@ -67,6 +69,33 @@ const hundredCreatures = measure("one-hundred-creature-lod-and-broadphase", 240,
   spatial.queryOverlappingCircle((frame % 10) * 3, Math.floor(frame / 10) % 10 * 3, 8);
 });
 
+const admission = new CreatureRenderAdmissionController();
+const articulatedBatcher = new CreatureArticulatedBatcher();
+const articulatedCreatures: ArticulatedCreatureInstance[] = creatures.map((creature, id) => ({
+  ...creature,
+  id,
+  accentColor: id % 3 === 0 ? 0xd5c38c : 0x442a1c,
+  movement: id % 12 === 0 ? "flying" : id % 15 === 0 ? "aquatic" : "ground",
+  gait: id * 0.21,
+  age: 4,
+}));
+const admittedArticulation = measure("one-hundred-creature-admission-and-articulation", 240, (frame) => {
+  const now = frame * (1_000 / 60);
+  admission.evaluate(articulatedCreatures.map((creature, id) => {
+    const distance = 8 + id * 1.35;
+    return {
+      id,
+      distance,
+      projectedSize: Math.min(1, creature.height / Math.max(1, distance)),
+      inFrustum: id % 5 !== 4,
+      critical: id < 2,
+      important: id >= 2 && id < 6,
+      engaged: id >= 6 && id < 10,
+    };
+  }), { averageFrameMilliseconds: 32, drawCalls: 520 }, now);
+  articulatedBatcher.update(articulatedCreatures.filter((creature) => admission.tierFor(creature.id) === "articulated"));
+});
+
 const settlementWorld = new ChunkWorld();
 settlementWorld.reset("PERFORMANCE-SETTLEMENT", undefined, { structures: true });
 settlementWorld.setRenderDistance(2);
@@ -86,13 +115,16 @@ const editBurst = measure("player-edit-burst", 40, (pass) => {
 for (let frame = 0; frame < 480 && !world.streamingDiagnostics().playerChunkReady; frame += 1) world.update(100, 0, 16, 0, 0);
 
 console.log(JSON.stringify({
-  benchmark: "blockwild-performance-scenarios-v1",
+  benchmark: "blockwild-performance-scenarios-v2",
   environment: { node: process.version, renderDistance: 2, note: "CPU/world determinism suite; browser capture owns GPU and presentation acceptance." },
-  scenarios: [stationary, walking, sprinting, denseTurn, frozenLake, hundredCreatures, settlement, cavern, editBurst],
+  scenarios: [stationary, walking, sprinting, denseTurn, frozenLake, hundredCreatures, admittedArticulation, settlement, cavern, editBurst],
   finalStreaming: world.streamingDiagnostics(),
   creatureLod: lodBatcher.diagnostics(),
+  creatureAdmission: admission.diagnostics(),
+  creatureArticulation: articulatedBatcher.diagnostics(),
 }, null, 2));
 
 lodBatcher.dispose();
+articulatedBatcher.dispose();
 world.dispose();
 settlementWorld.dispose();
