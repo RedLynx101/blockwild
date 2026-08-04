@@ -12,89 +12,79 @@ export type CreatureLodInstance = Readonly<{
   depth: number;
 }>;
 
-type Batch = {
-  mesh: THREE.InstancedMesh;
-  material: THREE.MeshLambertMaterial;
-  capacity: number;
-};
-
-/** One draw per distant species replaces every articulated body-part draw. */
+/** One colored draw replaces every distant articulated rig, across all species. */
 export class CreatureLodBatcher {
   readonly group = new THREE.Group();
-  private batches = new Map<MobKind, Batch>();
+  private mesh: THREE.InstancedMesh | null = null;
+  private readonly material = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  private capacity = 0;
   private matrix = new THREE.Matrix4();
   private quaternion = new THREE.Quaternion();
   private scale = new THREE.Vector3();
   private rotation = new THREE.Euler();
   private center = new THREE.Vector3();
+  private color = new THREE.Color();
   activeInstances = 0;
 
   constructor() {
     this.group.name = "creature-lod-batches";
   }
 
-  private ensureBatch(kind: MobKind, color: THREE.ColorRepresentation, required: number) {
-    let batch = this.batches.get(kind);
-    if (batch && batch.capacity >= required) return batch;
+  private ensureBatch(required: number) {
+    if (this.mesh && this.capacity >= required) return this.mesh;
     const capacity = Math.max(4, 2 ** Math.ceil(Math.log2(Math.max(1, required))));
-    if (batch) {
-      this.group.remove(batch.mesh);
-      batch.mesh.dispose();
-      batch.material.dispose();
+    if (this.mesh) {
+      this.group.remove(this.mesh);
+      this.mesh.dispose();
     }
-    const material = new THREE.MeshLambertMaterial({ color });
-    const mesh = new THREE.InstancedMesh(sharedBoxGeometry(), material, capacity);
-    mesh.name = `creature-lod-${kind}`;
+    const mesh = new THREE.InstancedMesh(sharedBoxGeometry(), this.material, capacity);
+    mesh.name = "creature-silhouette-batch";
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = 0;
     mesh.castShadow = false;
     mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
     mesh.raycast = () => {};
     this.group.add(mesh);
-    batch = { mesh, material, capacity };
-    this.batches.set(kind, batch);
-    return batch;
+    this.mesh = mesh;
+    this.capacity = capacity;
+    return mesh;
   }
 
   update(instances: readonly CreatureLodInstance[]) {
-    const grouped = new Map<MobKind, CreatureLodInstance[]>();
-    for (const instance of instances) {
-      const entries = grouped.get(instance.kind);
-      if (entries) entries.push(instance);
-      else grouped.set(instance.kind, [instance]);
-    }
+    const mesh = this.ensureBatch(instances.length);
     this.activeInstances = instances.length;
-    for (const [kind, batch] of this.batches) if (!grouped.has(kind)) batch.mesh.count = 0;
-    for (const [kind, entries] of grouped) {
-      const batch = this.ensureBatch(kind, entries[0].color, entries.length);
-      entries.forEach((entry, index) => {
-        this.center.set(entry.position.x, entry.position.y + entry.height * 0.5, entry.position.z);
-        this.rotation.set(0, entry.yaw, 0);
-        this.quaternion.setFromEuler(this.rotation);
-        this.scale.set(entry.width, entry.height, entry.depth);
-        this.matrix.compose(this.center, this.quaternion, this.scale);
-        batch.mesh.setMatrixAt(index, this.matrix);
-      });
-      batch.mesh.count = entries.length;
-      batch.mesh.instanceMatrix.needsUpdate = true;
-      batch.mesh.computeBoundingSphere();
+    instances.forEach((entry, index) => {
+      this.center.set(entry.position.x, entry.position.y + entry.height * 0.5, entry.position.z);
+      this.rotation.set(0, entry.yaw, 0);
+      this.quaternion.setFromEuler(this.rotation);
+      this.scale.set(entry.width, entry.height, entry.depth);
+      this.matrix.compose(this.center, this.quaternion, this.scale);
+      mesh.setMatrixAt(index, this.matrix);
+      this.color.set(entry.color);
+      mesh.setColorAt(index, this.color);
+    });
+    mesh.count = instances.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor.needsUpdate = true;
     }
   }
 
   diagnostics() {
     return {
       activeInstances: this.activeInstances,
-      activeBatches: [...this.batches.values()].filter((batch) => batch.mesh.count > 0).length,
-      allocatedCapacity: [...this.batches.values()].reduce((total, batch) => total + batch.capacity, 0),
+      activeBatches: this.mesh && this.mesh.count > 0 ? 1 : 0,
+      allocatedCapacity: this.capacity,
     } as const;
   }
 
   dispose() {
-    for (const batch of this.batches.values()) {
-      batch.mesh.dispose();
-      batch.material.dispose();
-    }
-    this.batches.clear();
+    this.mesh?.dispose();
+    this.material.dispose();
+    this.mesh = null;
+    this.capacity = 0;
     this.group.clear();
   }
 }

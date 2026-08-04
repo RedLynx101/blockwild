@@ -25,6 +25,11 @@ import {
   SENTIENT_COARSE_STEP_SECONDS,
   SENTIENT_FULL_DETAIL_DISTANCE,
 } from "../app/game/performance.ts";
+import {
+  CreatureRenderAdmissionController,
+  creatureHeroBudget,
+} from "../app/game/creature-render-admission.ts";
+import { CreatureArticulatedBatcher } from "../app/game/creature-articulated-batcher.ts";
 
 test("view distances preserve simulation <= render <= basic", () => {
   assert.deepEqual(normalizeViewDistances(undefined), {
@@ -179,6 +184,49 @@ test("ordinary wildlife uses deterministic full, active, coarse, and sleep tiers
   assert.equal(activeUpdates, 10);
   assert.notEqual(creatureSimulationPhase(1, "active"), creatureSimulationPhase(2, "active"));
   assert.equal(creatureSimulationPhase(9, "active"), creatureSimulationPhase(1, "active"));
+});
+
+test("creature render admission preserves critical heroes while shedding distant work", () => {
+  const controller = new CreatureRenderAdmissionController();
+  const candidates = Array.from({ length: 30 }, (_, index) => ({
+    id: index + 1,
+    distance: 10 + index * 3,
+    projectedSize: 1 / (index + 1),
+    inFrustum: index < 24,
+    critical: index === 29,
+    important: index === 12,
+    engaged: index === 1,
+  }));
+  controller.evaluate(candidates, { averageFrameMilliseconds: 42, drawCalls: 900 }, 1_000);
+  assert.equal(controller.tierFor(30), "hero", "critical creatures never lose authored presentation");
+  assert.equal(controller.tierFor(2), "hero", "an engaged visible threat wins admission");
+  assert.equal(controller.tierFor(29), "hidden", "off-camera distant work is not submitted");
+  assert.ok(controller.diagnostics().tiers.hero <= creatureHeroBudget({ averageFrameMilliseconds: 42, drawCalls: 900 }) + 1);
+  assert.ok(controller.diagnostics().tiers.articulated > 0);
+});
+
+test("the middle-distance creature tier batches articulated silhouettes into one draw", () => {
+  const batcher = new CreatureArticulatedBatcher();
+  batcher.update(Array.from({ length: 20 }, (_, index) => ({
+    id: index,
+    kind: "meadow-cow" as const,
+    color: 0x6b8f52,
+    accentColor: 0xd5c38c,
+    movement: "ground" as const,
+    position: { x: index * 2, y: 0, z: 0 },
+    yaw: 0,
+    width: 1.1,
+    height: 1.25,
+    depth: 1.4,
+    gait: index * 0.2,
+    age: 3,
+  })));
+  const diagnostics = batcher.diagnostics();
+  assert.equal(diagnostics.activeCreatures, 20);
+  assert.equal(diagnostics.activeBatches, 1);
+  assert.equal(diagnostics.activeParts, 180);
+  assert.ok(diagnostics.allocatedCapacity >= diagnostics.activeParts);
+  batcher.dispose();
 });
 
 test("resource modes trade CPU or memory for steadier traversal", () => {

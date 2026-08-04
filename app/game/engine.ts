@@ -1,6 +1,13 @@
 import * as THREE from "three";
 import { isSharedModelGeometry, sharedModelGeometryDiagnostics } from "./shared-model-geometry";
 import { CreatureLodBatcher, type CreatureLodInstance } from "./creature-lod-batcher";
+import { CreatureArticulatedBatcher, type ArticulatedCreatureInstance } from "./creature-articulated-batcher";
+import {
+  CREATURE_RENDER_ADMISSION_INTERVAL_MS,
+  CreatureRenderAdmissionController,
+  type CreatureRenderCandidate,
+  type CreatureRenderTier,
+} from "./creature-render-admission";
 import { SynthAudio, type SampleKind } from "./audio";
 import { BasicWorldRenderer } from "./basic-world-renderer";
 import { currentBuildIdentity } from "./build-info";
@@ -1673,6 +1680,7 @@ type MobEntity = {
   simulationTier: CreatureSimulationTier;
   simulationAccumulator: number;
   renderLodActive: boolean;
+  renderTier: CreatureRenderTier;
   parts: Record<string, THREE.Object3D[]>;
   health: number;
   maxHealth: number;
@@ -3948,6 +3956,7 @@ export class VoxelEngine {
   butterflies: ButterflySystem;
   ambienceGroup = new THREE.Group();
   creatureGroup = new THREE.Group();
+  creatureArticulatedBatcher = new CreatureArticulatedBatcher();
   creatureLodBatcher = new CreatureLodBatcher();
   dropGroup = new THREE.Group();
   boatGroup = new THREE.Group();
@@ -3972,6 +3981,13 @@ export class VoxelEngine {
   lightInfluenceSphere = new THREE.Sphere();
   lightForward = new THREE.Vector3(0, 0, -1);
   lightSourcePosition = new THREE.Vector3();
+  creatureRenderFrustum = new THREE.Frustum();
+  creatureRenderViewProjection = new THREE.Matrix4();
+  creatureRenderSphere = new THREE.Sphere();
+  creatureRenderAdmission = new CreatureRenderAdmissionController();
+  nextCreatureAdmissionAt = 0;
+  nextArticulatedPresentationAt = 0;
+  nextSilhouettePresentationAt = 0;
   heldLightOffset = new THREE.Vector3(0.34, -0.24, -0.62);
   heldLightWorldOffset = new THREE.Vector3();
   machineLightPosition = new THREE.Vector3();
@@ -4499,7 +4515,19 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
     });
-    this.scene.add(this.camera, this.world.group, this.basicWorldRenderer.group, this.ambienceGroup, this.creatureGroup, this.creatureLodBatcher.group, this.dropGroup, this.boatGroup, this.exhibitGroup, this.projectileGroup);
+    this.scene.add(
+      this.camera,
+      this.world.group,
+      this.basicWorldRenderer.group,
+      this.ambienceGroup,
+      this.creatureGroup,
+      this.creatureArticulatedBatcher.group,
+      this.creatureLodBatcher.group,
+      this.dropGroup,
+      this.boatGroup,
+      this.exhibitGroup,
+      this.projectileGroup,
+    );
     this.scene.add(this.butterflies.group);
     this.localPlayerModel.group.visible = false;
     this.scene.add(this.localPlayerModel.group);
@@ -6458,17 +6486,18 @@ export class VoxelEngine {
         if (mob.sentientTier === "full") heroCreatureDrawCalls += visibleMeshCount(mob.visual);
         continue;
       }
-      if (!mob.renderLodActive) heroCreatureDrawCalls += visibleMeshCount(mob.visual);
+      if (mob.renderTier === "hero") heroCreatureDrawCalls += visibleMeshCount(mob.visual);
     }
     const terrain = this.world.terrainSubmissionDiagnostics();
+    const articulatedCreatureDrawCalls = this.creatureArticulatedBatcher.diagnostics().activeBatches;
     const silhouetteCreatureDrawCalls = this.creatureLodBatcher.diagnostics().activeBatches;
     const attributed = terrain.visibleSectionMeshes + terrain.visibleCombinedMeshes
-      + heroCreatureDrawCalls + silhouetteCreatureDrawCalls;
+      + heroCreatureDrawCalls + articulatedCreatureDrawCalls + silhouetteCreatureDrawCalls;
     return {
       terrainSectionDrawCalls: terrain.visibleSectionMeshes,
       terrainCombinedDrawCalls: terrain.visibleCombinedMeshes,
       heroCreatureDrawCalls,
-      articulatedCreatureDrawCalls: 0,
+      articulatedCreatureDrawCalls,
       silhouetteCreatureDrawCalls,
       otherDrawCalls: Math.max(0, this.renderer.info.render.calls - attributed),
     } as const;
@@ -6529,6 +6558,8 @@ export class VoxelEngine {
         projectiles: this.projectiles.length,
         boats: this.boats.size,
         sleepingCreatures: this.sleepingCreatures.length,
+        renderAdmission: this.creatureRenderAdmission.diagnostics(),
+        articulatedRender: this.creatureArticulatedBatcher.diagnostics(),
         renderLod: this.creatureLodBatcher.diagnostics(),
         simulationTiers: this.mobs.reduce<Record<CreatureSimulationTier, number>>((counts, mob) => {
           counts[mob.simulationTier] += 1;
@@ -25484,45 +25515,124 @@ export class VoxelEngine {
   }
 
   updateCreatureRenderLods() {
-    const instances: CreatureLodInstance[] = [];
-    for (const mob of this.mobs) {
-      if (mob.definition.sentient) continue;
-      const distance = Math.hypot(this.position.x - mob.group.position.x, this.position.z - mob.group.position.z);
-      const protectedPresentation = this.targetMob === mob
-        || this.activePet === mob
-        || mob.id === this.mountedCreatureId
-        || this.leadAnchors.has(mob.id)
-        || Boolean(mob.dragonState || mob.legendaryEncounterId || mob.primeAnchorId || mob.groundedSummonLineageId)
-        || mob.persistentPoiResident
-        || mob.creatureTamed
-        || Boolean(mob.creatureOwnerId)
-        || mob.hurtTimer > 0
-        || mob.fleeTimer > 0
-        || (mob.hostile && distance < 80);
-      const useLod = mob.group.visible && distance >= 48 && !protectedPresentation;
-      mob.renderLodActive = useLod;
-      mob.visual.visible = !useLod;
-      if (!useLod) continue;
-      const authoredScale = clamp(Number(mob.visual.userData.authoredScale) || 1, 0.1, 2);
-      const scale = mob.visual.scale.x / authoredScale;
+    const now = performance.now();
+    if (now >= this.nextCreatureAdmissionAt) {
+      this.nextCreatureAdmissionAt = now + CREATURE_RENDER_ADMISSION_INTERVAL_MS;
+      this.camera.updateMatrixWorld();
+      this.creatureRenderViewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      this.creatureRenderFrustum.setFromProjectionMatrix(this.creatureRenderViewProjection);
+      const candidates: CreatureRenderCandidate[] = [];
+      for (const mob of this.mobs) {
+        if (mob.definition.sentient) continue;
+        const distance = Math.hypot(this.position.x - mob.group.position.x, this.position.z - mob.group.position.z);
+        const scale = this.mobBaseScale(mob);
+        const height = Math.max(0.16, mob.definition.height * scale);
+        const width = Math.max(0.16, mob.definition.radius * 2 * scale);
+        const baseY = mob.group.position.y - mob.definition.footOffset * scale;
+        this.creatureRenderSphere.center.set(mob.group.position.x, baseY + height * 0.5, mob.group.position.z);
+        this.creatureRenderSphere.radius = Math.max(width, height) * 0.72;
+        const inFrustum = mob.group.visible && (distance <= 16 || this.creatureRenderFrustum.intersectsSphere(this.creatureRenderSphere));
+        const critical = this.targetMob === mob
+          || this.activePet === mob
+          || mob.id === this.mountedCreatureId
+          || this.leadAnchors.has(mob.id)
+          || Boolean(mob.dragonState || mob.legendaryEncounterId || mob.primeAnchorId || mob.groundedSummonLineageId)
+          || mob.creatureTamed
+          || Boolean(mob.creatureOwnerId)
+          || mob.hurtTimer > 0
+          || mob.fleeTimer > 0;
+        const engaged = mob.hostile
+          && mob.seesPlayer
+          && distance <= Math.max(20, mob.definition.attackRange + 10)
+          && (mob.state === "chase" || mob.state === "windup" || mob.state === "recover");
+        candidates.push({
+          id: mob.id,
+          distance,
+          projectedSize: height / Math.max(1, distance) / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) * 0.5),
+          inFrustum,
+          critical,
+          important: mob.persistentPoiResident,
+          engaged,
+        });
+      }
+      const admission = this.creatureRenderAdmission.evaluate(candidates, {
+        averageFrameMilliseconds: this.averageFrameMs,
+        drawCalls: this.renderer.info.render.calls,
+        lowResourceMode: this.settings.resourceMode === "cpu" || this.agentMode,
+      }, now);
+      for (const mob of this.mobs) {
+        if (mob.definition.sentient) continue;
+        const tier = this.creatureRenderAdmission.tierFor(mob.id);
+        mob.renderTier = tier;
+        mob.renderLodActive = tier !== "hero";
+        mob.visual.visible = tier === "hero";
+      }
+      if (admission.transitions > 0) {
+        this.nextArticulatedPresentationAt = 0;
+        this.nextSilhouettePresentationAt = 0;
+      }
+    }
+
+    const presentationInstance = (mob: MobEntity) => {
+      const scale = this.mobBaseScale(mob);
       const height = Math.max(0.16, mob.definition.height * scale);
       const width = Math.max(0.16, mob.definition.radius * 2 * scale);
-      const depth = width * (mob.definition.aquatic ? 1.55 : 0.9);
-      instances.push({
-        kind: mob.kind,
-        color: mob.definition.colors[0],
+      const depth = width * (mob.definition.aquatic ? 1.55 : mob.definition.flying ? 1.18 : 0.9);
+      return {
+        scale,
+        height,
+        width,
+        depth,
         position: {
           x: mob.group.position.x,
           y: mob.group.position.y - mob.definition.footOffset * scale,
           z: mob.group.position.z,
         },
-        yaw: mob.group.rotation.y,
-        width,
-        height,
-        depth,
-      });
+      } as const;
+    };
+
+    if (now >= this.nextArticulatedPresentationAt) {
+      this.nextArticulatedPresentationAt = now + 50;
+      const instances: ArticulatedCreatureInstance[] = [];
+      for (const mob of this.mobs) {
+        if (mob.definition.sentient || mob.renderTier !== "articulated" || !mob.group.visible) continue;
+        const presentation = presentationInstance(mob);
+        instances.push({
+          id: mob.id,
+          kind: mob.kind,
+          color: mob.definition.colors[0],
+          accentColor: mob.definition.colors[1] ?? mob.definition.colors[0],
+          movement: mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground"),
+          position: presentation.position,
+          yaw: mob.group.rotation.y,
+          width: presentation.width,
+          height: presentation.height,
+          depth: presentation.depth,
+          gait: mob.gait,
+          age: mob.age,
+        });
+      }
+      this.creatureArticulatedBatcher.update(instances);
     }
-    this.creatureLodBatcher.update(instances);
+
+    if (now >= this.nextSilhouettePresentationAt) {
+      this.nextSilhouettePresentationAt = now + 100;
+      const instances: CreatureLodInstance[] = [];
+      for (const mob of this.mobs) {
+        if (mob.definition.sentient || mob.renderTier !== "silhouette" || !mob.group.visible) continue;
+        const presentation = presentationInstance(mob);
+        instances.push({
+          kind: mob.kind,
+          color: mob.definition.colors[0],
+          position: presentation.position,
+          yaw: mob.group.rotation.y,
+          width: presentation.width,
+          height: presentation.height,
+          depth: presentation.depth,
+        });
+      }
+      this.creatureLodBatcher.update(instances);
+    }
   }
 
   /** Scale around the creature's original foot plane, never around its belly. */
@@ -25703,7 +25813,7 @@ export class VoxelEngine {
     const mob: MobEntity = {
       id, specimenId, kind, name: options.name?.trim() || primeProfile?.name || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, presentationRoot, visual,
       sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0,
-      simulationTier: "full", simulationAccumulator: 0, renderLodActive: false, parts,
+      simulationTier: "full", simulationAccumulator: 0, renderLodActive: false, renderTier: "hero", parts,
       health: options.health ?? dragonState?.health ?? petState?.health ?? ordinaryMaximumHealth,
       maxHealth: dragonState?.maxHealth ?? petState?.maxHealth ?? ordinaryMaximumHealth,
       damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage * creatureOutputMultiplier(profile.stats, progression.level), angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
@@ -26639,6 +26749,10 @@ export class VoxelEngine {
   animateMob(mob: MobEntity, moved: number) {
     mob.gait += moved * 9;
     mob.bob += moved * 4;
+    // Middle- and far-tier animation is expressed by the shared batch matrix;
+    // avoid walking every hidden authored hierarchy merely to mutate transforms
+    // the renderer will not submit.
+    if (!mob.definition.sentient && mob.renderTier && mob.renderTier !== "hero") return;
     if (mob.dragonState) {
       const attack = mob.dragonAttackAnimation;
       const surface = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
@@ -30069,6 +30183,10 @@ export class VoxelEngine {
     this.seatedAt = null;
     this.butterflies.clear();
     while (this.mobs.length) this.removeMob(this.mobs.length - 1);
+    this.creatureRenderAdmission.reset();
+    this.creatureArticulatedBatcher.update([]);
+    this.creatureLodBatcher.update([]);
+    this.nextCreatureAdmissionAt = 0;
     this.sleepingCreatures = [];
     this.sleepingCreatureWakeTimer = 0;
     this.ecologySectors.clear();
@@ -33004,6 +33122,7 @@ export class VoxelEngine {
     this.unlockFullscreenEscape();
     this.saveNow(false);
     this.worldStorage.dispose();
+    this.creatureArticulatedBatcher.dispose();
     this.creatureLodBatcher.dispose();
     cancelAnimationFrame(this.animationFrame);
     window.clearTimeout(this.saveTimer);
