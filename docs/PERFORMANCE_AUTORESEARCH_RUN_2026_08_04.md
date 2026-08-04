@@ -25,7 +25,8 @@ Status: contract frozen; ten-pass loop active
 | ---: | --- | ---: | ---: | --- | --- |
 | 1 | Replace the articulated batcher's sizing allocation with fixed movement-tier part counts. | 1.1003x | 1.3816x | Discarded; paired measurement regressed the targeted admission/articulation p95 from 0.2087 to 0.2705 ms. | `e3b1201` |
 | 2 | Fuse admission candidate collection, visibility/critical counts, and live-id collection into one scan. | 0.9453x | 1.1286x | Discarded; admission p95 improved, but unrelated stationary/cavern tails breached the frozen 5% floor. | `a4eaf7d` |
-| 3 | Select immediate-ring work in one pass instead of allocating and sorting nine candidates each frame. | 1.0303x | 1.3577x | Discarded; overall score regressed and the 100-creature LOD tail exceeded the floor. | pending |
+| 3 | Select immediate-ring work in one pass instead of allocating and sorting nine candidates each frame. | 1.0303x | 1.3577x | Discarded; overall score regressed and the 100-creature LOD tail exceeded the floor. | `d4b61e6` |
+| 4 | Configure instanced creature color buffers once per allocation instead of once per presentation update. | 1.0115x | 1.1314x | Discarded; both aggregate and admission/articulation p95 regressed. | pending |
 
 ## Frozen baseline
 
