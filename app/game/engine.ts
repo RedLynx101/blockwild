@@ -4037,6 +4037,7 @@ export class VoxelEngine {
   budgetController = new AdaptiveBudgetController();
   gpuTimer: WebGlGpuTimer;
   performanceReportTimer = 0;
+  performancePhaseFrame = 0;
   averageFps = 60;
   yaw = 0;
   pitch = 0;
@@ -6430,6 +6431,47 @@ export class VoxelEngine {
 
   private ensureCaptureSystemDiagnostics() {
     return this.captureSystemDiagnostics ??= createCaptureSystemDiagnostics();
+  }
+
+  /**
+   * A sampled attribution pass. It intentionally runs at a low cadence: the
+   * renderer remains authoritative for the total while these buckets explain
+   * which broad presentation systems created that work.
+   */
+  private renderBucketDiagnostics() {
+    const visibleMeshCount = (root: THREE.Object3D) => {
+      let count = 0;
+      root.traverse((object) => {
+        if (!(object as THREE.Mesh).isMesh) return;
+        let current: THREE.Object3D | null = object;
+        while (current && current !== root.parent) {
+          if (!current.visible) return;
+          current = current.parent;
+        }
+        count += 1;
+      });
+      return count;
+    };
+    let heroCreatureDrawCalls = 0;
+    for (const mob of this.mobs) {
+      if (mob.definition.sentient) {
+        if (mob.sentientTier === "full") heroCreatureDrawCalls += visibleMeshCount(mob.visual);
+        continue;
+      }
+      if (!mob.renderLodActive) heroCreatureDrawCalls += visibleMeshCount(mob.visual);
+    }
+    const terrain = this.world.terrainSubmissionDiagnostics();
+    const silhouetteCreatureDrawCalls = this.creatureLodBatcher.diagnostics().activeBatches;
+    const attributed = terrain.visibleSectionMeshes + terrain.visibleCombinedMeshes
+      + heroCreatureDrawCalls + silhouetteCreatureDrawCalls;
+    return {
+      terrainSectionDrawCalls: terrain.visibleSectionMeshes,
+      terrainCombinedDrawCalls: terrain.visibleCombinedMeshes,
+      heroCreatureDrawCalls,
+      articulatedCreatureDrawCalls: 0,
+      silhouetteCreatureDrawCalls,
+      otherDrawCalls: Math.max(0, this.renderer.info.render.calls - attributed),
+    } as const;
   }
 
   performanceTelemetrySnapshot() {
@@ -31210,6 +31252,12 @@ export class VoxelEngine {
     const activeFrameStartedAt = performance.now();
     const rawDt = (now - this.previousTime) / 1000;
     const dt = Math.min(0.08, Math.max(0, rawDt));
+    this.performancePhaseFrame += 1;
+    const phaseSampled = this.performancePhaseFrame % 12 === 0
+      || (rawDt * 1000 >= 50 && this.performancePhaseFrame % 3 === 0);
+    let creaturePresentationMilliseconds = 0;
+    let environmentPresentationMilliseconds = 0;
+    let hudMilliseconds = 0;
     this.previousTime = now;
     this.updateAdaptiveResolution(rawDt);
     this.placeCooldown = Math.max(0, this.placeCooldown - dt);
@@ -31323,7 +31371,9 @@ export class VoxelEngine {
         mobSimulationMilliseconds = performance.now() - mobSimulationStartedAt;
         this.updateRemotePlayerMobDamage();
       }
+      const creaturePresentationStartedAt = phaseSampled ? performance.now() : 0;
       this.updateCreatureRenderLods();
+      if (phaseSampled) creaturePresentationMilliseconds += performance.now() - creaturePresentationStartedAt;
       this.updateLeads();
       if (!multiplayerGuest) this.updateStructureSpawns(dt);
       this.smallEntityPositions.length = 0;
@@ -31347,6 +31397,7 @@ export class VoxelEngine {
       this.updateTransientDestructionPresentation(dt);
     }
     if (this.running && !this.titleMode) this.updateMultiplayer(dt);
+    const environmentPresentationStartedAt = phaseSampled ? performance.now() : 0;
     if (!this.agentMode) this.updateRain(dt);
     this.world.updateWaterAnimation(now);
     this.syncExhibitVisuals(false, dt);
@@ -31359,6 +31410,7 @@ export class VoxelEngine {
       if (this.cloudMesh) this.cloudMesh.position.set(this.cloudDrift.x, 0, this.cloudDrift.z);
       this.refreshCloudField(false, dt);
     }
+    if (phaseSampled) environmentPresentationMilliseconds += performance.now() - environmentPresentationStartedAt;
     const renderStartedAt = performance.now();
     const simulationMilliseconds = Math.max(0, renderStartedAt - simulationStartedAt - chunkWorkMilliseconds);
     let gpuMilliseconds = this.gpuTimer.poll();
@@ -31370,10 +31422,12 @@ export class VoxelEngine {
     }
     const renderSubmissionMilliseconds = Math.max(0, performance.now() - renderStartedAt);
     const renderCompletedAt = performance.now();
+    const renderBuckets = phaseSampled ? this.renderBucketDiagnostics() : null;
     this.lastPresentedFrameTime = renderCompletedAt;
     this.resetLookFrameBudget();
     const sampleBase = {
       frameMilliseconds: rawDt * 1000,
+      phaseSampled,
       simulationMilliseconds,
       mobSimulationMilliseconds,
       chunkWorkMilliseconds,
@@ -31390,6 +31444,9 @@ export class VoxelEngine {
       drawCalls: this.renderer.info.render.calls,
       geometries: this.renderer.info.memory.geometries,
       textures: this.renderer.info.memory.textures,
+      creaturePresentationMilliseconds,
+      environmentPresentationMilliseconds,
+      ...(renderBuckets ?? {}),
     } as const;
     this.performanceReportTimer += dt;
     if (this.performanceReportTimer >= 1.5) {
@@ -31411,12 +31468,15 @@ export class VoxelEngine {
         else { this.autoSaveAccumulator = 0; this.scheduleAutoSave(); }
       }
     }
+    const hudStartedAt = phaseSampled ? performance.now() : 0;
     this.emitHud(false, now);
+    if (phaseSampled) hudMilliseconds = performance.now() - hudStartedAt;
     const frameWorkCompletedAt = performance.now();
     const sample = {
       ...sampleBase,
       activeCpuMilliseconds: Math.max(0, frameWorkCompletedAt - activeFrameStartedAt),
       postRenderMilliseconds: Math.max(0, frameWorkCompletedAt - renderCompletedAt),
+      hudMilliseconds,
     } as const;
     this.performanceSampler.record(sample);
     this.telemetryIntervalSampler.record(sample);

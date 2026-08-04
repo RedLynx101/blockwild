@@ -129,6 +129,8 @@ export function chunkOffsetsByDistance(distance: number) {
 
 export type PerformanceSample = Readonly<{
   frameMilliseconds: number;
+  /** Expensive sub-phase counters are sampled, not collected on every frame. */
+  phaseSampled?: boolean;
   activeCpuMilliseconds?: number;
   simulationMilliseconds?: number;
   mobSimulationMilliseconds?: number;
@@ -140,6 +142,9 @@ export type PerformanceSample = Readonly<{
   chunkInstallationMilliseconds?: number;
   renderSubmissionMilliseconds?: number;
   postRenderMilliseconds?: number;
+  creaturePresentationMilliseconds?: number;
+  environmentPresentationMilliseconds?: number;
+  hudMilliseconds?: number;
   gpuMilliseconds?: number;
   visibleChunks?: number;
   simulatedEntities?: number;
@@ -147,10 +152,17 @@ export type PerformanceSample = Readonly<{
   drawCalls?: number;
   geometries?: number;
   textures?: number;
+  terrainSectionDrawCalls?: number;
+  terrainCombinedDrawCalls?: number;
+  heroCreatureDrawCalls?: number;
+  articulatedCreatureDrawCalls?: number;
+  silhouetteCreatureDrawCalls?: number;
+  otherDrawCalls?: number;
 }>;
 
 export type PerformanceSummary = Readonly<{
   sampleCount: number;
+  phaseSampleCount: number;
   averageFrameMilliseconds: number;
   p50FrameMilliseconds: number;
   p95FrameMilliseconds: number;
@@ -168,6 +180,9 @@ export type PerformanceSummary = Readonly<{
   averageChunkInstallationMilliseconds: number;
   averageRenderSubmissionMilliseconds: number;
   averagePostRenderMilliseconds: number;
+  averageCreaturePresentationMilliseconds: number;
+  averageEnvironmentPresentationMilliseconds: number;
+  averageHudMilliseconds: number;
   averageGpuMilliseconds: number | null;
   gpuSampleCount: number;
   peakVisibleChunks: number;
@@ -176,6 +191,12 @@ export type PerformanceSummary = Readonly<{
   peakDrawCalls: number;
   peakGeometries: number;
   peakTextures: number;
+  peakTerrainSectionDrawCalls: number;
+  peakTerrainCombinedDrawCalls: number;
+  peakHeroCreatureDrawCalls: number;
+  peakArticulatedCreatureDrawCalls: number;
+  peakSilhouetteCreatureDrawCalls: number;
+  peakOtherDrawCalls: number;
   frameHistogram: readonly Readonly<{ upperBoundMilliseconds: number; count: number }>[];
 }>;
 
@@ -208,6 +229,7 @@ export class PerformanceSampler {
   record(sample: PerformanceSample) {
     const normalized: PerformanceSample = {
       frameMilliseconds: Math.max(0, Number.isFinite(sample.frameMilliseconds) ? sample.frameMilliseconds : 0),
+      phaseSampled: sample.phaseSampled === true,
       activeCpuMilliseconds: Math.max(0, sample.activeCpuMilliseconds ?? 0),
       simulationMilliseconds: Math.max(0, sample.simulationMilliseconds ?? 0),
       mobSimulationMilliseconds: Math.max(0, sample.mobSimulationMilliseconds ?? 0),
@@ -219,6 +241,9 @@ export class PerformanceSampler {
       chunkInstallationMilliseconds: Math.max(0, sample.chunkInstallationMilliseconds ?? 0),
       renderSubmissionMilliseconds: Math.max(0, sample.renderSubmissionMilliseconds ?? 0),
       postRenderMilliseconds: Math.max(0, sample.postRenderMilliseconds ?? 0),
+      creaturePresentationMilliseconds: sample.phaseSampled ? Math.max(0, sample.creaturePresentationMilliseconds ?? 0) : undefined,
+      environmentPresentationMilliseconds: sample.phaseSampled ? Math.max(0, sample.environmentPresentationMilliseconds ?? 0) : undefined,
+      hudMilliseconds: sample.phaseSampled ? Math.max(0, sample.hudMilliseconds ?? 0) : undefined,
       gpuMilliseconds: sample.gpuMilliseconds === undefined || !Number.isFinite(sample.gpuMilliseconds)
         ? undefined
         : Math.max(0, sample.gpuMilliseconds),
@@ -228,6 +253,12 @@ export class PerformanceSampler {
       drawCalls: Math.max(0, Math.round(sample.drawCalls ?? 0)),
       geometries: Math.max(0, Math.round(sample.geometries ?? 0)),
       textures: Math.max(0, Math.round(sample.textures ?? 0)),
+      terrainSectionDrawCalls: sample.phaseSampled ? Math.max(0, Math.round(sample.terrainSectionDrawCalls ?? 0)) : undefined,
+      terrainCombinedDrawCalls: sample.phaseSampled ? Math.max(0, Math.round(sample.terrainCombinedDrawCalls ?? 0)) : undefined,
+      heroCreatureDrawCalls: sample.phaseSampled ? Math.max(0, Math.round(sample.heroCreatureDrawCalls ?? 0)) : undefined,
+      articulatedCreatureDrawCalls: sample.phaseSampled ? Math.max(0, Math.round(sample.articulatedCreatureDrawCalls ?? 0)) : undefined,
+      silhouetteCreatureDrawCalls: sample.phaseSampled ? Math.max(0, Math.round(sample.silhouetteCreatureDrawCalls ?? 0)) : undefined,
+      otherDrawCalls: sample.phaseSampled ? Math.max(0, Math.round(sample.otherDrawCalls ?? 0)) : undefined,
     };
     if (this.samples.length < this.capacity) this.samples.push(normalized);
     else {
@@ -239,14 +270,22 @@ export class PerformanceSampler {
   summary(longFrameThresholdMilliseconds = 25): PerformanceSummary {
     const frames = this.samples.map((sample) => sample.frameMilliseconds).sort((a, b) => a - b);
     const sampleCount = frames.length;
+    const phaseSamples = this.samples.filter((sample) => sample.phaseSampled);
+    const phaseSampleCount = phaseSamples.length;
     const sum = (selector: (sample: PerformanceSample) => number) =>
       this.samples.reduce((total, sample) => total + selector(sample), 0);
     const averageFrameMilliseconds = sampleCount ? sum((sample) => sample.frameMilliseconds) / sampleCount : 0;
     const max = (selector: (sample: PerformanceSample) => number) =>
       this.samples.reduce((peak, sample) => Math.max(peak, selector(sample)), 0);
+    const phaseAverage = (selector: (sample: PerformanceSample) => number) => phaseSampleCount
+      ? phaseSamples.reduce((total, sample) => total + selector(sample), 0) / phaseSampleCount
+      : 0;
+    const phaseMax = (selector: (sample: PerformanceSample) => number) =>
+      phaseSamples.reduce((peak, sample) => Math.max(peak, selector(sample)), 0);
     const gpuSamples = this.samples.filter((sample) => sample.gpuMilliseconds !== undefined);
     return {
       sampleCount,
+      phaseSampleCount,
       averageFrameMilliseconds,
       p50FrameMilliseconds: percentile(frames, 0.5),
       p95FrameMilliseconds: percentile(frames, 0.95),
@@ -264,6 +303,9 @@ export class PerformanceSampler {
       averageChunkInstallationMilliseconds: sampleCount ? sum((sample) => sample.chunkInstallationMilliseconds ?? 0) / sampleCount : 0,
       averageRenderSubmissionMilliseconds: sampleCount ? sum((sample) => sample.renderSubmissionMilliseconds ?? 0) / sampleCount : 0,
       averagePostRenderMilliseconds: sampleCount ? sum((sample) => sample.postRenderMilliseconds ?? 0) / sampleCount : 0,
+      averageCreaturePresentationMilliseconds: phaseAverage((sample) => sample.creaturePresentationMilliseconds ?? 0),
+      averageEnvironmentPresentationMilliseconds: phaseAverage((sample) => sample.environmentPresentationMilliseconds ?? 0),
+      averageHudMilliseconds: phaseAverage((sample) => sample.hudMilliseconds ?? 0),
       averageGpuMilliseconds: gpuSamples.length
         ? gpuSamples.reduce((total, sample) => total + (sample.gpuMilliseconds ?? 0), 0) / gpuSamples.length
         : null,
@@ -274,6 +316,12 @@ export class PerformanceSampler {
       peakDrawCalls: max((sample) => sample.drawCalls ?? 0),
       peakGeometries: max((sample) => sample.geometries ?? 0),
       peakTextures: max((sample) => sample.textures ?? 0),
+      peakTerrainSectionDrawCalls: phaseMax((sample) => sample.terrainSectionDrawCalls ?? 0),
+      peakTerrainCombinedDrawCalls: phaseMax((sample) => sample.terrainCombinedDrawCalls ?? 0),
+      peakHeroCreatureDrawCalls: phaseMax((sample) => sample.heroCreatureDrawCalls ?? 0),
+      peakArticulatedCreatureDrawCalls: phaseMax((sample) => sample.articulatedCreatureDrawCalls ?? 0),
+      peakSilhouetteCreatureDrawCalls: phaseMax((sample) => sample.silhouetteCreatureDrawCalls ?? 0),
+      peakOtherDrawCalls: phaseMax((sample) => sample.otherDrawCalls ?? 0),
       frameHistogram: FRAME_HISTOGRAM_BOUNDS_MS.map((upperBoundMilliseconds) => ({
         upperBoundMilliseconds,
         count: frames.filter((frame) => frame <= upperBoundMilliseconds).length,

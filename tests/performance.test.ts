@@ -58,6 +58,7 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   const smooth = new PerformanceSampler(60);
   for (let index = 0; index < 60; index += 1) smooth.record({
     frameMilliseconds: 10,
+    phaseSampled: index % 12 === 0,
     activeCpuMilliseconds: 8,
     mobSimulationMilliseconds: 2,
     chunkWorkMilliseconds: 4,
@@ -72,6 +73,15 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
     drawCalls: 780,
     geometries: 640,
     textures: 38,
+    creaturePresentationMilliseconds: 0.75,
+    environmentPresentationMilliseconds: 0.5,
+    hudMilliseconds: 0.25,
+    terrainSectionDrawCalls: 40,
+    terrainCombinedDrawCalls: 20,
+    heroCreatureDrawCalls: 80,
+    articulatedCreatureDrawCalls: 1,
+    silhouetteCreatureDrawCalls: 1,
+    otherDrawCalls: 638,
   });
   const smoothSummary = smooth.summary();
   assert.equal(smoothSummary.sampleCount, 60);
@@ -90,6 +100,13 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   assert.equal(smoothSummary.averageRenderSubmissionMilliseconds, 1.25);
   assert.equal(smoothSummary.averageGpuMilliseconds, 4);
   assert.equal(smoothSummary.gpuSampleCount, 60);
+  assert.equal(smoothSummary.phaseSampleCount, 5);
+  assert.equal(smoothSummary.averageCreaturePresentationMilliseconds, 0.75);
+  assert.equal(smoothSummary.averageEnvironmentPresentationMilliseconds, 0.5);
+  assert.equal(smoothSummary.averageHudMilliseconds, 0.25);
+  assert.equal(smoothSummary.peakHeroCreatureDrawCalls, 80);
+  assert.equal(smoothSummary.peakArticulatedCreatureDrawCalls, 1);
+  assert.equal(smoothSummary.peakSilhouetteCreatureDrawCalls, 1);
   assert.equal(classifyBudgetPressure(smoothSummary), "headroom");
   assert.equal(classifyBudgetPressure({ ...smoothSummary, p95FrameMilliseconds: 16, averageActiveCpuMilliseconds: 7 }, 1000 / 60, {
     weightedDebt: 20,

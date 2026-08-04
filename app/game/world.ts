@@ -8827,22 +8827,27 @@ export class ChunkWorld {
     return { weightedDebt, oldestNearJobMilliseconds } as const;
   }
 
-  private terrainSubmissionDiagnostics() {
+  terrainSubmissionDiagnostics() {
     let sectionMeshes = 0;
     let visibleSectionMeshes = 0;
     let combinedMeshes = 0;
+    let visibleCombinedMeshes = 0;
     for (const chunk of this.chunks.values()) {
       for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) {
         sectionMeshes += 1;
-        if (mesh.visible) visibleSectionMeshes += 1;
+        if (chunk.group.visible && mesh.visible) visibleSectionMeshes += 1;
       }
-      for (const mesh of Object.values(chunk.combinedMeshes)) if (mesh) combinedMeshes += 1;
+      for (const mesh of Object.values(chunk.combinedMeshes)) if (mesh) {
+        combinedMeshes += 1;
+        if (chunk.group.visible && mesh.visible) visibleCombinedMeshes += 1;
+      }
     }
     return {
       sectionMeshes,
       visibleSectionMeshes,
       combinedMeshes,
-      submittedMeshes: visibleSectionMeshes + combinedMeshes,
+      visibleCombinedMeshes,
+      submittedMeshes: visibleSectionMeshes + visibleCombinedMeshes,
       geometriesCreated: this.terrainGeometriesCreated,
       geometriesDisposed: this.terrainGeometriesDisposed,
       liveGeometryBytes: this.liveTerrainGeometryBytes,
