@@ -3,7 +3,7 @@
 Run tag: `2026-08-04-frame-streaming-10`  
 Base commit: `3b15bd9aa7f0ea69b3fac1c8c861e84e3d778db6`  
 Branch: `codex/autoresearch-2026-08-04`  
-Status: contract frozen; ten-pass loop active
+Status: complete; ten of ten passes measured and committed
 
 ## Frozen contract
 
@@ -32,7 +32,7 @@ Status: contract frozen; ten-pass loop active
 | 7 | Reuse edit-layer scratch storage and face-neighbor offsets during block-batch invalidation. | 1.1260x | 1.5668x | Discarded; edit and traversal tails regressed materially despite passing correctness tests. | `de6c10e` |
 | 8 | Emit articulated instances directly rather than allocating temporary per-part objects and arrays. | 0.9507x | 1.2679x | Discarded; targeted p95 improved 45.7%, but two confirmations reproduced unrelated scenario-floor breaches, so the strict contract vetoed retention. | `9673f5e` |
 | 9 | Set distant-instance yaw directly around the vertical axis instead of converting an Euler per creature. | 1.0150x | 1.3469x | Discarded; LOD p95 improved, but aggregate and player-edit tails regressed. | `9fba5fa` |
-| 10 | Reuse admission ranking and ID scratch collections while fusing its candidate diagnostics scan. | 1.1186x | 2.0165x | Discarded; admission and unrelated LOD tails both regressed, despite correctness passing. | pending |
+| 10 | Reuse admission ranking and ID scratch collections while fusing its candidate diagnostics scan. | 1.1186x | 2.0165x | Discarded; admission and unrelated LOD tails both regressed, despite correctness passing. | `e46f6f7` |
 
 ## Frozen baseline
 
@@ -56,6 +56,24 @@ Five repetitions produced a `4.6812 ms` geometric mean of scenario median p95 va
 The before, midpoint, final gameplay frames and the generated metric timeline are stored under [`docs/artifacts/performance-autoresearch-2026-08-04/`](artifacts/performance-autoresearch-2026-08-04/).
 
 At midpoint, the exact production runtime reached live Frostpine Taiga gameplay with a complete immediate ring, two ready generation workers, zero worker failures, six nearby mobs, and no browser error artifact. The frame was manually reviewed before retention.
+
+The final exact-runtime frame reached live Flower Meadow gameplay with the player chunk ready, a complete immediate ring, two ready generation workers, zero worker failures, nine nearby mobs, and no browser error artifact. The before, midpoint, final, and timeline images were all manually reviewed.
+
+## Final outcome
+
+- **Passes:** 10/10 completed, measured, and individually committed.
+- **Retention:** 0 promoted, 10 discarded. Every rejected source mutation was reversed before its evidence commit; the production gameplay source remains byte-identical to the starting champion.
+- **Final revalidation:** five unchanged-source repetitions produced a `4.7004 ms` geometric mean of scenario median p95 values, or `1.0041x` the initial baseline. All six fidelity and correctness guardrails passed. The 0.41% difference is within ordinary host noise and is not claimed as a regression or improvement.
+- **Most useful lead:** pass 8 reduced the targeted admission/articulation p95 by 45.7% and the aggregate score by 4.9%, but two confirmations reproduced unrelated scenario regressions beyond the fixed 1.05x floor. It remains a promising hypothesis, not safe production code.
+- **Protocol lesson:** sequential scenario timing is sensitive to unrelated host-tail noise. A future run should use randomized or interleaved A/B/A samples and scenario-attributed confirmation while preserving the same correctness and fidelity vetoes. This run's evaluator was not changed retroactively.
+
+## Release validation
+
+- The frozen evaluator and benchmark checksums match the setup commit after pass ten.
+- The evaluator unit test, native TypeScript check, scoped ESLint, and whitespace validation pass.
+- The complete deterministic gameplay/content suite passes 833/833; rendered-page and audio checks pass 10/10.
+- The native Next/Webpack production build compiles, type-checks, prerenders, and traces `/`, `/agent`, and `/wiki`. Its two circular-chunk warnings are pre-existing and non-fatal.
+- The umbrella `npm test` reaches its legacy WSL Sites wrapper only after the pretest matrix passes; that wrapper cannot create an Ubuntu instance from this Windows-owned checkout (`E_ACCESSDENIED`). Native production validation and the source-backed Sites release path are used without mutating shared dependencies.
 
 ## Claim boundary
 

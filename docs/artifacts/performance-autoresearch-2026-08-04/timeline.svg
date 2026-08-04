@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Blockwild ten-pass performance autoresearch timeline</title>
+  <desc id="desc">All ten candidates were rejected by the frozen global guardrails, so the retained champion remained at the baseline across the run.</desc>
+  <rect width="1200" height="760" fill="#0b1212"/>
+  <text x="60" y="58" fill="#f2d277" font-family="Georgia,serif" font-size="30" font-weight="700">BLOCKWILD PERFORMANCE AUTORESEARCH</text>
+  <text x="60" y="88" fill="#a8bab0" font-family="ui-monospace,monospace" font-size="14">10 controlled passes · lower is better · every pass committed · frozen evaluator</text>
+
+  <rect x="60" y="116" width="1080" height="394" rx="14" fill="#111c1a" stroke="#40584d" stroke-width="2"/>
+  <rect x="85" y="337" width="1030" height="145" fill="#163326" opacity="0.55"/>
+  <line x1="85" y1="330" x2="1115" y2="330" stroke="#e7eadf" stroke-width="2"/>
+  <line x1="85" y1="337" x2="1115" y2="337" stroke="#77d7a3" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="95" y="320" fill="#e7eadf" font-family="ui-monospace,monospace" font-size="13">1.0000× current champion</text>
+  <text x="95" y="358" fill="#77d7a3" font-family="ui-monospace,monospace" font-size="13">≤0.9925× aggregate keep zone (global scenario floor still required)</text>
+  <text x="85" y="142" fill="#d6ded8" font-family="ui-monospace,monospace" font-size="15" font-weight="700">CANDIDATE SCORE VS CURRENT CHAMPION</text>
+
+  <g stroke="#d99b4b" stroke-width="4" fill="#f2c46f">
+    <line x1="145" y1="330" x2="145" y2="240"/><circle cx="145" cy="240" r="8"/>
+    <line x1="245" y1="330" x2="245" y2="379"/><circle cx="245" cy="379" r="8"/>
+    <line x1="345" y1="330" x2="345" y2="303"/><circle cx="345" cy="303" r="8"/>
+    <line x1="445" y1="330" x2="445" y2="320"/><circle cx="445" cy="320" r="8"/>
+    <line x1="545" y1="330" x2="545" y2="320"/><circle cx="545" cy="320" r="8"/>
+    <line x1="645" y1="330" x2="645" y2="329"/><circle cx="645" cy="329" r="8"/>
+    <line x1="745" y1="330" x2="745" y2="217"/><circle cx="745" cy="217" r="8"/>
+    <line x1="845" y1="330" x2="845" y2="374"/><circle cx="845" cy="374" r="8"/>
+    <line x1="945" y1="330" x2="945" y2="317"/><circle cx="945" cy="317" r="8"/>
+    <line x1="1045" y1="330" x2="1045" y2="223"/><circle cx="1045" cy="223" r="8"/>
+  </g>
+
+  <g fill="#f0e5cf" font-family="ui-monospace,monospace" font-size="12" text-anchor="middle">
+    <text x="145" y="226">1.1003×</text><text x="145" y="470">P1</text>
+    <text x="245" y="399">0.9453×</text><text x="245" y="470">P2</text>
+    <text x="345" y="289">1.0303×</text><text x="345" y="470">P3</text>
+    <text x="445" y="306">1.0115×</text><text x="445" y="470">P4</text>
+    <text x="545" y="306">1.0116×</text><text x="545" y="470">P5</text>
+    <text x="645" y="315">1.0008×</text><text x="645" y="470">P6</text>
+    <text x="745" y="203">1.1260×</text><text x="745" y="470">P7</text>
+    <text x="845" y="394">0.9507×</text><text x="845" y="470">P8</text>
+    <text x="945" y="303">1.0150×</text><text x="945" y="470">P9</text>
+    <text x="1045" y="209">1.1186×</text><text x="1045" y="470">P10</text>
+  </g>
+  <text x="800" y="423" fill="#f2c46f" font-family="ui-monospace,monospace" font-size="12">P8 articulation p95: −45.7% (targeted)</text>
+  <text x="800" y="442" fill="#d8a77b" font-family="ui-monospace,monospace" font-size="12">Rejected: unrelated global tails &gt; 1.05×</text>
+
+  <rect x="60" y="536" width="1080" height="164" rx="14" fill="#111c1a" stroke="#40584d" stroke-width="2"/>
+  <text x="85" y="568" fill="#d6ded8" font-family="ui-monospace,monospace" font-size="15" font-weight="700">RETAINED CHAMPION OVER TIME</text>
+  <polyline points="110,625 205,625 300,625 395,625 490,625 585,625 680,625 775,625 870,625 965,625 1060,625" fill="none" stroke="#77d7a3" stroke-width="5"/>
+  <g fill="#b8f0cd" stroke="#0b1212" stroke-width="2">
+    <circle cx="110" cy="625" r="7"/><circle cx="205" cy="625" r="7"/><circle cx="300" cy="625" r="7"/><circle cx="395" cy="625" r="7"/><circle cx="490" cy="625" r="7"/><circle cx="585" cy="625" r="7"/><circle cx="680" cy="625" r="7"/><circle cx="775" cy="625" r="7"/><circle cx="870" cy="625" r="7"/><circle cx="965" cy="625" r="7"/><circle cx="1060" cy="625" r="7"/>
+  </g>
+  <g fill="#a8bab0" font-family="ui-monospace,monospace" font-size="12" text-anchor="middle">
+    <text x="110" y="653">BASE</text><text x="205" y="653">1</text><text x="300" y="653">2</text><text x="395" y="653">3</text><text x="490" y="653">4</text><text x="585" y="653">5</text><text x="680" y="653">6</text><text x="775" y="653">7</text><text x="870" y="653">8</text><text x="965" y="653">9</text><text x="1060" y="653">10</text>
+  </g>
+  <text x="85" y="681" fill="#e7eadf" font-family="ui-monospace,monospace" font-size="13">Champion stayed 1.0000×: no noisy candidate was promoted.</text>
+  <text x="60" y="735" fill="#82968b" font-family="ui-monospace,monospace" font-size="12">Final unchanged-source revalidation: 1.0041× baseline; all six fidelity/correctness guardrails passed.</text>
+</svg>
