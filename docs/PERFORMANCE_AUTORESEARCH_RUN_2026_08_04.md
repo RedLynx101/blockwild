@@ -30,7 +30,8 @@ Status: contract frozen; ten-pass loop active
 | 5 | Reuse the exact nine immediate-ring priority records rather than rebuilding them each frame. | 1.0116x | 1.2054x | Discarded; steady traversal did not improve and cavern p95 breached the floor. | `f67ffef` |
 | 6 | Track remaining streaming work with a scalar instead of rescanning its four quotas in the hot loop. | 1.0008x | 1.5074x | Discarded; aggregate change was inconclusive and player-edit p95 breached the floor. | `61895bb` |
 | 7 | Reuse edit-layer scratch storage and face-neighbor offsets during block-batch invalidation. | 1.1260x | 1.5668x | Discarded; edit and traversal tails regressed materially despite passing correctness tests. | `de6c10e` |
-| 8 | Emit articulated instances directly rather than allocating temporary per-part objects and arrays. | 0.9507x | 1.2679x | Discarded; targeted p95 improved 45.7%, but two confirmations reproduced unrelated scenario-floor breaches, so the strict contract vetoed retention. | pending |
+| 8 | Emit articulated instances directly rather than allocating temporary per-part objects and arrays. | 0.9507x | 1.2679x | Discarded; targeted p95 improved 45.7%, but two confirmations reproduced unrelated scenario-floor breaches, so the strict contract vetoed retention. | `9673f5e` |
+| 9 | Set distant-instance yaw directly around the vertical axis instead of converting an Euler per creature. | 1.0150x | 1.3469x | Discarded; LOD p95 improved, but aggregate and player-edit tails regressed. | pending |
 
 ## Frozen baseline
 
