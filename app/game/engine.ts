@@ -4010,6 +4010,7 @@ export class VoxelEngine {
   moonDirection = new THREE.Vector3();
   cloudOcclusionViewer = new THREE.Vector3();
   audioForward = new THREE.Vector3(0, 0, -1);
+  streamingViewDirection = new THREE.Vector3(0, 0, -1);
   audio: SynthAudio;
   settings: GameSettings;
   resizeObserver: ResizeObserver | null = null;
@@ -31407,6 +31408,9 @@ export class VoxelEngine {
       }
     }
 
+    this.camera.getWorldDirection(this.streamingViewDirection);
+    this.world.setStreamingViewHint(this.streamingViewDirection.x, this.streamingViewDirection.z);
+
     if (this.titleMode) {
       const t = now * 0.000045;
       this.camera.position.set(this.spawn.x + Math.sin(t) * 24, this.spawn.y + 13 + Math.sin(t * 1.8) * 1.2, this.spawn.z + Math.cos(t) * 24);
@@ -31571,6 +31575,7 @@ export class VoxelEngine {
       this.performanceReportTimer = 0;
       const report = this.performanceSampler.summary();
       this.averageFps = report.framesPerSecond || this.averageFps;
+      this.world.setPresentationPressure(report.peakDrawCalls, report.p95FrameMilliseconds);
       const streaming = this.world.streamingDiagnostics();
       const budget = applyResourceMode(this.settings.resourceMode, this.budgetController.observe(report, 1000 / 60, {
         weightedDebt: streaming.debt.weightedDebt,

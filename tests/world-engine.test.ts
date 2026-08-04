@@ -69,7 +69,7 @@ test("Giant Mooncaps keep full collision while rendering an inset stem", () => {
 });
 import { harvestPlant } from "../app/game/farming.ts";
 import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
-import { ChunkWorld, BIOME_NAMES, BiomeId, CHUNK_SIZE, FLOWING_WATER_LEVEL_INSET, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, BiomeId, CHUNK_SIZE, FLOWING_WATER_LEVEL_INSET, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinDirectionalStreamingWindow, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { accumulateGroundStepPresentationOffset, stepGroundPresentationOffset } from "../app/game/creature-pathing.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
@@ -286,6 +286,7 @@ test("the hard streaming budget rotates priority instead of starving queues", ()
   world.reset("STREAMING-FAIRNESS", undefined, { structures: false });
   world.playerChunkX = 0;
   world.playerChunkZ = 0;
+  world.scheduledViewSector = world.streamingViewSector;
   const playerChunk = world.generateChunk(0, 0);
   for (const section of [3, 4]) if (playerChunk.sectionBlockCounts[section] > 0) world.rebuildSection(playerChunk, section);
   world.streamingFrameBudgetMilliseconds = 0;
@@ -888,7 +889,11 @@ test("high-distance generation order re-centers deterministically after a telepo
   world.reset("RADIAL-QUEUE-TELEPORT", undefined, { structures: false });
   world.setRenderDistance(13);
   world.scheduleAround(0, 0, true);
-  assert.equal(world.generationQueue.length, 673);
+  let expectedDirectionalChunks = 0;
+  for (let dx = -14; dx <= 14; dx += 1) for (let dz = -14; dz <= 14; dz += 1) {
+    if (chunkWithinDirectionalStreamingWindow(dx, dz, 14, true, 0, 1)) expectedDirectionalChunks += 1;
+  }
+  assert.equal(world.generationQueue.length, expectedDirectionalChunks);
   assert.equal(world.generationQueued.size, world.generationQueue.length);
   assert.deepEqual(world.generationQueue.at(-1), { cx: 0, cz: 0, distance: 0 }, "generation still starts at the player chunk");
   assert.equal(world.generationQueued.has(chunkKey(14, 0)), true, "the cardinal generation halo is retained");
@@ -898,9 +903,16 @@ test("high-distance generation order re-centers deterministically after a telepo
   const teleportCx = 100;
   const teleportCz = -100;
   world.scheduleAround(teleportCx * 16, teleportCz * 16, true);
-  assert.equal(world.generationQueue.length, 673);
+  assert.equal(world.generationQueue.length, expectedDirectionalChunks);
   assert.equal(world.generationQueued.size, world.generationQueue.length);
-  assert.ok(world.generationQueue.every((entry) => chunkWithinStreamingRadius(entry.cx - teleportCx, entry.cz - teleportCz, 14, true)));
+  assert.ok(world.generationQueue.every((entry) => chunkWithinDirectionalStreamingWindow(
+    entry.cx - teleportCx,
+    entry.cz - teleportCz,
+    14,
+    true,
+    0,
+    1,
+  )));
   assert.deepEqual(
     world.generationQueue.map((entry) => ({ cx: entry.cx - teleportCx, cz: entry.cz - teleportCz, distance: entry.distance })),
     initialOrder,

@@ -63,6 +63,7 @@ export class ChunkMemoryCache {
 
   get size() { return this.entries.size; }
   get byteLength() { return this.bytes; }
+  has(cacheKey: string) { return this.entries.has(cacheKey); }
 
   clear() {
     this.entries.clear();

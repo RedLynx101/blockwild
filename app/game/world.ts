@@ -1599,6 +1599,30 @@ export function chunkWithinStreamingRadius(offsetX: number, offsetZ: number, rad
   return chunkAabbRadialDistanceSquared(offsetX, offsetZ) <= radius * radius;
 }
 
+export const GUARANTEED_DETAIL_STREAMING_RADIUS = 4;
+
+/**
+ * Full-detail generation is guaranteed near the player and then biased toward
+ * the camera hemisphere. The BasicWorldRenderer remains responsible for the
+ * inexpensive horizon until the player turns or travels toward it.
+ */
+export function chunkWithinDirectionalStreamingWindow(
+  offsetX: number,
+  offsetZ: number,
+  radius: number,
+  radial: boolean,
+  forwardX: number,
+  forwardZ: number,
+) {
+  if (!chunkWithinStreamingRadius(offsetX, offsetZ, radius, radial)) return false;
+  const distance = Math.hypot(offsetX, offsetZ);
+  if (distance <= GUARANTEED_DETAIL_STREAMING_RADIUS || distance <= 1e-6) return true;
+  const forwardLength = Math.hypot(forwardX, forwardZ);
+  if (forwardLength <= 1e-6) return true;
+  const facing = (offsetX * forwardX + offsetZ * forwardZ) / (distance * forwardLength);
+  return facing >= -0.18;
+}
+
 export function chunksWithinStreamingRadius(radius: number, radial: boolean) {
   const boundedRadius = Math.max(0, Math.floor(radius));
   if (!radial) return (boundedRadius * 2 + 1) ** 2;
@@ -2965,6 +2989,12 @@ export class ChunkWorld {
   streamingFrameBudgetMilliseconds = DEFAULT_STREAMING_FRAME_BUDGET_MS;
   streamingLookaheadChunkX = 0;
   streamingLookaheadChunkZ = 0;
+  streamingViewX = 0;
+  streamingViewZ = 1;
+  streamingViewSector = 0;
+  scheduledViewSector = Number.NaN;
+  renderDrawCallPressure = 0;
+  renderFramePressureMilliseconds = 16.7;
   streamingCompleted = { generation: 0, lighting: 0, meshing: 0 };
   streamingCanceled = { generation: 0, lighting: 0, meshing: 0 };
   playerUnreadyStartedAt: number | null = null;
@@ -3171,6 +3201,7 @@ export class ChunkWorld {
     this.playerChunkX = Number.NaN;
     this.playerChunkZ = Number.NaN;
     this.playerSection = sectionForY(0);
+    this.scheduledViewSector = Number.NaN;
     if (savedEdits) {
       for (const [key, pairs] of Object.entries(savedEdits)) {
         const map = new Map<number, BlockId>();
@@ -3275,10 +3306,12 @@ export class ChunkWorld {
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
     const speed = Math.hypot(velocityX, velocityZ);
-    this.streamingLookaheadChunkX = speed > 0.5 ? clamp(Math.round(velocityX / speed * 2), -2, 2) : 0;
-    this.streamingLookaheadChunkZ = speed > 0.5 ? clamp(Math.round(velocityZ / speed * 2), -2, 2) : 0;
+    const lookaheadChunks = speed > 0.5 ? clamp(Math.ceil(speed * 1.75 / CHUNK_SIZE), 1, 6) : 0;
+    this.streamingLookaheadChunkX = lookaheadChunks ? Math.round(velocityX / speed * lookaheadChunks) : 0;
+    this.streamingLookaheadChunkZ = lookaheadChunks ? Math.round(velocityZ / speed * lookaheadChunks) : 0;
     const focusSection = Number.isFinite(y) ? clamp(sectionForY(y!), 0, SECTION_COUNT - 1) : this.playerSection;
-    if (cx !== this.playerChunkX || cz !== this.playerChunkZ || focusSection !== this.playerSection || this.frame % 180 === 0) {
+    if (cx !== this.playerChunkX || cz !== this.playerChunkZ || focusSection !== this.playerSection
+      || this.streamingViewSector !== this.scheduledViewSector || this.frame % 180 === 0) {
       const startedAt = performance.now();
       this.scheduleAround(x, z, false, y);
       schedulingMilliseconds += performance.now() - startedAt;
@@ -3307,6 +3340,33 @@ export class ChunkWorld {
       } else {
         this.ensurePlayerChunkMeshQueue();
         if (!this.processMesh(chunkKey(this.playerChunkX, this.playerChunkZ))) break;
+        meshingMilliseconds += performance.now() - startedAt;
+        meshSlices += 1;
+      }
+      completedWork = true;
+    }
+    // Correctness lane B: keep the full immediate ring warm, not merely the
+    // occupied chunk. A small reserve survives an exhausted background budget
+    // so crossing a seam does not begin a multi-stage repair from zero.
+    const immediateRingDeadline = Math.max(deadline, performance.now() + 0.65);
+    for (let pass = 0; pass < 1 && performance.now() < immediateRingDeadline; pass += 1) {
+      const work = this.immediateRingWorkState();
+      if (!work) break;
+      const startedAt = performance.now();
+      if (work.stage === "generation") {
+        if (!this.processGenerationSlice(work.key)) break;
+        generationMilliseconds += performance.now() - startedAt;
+        generationSlices += 1;
+      } else if (work.stage === "lighting") {
+        const processed = this.lightReconciliationQueued.has(work.key) || this.activeLightReconciliation?.key === work.key
+          ? this.processLightReconciliation(work.key)
+          : this.processLightInitialization(work.key);
+        if (!processed) break;
+        lightingMilliseconds += performance.now() - startedAt;
+        lightingSlices += 1;
+      } else {
+        this.ensurePlayerChunkMeshQueue(work.key);
+        if (!this.processMesh(work.key)) break;
         meshingMilliseconds += performance.now() - startedAt;
         meshSlices += 1;
       }
@@ -3357,7 +3417,15 @@ export class ChunkWorld {
       }
       if (!foundWork) break;
     }
-    for (let index = 0; index < this.meshWorkPerFrame && performance.now() < deadline; index += 1) {
+    const consolidationPressure = this.renderDrawCallPressure >= 300
+      || this.renderFramePressureMilliseconds >= 24
+      || this.consolidationQueue.length >= 48
+      || this.completedConsolidations.length > 0;
+    const consolidationDeadline = consolidationPressure
+      ? Math.max(deadline, performance.now() + 0.75)
+      : deadline;
+    const consolidationLimit = consolidationPressure ? Math.max(2, this.meshWorkPerFrame) : this.meshWorkPerFrame;
+    for (let index = 0; index < consolidationLimit && performance.now() < consolidationDeadline; index += 1) {
       const startedAt = performance.now();
       if (!this.processConsolidation()) break;
       installationSlices += 1;
@@ -3381,16 +3449,26 @@ export class ChunkWorld {
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
     const focusSection = Number.isFinite(y) ? clamp(sectionForY(y!), 0, SECTION_COUNT - 1) : this.playerSection;
-    if (!force && cx === this.playerChunkX && cz === this.playerChunkZ && focusSection === this.playerSection) return;
+    if (!force && cx === this.playerChunkX && cz === this.playerChunkZ && focusSection === this.playerSection
+      && this.streamingViewSector === this.scheduledViewSector) return;
     this.playerChunkX = cx;
     this.playerChunkZ = cz;
     this.playerSection = focusSection;
+    this.scheduledViewSector = this.streamingViewSector;
     const generationRadius = this.renderDistance + 1;
     const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+    const withinGenerationWindow = (offsetX: number, offsetZ: number) => chunkWithinDirectionalStreamingWindow(
+      offsetX,
+      offsetZ,
+      generationRadius,
+      radialStreaming,
+      this.streamingViewX,
+      this.streamingViewZ,
+    );
     const currentKey = chunkKey(cx, cz);
     if (this.activeGenerationTask) {
       const active = this.activeGenerationTask;
-      const activeIsRetained = chunkWithinStreamingRadius(active.cx - cx, active.cz - cz, generationRadius, radialStreaming);
+      const activeIsRetained = withinGenerationWindow(active.cx - cx, active.cz - cz);
       const currentNeedsGeneration = !this.chunks.has(currentKey) && active.key !== currentKey;
       if (!activeIsRetained || currentNeedsGeneration) {
         if (!activeIsRetained) {
@@ -3407,12 +3485,12 @@ export class ChunkWorld {
         const key = chunkKey(entry.cx, entry.cz);
         return key !== this.activeGenerationTask?.key
           && !this.chunks.has(key)
-          && chunkWithinStreamingRadius(entry.cx - cx, entry.cz - cz, generationRadius, radialStreaming);
+          && withinGenerationWindow(entry.cx - cx, entry.cz - cz);
       })
       .map((entry) => ({ ...entry, distance: chunkStreamingSortDistance(entry.cx - cx, entry.cz - cz, radialStreaming) }));
     for (const [key, task] of this.generationTasks) {
       if (key === this.activeGenerationTask?.key) continue;
-      if (this.chunks.has(key) || !chunkWithinStreamingRadius(task.cx - cx, task.cz - cz, generationRadius, radialStreaming)) {
+      if (this.chunks.has(key) || !withinGenerationWindow(task.cx - cx, task.cz - cz)) {
         this.generationTasks.delete(key);
       }
     }
@@ -3460,13 +3538,16 @@ export class ChunkWorld {
     }
     for (let dx = -generationRadius; dx <= generationRadius; dx += 1) {
       for (let dz = -generationRadius; dz <= generationRadius; dz += 1) {
-        if (!chunkWithinStreamingRadius(dx, dz, generationRadius, radialStreaming)) continue;
+        if (!withinGenerationWindow(dx, dz)) continue;
         const key = chunkKey(cx + dx, cz + dz);
         const distance = chunkStreamingSortDistance(dx, dz, radialStreaming);
         let chunk = this.chunks.get(key);
         if (!chunk) {
-          const cached = this.chunkMemoryCache.take(this.chunkCacheKey(key));
-          if (cached) chunk = this.restoreCachedChunk(cached);
+          const cacheKey = this.chunkCacheKey(key);
+          if (this.chunkMemoryCache.has(cacheKey)) {
+            const cached = this.chunkMemoryCache.take(cacheKey);
+            if (cached) chunk = this.restoreCachedChunk(cached);
+          }
         }
         if (!chunk && key !== this.activeGenerationTask?.key && !this.generationQueued.has(key)) {
           if (distance <= 2 && this.requestPersistentChunk(key, cx + dx, cz + dz, distance)) continue;
@@ -3518,7 +3599,12 @@ export class ChunkWorld {
       dz - this.streamingLookaheadChunkZ,
       radialStreaming,
     );
-    return base + Math.min(0, lookahead - base) * 0.35;
+    const length = Math.hypot(dx, dz);
+    const cameraDot = length > 1e-6 ? (dx * this.streamingViewX + dz * this.streamingViewZ) / length : 1;
+    const cameraBias = cameraDot >= 0
+      ? -Math.min(1.2, base * 0.22) * cameraDot
+      : Math.min(0.45, base * 0.08) * -cameraDot;
+    return Math.max(0, base + Math.min(0, lookahead - base) * 0.5 + cameraBias);
   }
 
   private chunkStreamingPriority(key: string) {
@@ -3867,9 +3953,19 @@ export class ChunkWorld {
     return chunk;
   }
 
-  processGenerationSlice() {
+  private takeQueuedGeneration(preferredKey?: string) {
+    if (!preferredKey) return this.generationQueue.pop();
+    const index = this.generationQueue.findIndex((entry) => chunkKey(entry.cx, entry.cz) === preferredKey);
+    if (index < 0) return undefined;
+    return this.generationQueue.splice(index, 1)[0];
+  }
+
+  processGenerationSlice(preferredKey?: string) {
     if (this.terrainGenerationPipeline.supported) {
-      const completed = this.completedWorkerGeneration.shift();
+      const completedIndex = preferredKey
+        ? this.completedWorkerGeneration.findIndex((entry) => entry.key === preferredKey)
+        : (this.completedWorkerGeneration.length ? 0 : -1);
+      const completed = completedIndex >= 0 ? this.completedWorkerGeneration.splice(completedIndex, 1)[0] : undefined;
       if (completed) {
         this.pendingWorkerGeneration.delete(completed.key);
         const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
@@ -3916,13 +4012,16 @@ export class ChunkWorld {
         return true;
       }
       if (this.terrainGenerationPipeline.availableSlots <= 0) return false;
+      if (!preferredKey && this.terrainGenerationPipeline.availableSlots <= 1
+        && (this.generationQueue.at(-1)?.distance ?? Number.POSITIVE_INFINITY) > 1) return false;
       const currentKey = chunkKey(this.playerChunkX, this.playerChunkZ);
       const downstreamDebt = this.lightInitializationQueued.size + this.lightReconciliationQueued.size
         + Math.ceil((this.meshQueued.size + this.urgentMeshQueued.size) / 4);
       const nearestQueuedDistance = this.generationQueue.at(-1)?.distance ?? Number.POSITIVE_INFINITY;
       if (this.chunks.has(currentKey) && downstreamDebt >= 32 && nearestQueuedDistance > 1) return false;
       while (this.generationQueue.length) {
-        const next = this.generationQueue.pop()!;
+        const next = this.takeQueuedGeneration(preferredKey);
+        if (!next) return false;
         const key = chunkKey(next.cx, next.cz);
         if (this.chunks.has(key) || this.pendingWorkerGeneration.has(key)) continue;
         const request = {
@@ -3962,8 +4061,21 @@ export class ChunkWorld {
       }
       return false;
     }
+    if (preferredKey && this.activeGenerationTask && this.activeGenerationTask.key !== preferredKey) {
+      const interrupted = this.activeGenerationTask;
+      this.activeGenerationTask = null;
+      this.generationQueue.push({
+        cx: interrupted.cx,
+        cz: interrupted.cz,
+        distance: chunkStreamingSortDistance(
+          interrupted.cx - this.playerChunkX,
+          interrupted.cz - this.playerChunkZ,
+          this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD,
+        ),
+      });
+    }
     while (!this.activeGenerationTask) {
-      const next = this.generationQueue.pop();
+      const next = this.takeQueuedGeneration(preferredKey);
       if (!next) return false;
       const key = chunkKey(next.cx, next.cz);
       if (this.chunks.has(key)) {
@@ -4024,7 +4136,7 @@ export class ChunkWorld {
     }
   }
 
-  private takeQueuedLightInitialization() {
+  private takeQueuedLightInitialization(preferredKey?: string) {
     let bestIndex = -1;
     let bestPriority = Number.POSITIVE_INFINITY;
     for (let index = this.lightInitializationQueueHead; index < this.lightInitializationQueue.length; index += 1) {
@@ -4036,6 +4148,11 @@ export class ChunkWorld {
         this.lightInitializationTasks.delete(key);
         continue;
       }
+      if (preferredKey && key === preferredKey) {
+        bestIndex = index;
+        break;
+      }
+      if (preferredKey) continue;
       const priority = this.agedStreamingPriority(
         this.chunkStreamingPriority(key),
         this.lightInitializationEnqueuedAt.get(key),
@@ -4065,9 +4182,13 @@ export class ChunkWorld {
     return key;
   }
 
-  processLightInitialization() {
+  processLightInitialization(preferredKey?: string) {
+    if (preferredKey && this.activeLightInitialization && this.activeLightInitialization.key !== preferredKey) {
+      this.lightInitializationQueue.push(this.activeLightInitialization.key);
+      this.activeLightInitialization = null;
+    }
     while (!this.activeLightInitialization) {
-      const key = this.takeQueuedLightInitialization();
+      const key = this.takeQueuedLightInitialization(preferredKey);
       if (!key) return false;
       const chunk = this.chunks.get(key);
       if (!this.lightInitializationQueued.has(key) || !chunk || !chunk.group.visible || chunk.lightInitialized) {
@@ -4111,9 +4232,18 @@ export class ChunkWorld {
     this.lightReconciliationQueue.sort((left, right) => this.chunkStreamingPriority(left.key) - this.chunkStreamingPriority(right.key));
   }
 
-  private processLightReconciliation() {
+  private processLightReconciliation(preferredKey?: string) {
+    if (preferredKey && this.activeLightReconciliation && this.activeLightReconciliation.key !== preferredKey) {
+      this.lightReconciliationQueue.push(this.activeLightReconciliation);
+      this.activeLightReconciliation = null;
+    }
     while (!this.activeLightReconciliation) {
-      const next = this.lightReconciliationQueue.shift();
+      const preferredIndex = preferredKey
+        ? this.lightReconciliationQueue.findIndex((entry) => entry.key === preferredKey)
+        : -1;
+      const next = preferredIndex >= 0
+        ? this.lightReconciliationQueue.splice(preferredIndex, 1)[0]
+        : preferredKey ? undefined : this.lightReconciliationQueue.shift();
       if (!next) return false;
       if (!this.lightReconciliationQueued.has(next.key) || !this.chunks.has(next.key)) continue;
       this.activeLightReconciliation = next;
@@ -4370,7 +4500,9 @@ export class ChunkWorld {
     const chunk = this.chunks.get(entry.key);
     if (!chunk) return Number.POSITIVE_INFINITY;
     let visibleSources = 0;
-    for (const section of chunk.sections.values()) if (section[entry.layer]?.visible) visibleSources += 1;
+    if (chunk.group.visible) {
+      for (const section of chunk.sections.values()) if (section[entry.layer]?.visible) visibleSources += 1;
+    }
     return Math.max(1.02, base - Math.min(0.8, visibleSources * 0.05));
   }
 
@@ -7697,6 +7829,19 @@ export class ChunkWorld {
     return voxelInterfaceFaceOwner(type, neighbor) === "current";
   }
 
+  setStreamingViewHint(forwardX: number, forwardZ: number) {
+    const length = Math.hypot(forwardX, forwardZ);
+    if (length <= 1e-6) return;
+    this.streamingViewX = forwardX / length;
+    this.streamingViewZ = forwardZ / length;
+    this.streamingViewSector = Math.round(Math.atan2(this.streamingViewZ, this.streamingViewX) / (Math.PI / 4));
+  }
+
+  setPresentationPressure(drawCalls: number, frameMilliseconds: number) {
+    this.renderDrawCallPressure = Math.max(0, Math.round(Number(drawCalls) || 0));
+    this.renderFramePressureMilliseconds = Math.max(0, Number(frameMilliseconds) || 0);
+  }
+
   rebuildSection(chunk: Chunk, section: number, slice?: Readonly<{
     buckets: Record<WorldRenderLayer, GeometryBucket>;
     startLocalX: number;
@@ -8744,8 +8889,7 @@ export class ChunkWorld {
       + (this.activeMeshTask ? 1 : 0);
   }
 
-  private playerChunkStreamingState() {
-    const key = chunkKey(this.playerChunkX, this.playerChunkZ);
+  private chunkStreamingState(key: string) {
     const chunk = this.chunks.get(key);
     if (!chunk) {
       const task = this.activeGenerationTask?.key === key
@@ -8780,6 +8924,31 @@ export class ChunkWorld {
       playerChunkStage: "ready" as const,
       playerChunkDetail: `section-${this.playerSection}`,
     };
+  }
+
+  private playerChunkStreamingState() {
+    return this.chunkStreamingState(chunkKey(this.playerChunkX, this.playerChunkZ));
+  }
+
+  private immediateRingWorkState() {
+    const offsets: Array<{ x: number; z: number; key: string; priority: number }> = [];
+    for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      const key = chunkKey(this.playerChunkX + dx, this.playerChunkZ + dz);
+      offsets.push({ x: dx, z: dz, key, priority: this.chunkStreamingPriority(key) });
+    }
+    offsets.sort((left, right) => left.priority - right.priority || left.x - right.x || left.z - right.z);
+    for (const candidate of offsets) {
+      const state = this.chunkStreamingState(candidate.key);
+      if (state.playerChunkStage === "ready") continue;
+      if (state.playerChunkStage === "generation") {
+        const completed = this.completedWorkerGeneration.some((entry) => entry.key === candidate.key);
+        const active = this.activeGenerationTask?.key === candidate.key;
+        if (this.pendingWorkerGeneration.has(candidate.key) && !completed) continue;
+        if (!completed && !active && !this.generationQueued.has(candidate.key)) continue;
+      }
+      return { key: candidate.key, stage: state.playerChunkStage } as const;
+    }
+    return null;
   }
 
   private playerRequiredMeshSections(chunk: Chunk) {
@@ -8824,6 +8993,7 @@ export class ChunkWorld {
     for (const [key, enqueuedAt] of this.generationEnqueuedAt) add(key, enqueuedAt, 3);
     for (const [key, enqueuedAt] of this.lightInitializationEnqueuedAt) add(key, enqueuedAt, 2);
     for (const [queueKey, enqueuedAt] of this.meshEnqueuedAt) add(queueKey.slice(0, queueKey.lastIndexOf(":")), enqueuedAt, 1);
+    for (const [queueKey, enqueuedAt] of this.consolidationEnqueuedAt) add(queueKey.slice(0, queueKey.lastIndexOf(":")), enqueuedAt, 0.75);
     return { weightedDebt, oldestNearJobMilliseconds } as const;
   }
 
@@ -8907,8 +9077,7 @@ export class ChunkWorld {
     } as const;
   }
 
-  private ensurePlayerChunkMeshQueue() {
-    const key = chunkKey(this.playerChunkX, this.playerChunkZ);
+  private ensurePlayerChunkMeshQueue(key = chunkKey(this.playerChunkX, this.playerChunkZ)) {
     const chunk = this.chunks.get(key);
     if (!chunk?.lightInitialized || !chunk.group.visible || !this.chunkLightPresentationReady(key)) return;
     for (const section of this.playerRequiredMeshSections(chunk)) {
@@ -8970,6 +9139,14 @@ export class ChunkWorld {
         pendingReads: this.pendingPersistentChunks.size,
       },
       lookahead: { x: this.streamingLookaheadChunkX, z: this.streamingLookaheadChunkZ },
+      lanes: {
+        immediateRingReady: this.ringCompleteness(1).ratio,
+        viewDirection: { x: this.streamingViewX, z: this.streamingViewZ, sector: this.streamingViewSector },
+        reservedGenerationSlot: this.terrainGenerationPipeline.supported,
+        consolidationReserveActive: this.renderDrawCallPressure >= 300
+          || this.renderFramePressureMilliseconds >= 24
+          || this.consolidationQueue.length >= 48,
+      },
       readinessEpisodes: {
         completed: episodes.length,
         currentMilliseconds: currentUnreadyMilliseconds,
