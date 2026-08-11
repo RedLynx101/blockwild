@@ -6,6 +6,8 @@ Prepared: 2026-08-11
 
 Target branch: `main`
 
+Live implementation evidence and authority status: [HYBRID_RUST_MIGRATION_IMPLEMENTATION_LOG.md](./HYBRID_RUST_MIGRATION_IMPLEMENTATION_LOG.md)
+
 Companion plans:
 
 - `docs/BEDROCK_INSPIRED_PERFORMANCE_ARCHITECTURE_PLAN.md`
@@ -1428,19 +1430,19 @@ This tranche creates the foundation for the full engine without asking saves, mu
 
 ### Foundation
 
-- [ ] Rust workspace and browser/native CI are reproducible.
-- [ ] Wasm compatibility path works without shared memory.
-- [ ] Accelerated features are detected, measured, and optional.
-- [ ] Engine facade and authority ledger exist.
-- [ ] Replay and canonical state hashes work across native and Wasm.
+- [x] Rust workspace and browser/native CI are reproducible.
+- [x] Wasm compatibility path works without shared memory.
+- [x] Accelerated features are detected, measured, and optional.
+- [x] Engine facade and authority ledger exist.
+- [x] Replay and canonical state hashes work across native and Wasm.
 
 ### World and performance
 
 - [ ] Rust owns deterministic generation, blocks, edits, lighting, meshing, and residency.
 - [ ] Existing generator/save parity requirements pass.
 - [ ] Immediate player feedback and streaming completeness are preserved.
-- [ ] Basic Render Distance remains disabled unless a Rust rebuild passes its re-enable gate.
-- [ ] Rust phases show end-to-end value or explicit architecture justification.
+- [x] Basic Render Distance remains disabled unless a Rust rebuild passes its re-enable gate.
+- [x] Rust phases show end-to-end value or explicit architecture justification.
 
 ### Simulation and gameplay
 
@@ -1459,7 +1461,7 @@ This tranche creates the foundation for the full engine without asking saves, mu
 
 ### Rendering and retirement
 
-- [ ] `wgpu` tooling, capability telemetry, deterministic galleries, and dual-render parity begin in R0-R2 rather than waiting for final cutover.
+- [x] `wgpu` tooling, capability telemetry, deterministic galleries, and dual-render parity begin in R0-R2 rather than waiting for final cutover.
 - [ ] Simulation exposes renderer-independent extraction.
 - [ ] Every visible R3-R9 domain lands with shared extraction plus a tracked `wgpu` companion implementation or explicit R10 closure item.
 - [ ] Rust `wgpu` passes visual, performance, compatibility, and recovery gates and becomes the production primary on the supported browser profile.
