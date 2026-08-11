@@ -9,7 +9,7 @@ import {
   type CreatureRenderTier,
 } from "./creature-render-admission";
 import { SynthAudio, type SampleKind } from "./audio";
-import { BasicWorldRenderer } from "./basic-world-renderer";
+import { BasicWorldRenderer, disabledBasicWorldRendererStats, type BasicWorldRendererStats } from "./basic-world-renderer";
 import { currentBuildIdentity } from "./build-info";
 import {
   OPEN_CAMERA_ENVIRONMENT,
@@ -566,6 +566,8 @@ import {
   DEFAULT_RENDER_DISTANCE,
   DEFAULT_SIMULATION_DISTANCE,
   DEFAULT_BASIC_RENDER_DISTANCE,
+  MAX_BASIC_RENDER_DISTANCE,
+  BASIC_RENDER_DISTANCE_ENABLED,
   normalizeViewDistances,
   PerformanceSampler,
   LongAnimationFrameSampler,
@@ -1121,6 +1123,8 @@ export type GameSettings = {
   renderDistance: number;
   simulationDistance: number;
   basicRenderDistance: number;
+  /** Dormant legacy preference retained while basic far-field rendering is gated. */
+  rememberedBasicRenderDistance?: number;
   showFps: boolean;
   showMinimap: boolean;
   showBreakingTexture: boolean;
@@ -3449,16 +3453,18 @@ export function readSettings(): GameSettings {
     debugTelemetryMaxMinutes: 60,
     resourceMode: "auto",
     agentVoiceMode: "spatial",
+    rememberedBasicRenderDistance: mobile ? 6 : DEFAULT_BASIC_RENDER_DISTANCE,
     ...fallbackDistances,
   };
   if (typeof window === "undefined") return fallback;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<GameSettings> | null;
     if (!parsed) return fallback;
+    const savedBasicDistance = Number(parsed.rememberedBasicRenderDistance ?? parsed.basicRenderDistance ?? fallback.rememberedBasicRenderDistance);
     const distances = normalizeViewDistances({
       renderDistance: Number(parsed.renderDistance ?? fallback.renderDistance),
       simulationDistance: Number(parsed.simulationDistance ?? fallback.simulationDistance),
-      basicRenderDistance: Number(parsed.basicRenderDistance ?? fallback.basicRenderDistance),
+      basicRenderDistance: savedBasicDistance,
     });
     return {
       volume: clamp(Number(parsed.volume ?? fallback.volume), 0, 1),
@@ -3476,6 +3482,10 @@ export function readSettings(): GameSettings {
       debugTelemetryMaxMinutes: clamp(Math.round(Number(parsed.debugTelemetryMaxMinutes ?? fallback.debugTelemetryMaxMinutes)), 1, 180),
       resourceMode: parsed.resourceMode === "cpu" || parsed.resourceMode === "memory" ? parsed.resourceMode : "auto",
       agentVoiceMode: parsed.agentVoiceMode === "off" || parsed.agentVoiceMode === "universal" ? parsed.agentVoiceMode : "spatial",
+      rememberedBasicRenderDistance: Math.max(
+        distances.renderDistance,
+        Math.min(MAX_BASIC_RENDER_DISTANCE, Number.isFinite(savedBasicDistance) ? Math.round(savedBasicDistance) : DEFAULT_BASIC_RENDER_DISTANCE),
+      ),
       ...distances,
     };
   } catch {
@@ -3951,7 +3961,7 @@ export class VoxelEngine {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   world = new ChunkWorld();
-  basicWorldRenderer: BasicWorldRenderer;
+  basicWorldRenderer: BasicWorldRenderer | null;
   private originPreviewWorld: ChunkWorld | null = null;
   butterflies: ButterflySystem;
   ambienceGroup = new THREE.Group();
@@ -4451,7 +4461,7 @@ export class VoxelEngine {
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
     this.agentMode = options.agentMode === true;
-    this.basicWorldRenderer = new BasicWorldRenderer(!this.agentMode);
+    this.basicWorldRenderer = BASIC_RENDER_DISTANCE_ENABLED && !this.agentMode ? new BasicWorldRenderer(true) : null;
     this.agentTestAdmin = this.agentMode && options.agentTestAdmin === true;
     if (this.agentMode) settings = {
       ...settings,
@@ -4465,7 +4475,15 @@ export class VoxelEngine {
     };
     this.canvas = canvas;
     this.events = events;
-    this.settings = settings;
+    const distances = normalizeViewDistances(settings);
+    this.settings = {
+      ...settings,
+      ...distances,
+      rememberedBasicRenderDistance: Math.max(
+        distances.renderDistance,
+        settings.rememberedBasicRenderDistance ?? settings.basicRenderDistance ?? DEFAULT_BASIC_RENDER_DISTANCE,
+      ),
+    };
     this.weather = settings.weather;
     this.world.setLiquidCellProvider((x, y, z) => this.liquidCells.get(blockKey(x, y, z)));
     this.liquidSimulator = new LiquidSimulator({
@@ -4504,7 +4522,7 @@ export class VoxelEngine {
     this.renderPixelRatio = this.nativePixelRatio;
     this.renderer.setPixelRatio(this.renderPixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, Math.max(256, (settings.basicRenderDistance + 2) * CHUNK_SIZE));
+    this.camera = new THREE.PerspectiveCamera(this.settings.fov, 1, 0.05, Math.max(256, (this.settings.renderDistance + 2) * CHUNK_SIZE));
     this.camera.rotation.order = "YXZ";
     this.world.setRenderDistance(settings.renderDistance);
     this.world.setRetentionPadding(chunkRetentionPadding(settings.resourceMode));
@@ -4519,7 +4537,6 @@ export class VoxelEngine {
     this.scene.add(
       this.camera,
       this.world.group,
-      this.basicWorldRenderer.group,
       this.ambienceGroup,
       this.creatureGroup,
       this.creatureArticulatedBatcher.group,
@@ -4529,6 +4546,7 @@ export class VoxelEngine {
       this.exhibitGroup,
       this.projectileGroup,
     );
+    if (this.basicWorldRenderer) this.scene.add(this.basicWorldRenderer.group);
     this.scene.add(this.butterflies.group);
     this.localPlayerModel.group.visible = false;
     this.scene.add(this.localPlayerModel.group);
@@ -6504,6 +6522,10 @@ export class VoxelEngine {
     } as const;
   }
 
+  private basicRendererStats(): BasicWorldRendererStats {
+    return this.basicWorldRenderer?.stats(this.averageFrameMs > 24) ?? disabledBasicWorldRendererStats();
+  }
+
   performanceTelemetrySnapshot() {
     this.ensureCaptureSystemDiagnostics();
     const browserPerformance = typeof performance === "undefined" ? null : performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } };
@@ -6547,7 +6569,7 @@ export class VoxelEngine {
         renderDistance: this.settings.renderDistance,
         simulationDistance: this.settings.simulationDistance,
         basicRenderDistance: this.settings.basicRenderDistance,
-        basicRenderer: this.basicWorldRenderer.stats(this.averageFrameMs > 24),
+        basicRenderer: this.basicRendererStats(),
         player: { x: Number(this.position.x.toFixed(2)), y: Number(this.position.y.toFixed(2)), z: Number(this.position.z.toFixed(2)) },
         streaming: this.world.streamingDiagnostics(),
       },
@@ -31439,7 +31461,7 @@ export class VoxelEngine {
     this.updateLocalLights(dt);
     if (this.running && !this.titleMode && !this.paused) this.updateDynamicWeather(dt);
     this.updateDayNight(dt);
-    this.basicWorldRenderer.update({
+    this.basicWorldRenderer?.update({
       world: this.world,
       seedText: this.world.seedText,
       generationOptions: this.world.generationOptions,
@@ -32510,7 +32532,7 @@ export class VoxelEngine {
         renderDistance: this.settings.renderDistance,
         simulationDistance: this.settings.simulationDistance,
         basicRenderDistance: this.settings.basicRenderDistance,
-        basicRenderer: this.basicWorldRenderer.stats(this.averageFrameMs > 24),
+        basicRenderer: this.basicRendererStats(),
         loadedChunks: this.world.loadedCount,
         frame: this.performanceSampler.summary(),
         streaming: this.world.streamingDiagnostics(),
@@ -32885,10 +32907,13 @@ export class VoxelEngine {
         ? (next.agentVoiceMode ?? this.settings.agentVoiceMode)
         : "spatial",
       ...distances,
+      rememberedBasicRenderDistance: BASIC_RENDER_DISTANCE_ENABLED && next.basicRenderDistance !== undefined
+        ? Math.max(distances.renderDistance, next.basicRenderDistance)
+        : Math.max(distances.renderDistance, this.settings.rememberedBasicRenderDistance ?? this.settings.basicRenderDistance),
     };
     this.weather = this.worldOptions.weather ? this.settings.weather : "clear";
     this.camera.fov = this.settings.fov;
-    this.camera.far = Math.max(256, (this.settings.basicRenderDistance + 2) * CHUNK_SIZE);
+    this.camera.far = Math.max(256, (this.settings.renderDistance + 2) * CHUNK_SIZE);
     this.camera.updateProjectionMatrix();
     this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
     this.world.setRetentionPadding(chunkRetentionPadding(this.settings.resourceMode));
@@ -33165,7 +33190,7 @@ export class VoxelEngine {
     for (const template of this.dropModelTemplates?.values() ?? []) this.disposeObject(template);
     this.dropModelTemplates?.clear();
     this.world.dispose();
-    this.basicWorldRenderer.dispose();
+    this.basicWorldRenderer?.dispose();
     this.disposePooledParticleResources();
     this.gpuTimer.dispose();
     this.longAnimationFrameSampler.dispose();

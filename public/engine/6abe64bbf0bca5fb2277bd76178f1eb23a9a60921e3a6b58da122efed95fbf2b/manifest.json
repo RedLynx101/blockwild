@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "artifactHash": "6abe64bbf0bca5fb2277bd76178f1eb23a9a60921e3a6b58da122efed95fbf2b",
+  "variant": "compatibility",
+  "package": "blockwild-wasm",
+  "packageVersion": "0.1.0",
+  "protocolVersion": 1,
+  "target": "wasm32-unknown-unknown",
+  "cargoProfile": "release",
+  "cargoFeatures": [],
+  "rustToolchain": "1.91.1",
+  "cargoVersion": "1.91.1",
+  "wasmBindgenVersion": "0.2.127",
+  "wasmOpt": null,
+  "createdAt": "2026-08-11T11:07:16.485Z",
+  "totals": {
+    "rawBytes": 81963,
+    "gzipBytes": 30678,
+    "brotliBytes": 25695
+  },
+  "files": [
+    {
+      "path": "engine_bg.wasm",
+      "role": "wasm",
+      "mimeType": "application/wasm",
+      "bytes": 69892,
+      "sha256": "96325df2669dd72ee736504362f2a92e16b3a3d641784f6c5a61861dcf2e1b9c"
+    },
+    {
+      "path": "engine_bg.wasm.d.ts",
+      "role": "wasm-types",
+      "mimeType": "text/plain; charset=utf-8",
+      "bytes": 885,
+      "sha256": "76428918b84633989eb4445c63281cd1d517cf42bf1f3db04279bcacf5a7fa75"
+    },
+    {
+      "path": "engine.d.ts",
+      "role": "glue-types",
+      "mimeType": "text/plain; charset=utf-8",
+      "bytes": 2484,
+      "sha256": "8af197f621494d8d327bf99babe732a2b0aa9df7a7778f4983a57952c0e38eba"
+    },
+    {
+      "path": "engine.js",
+      "role": "glue",
+      "mimeType": "text/javascript; charset=utf-8",
+      "bytes": 8702,
+      "sha256": "06c7c96e963af30ad9d5c2e4bd495ec5c5e4ad9fa4fffc77dc6820a4f1232835"
+    }
+  ]
+}

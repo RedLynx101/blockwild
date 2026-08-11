@@ -1,0 +1,291 @@
+import {
+  RUST_ENGINE_PROTOCOL_VERSION,
+  RUST_ENGINE_SCHEMA_VERSION,
+} from "./rust-engine-protocol";
+
+export type RustEngineBytes = Uint8Array | ArrayBuffer;
+
+export interface RustEngineWasmExports {
+  blockwild_protocol_version(): number;
+  blockwild_schema_version(): number;
+  blockwild_engine_create(configEnvelope: Uint8Array): RustEngineBytes;
+  blockwild_engine_ingest(handle: number, batch: Uint8Array): RustEngineBytes;
+  blockwild_engine_step(handle: number, monotonicTimeUs: number, budgetUs: number): RustEngineBytes;
+  blockwild_engine_take_events(handle: number): RustEngineBytes;
+  blockwild_engine_state_hash(handle: number): RustEngineBytes;
+  blockwild_engine_destroy(handle: number): RustEngineBytes;
+}
+
+export type RustEngineArtifact = Readonly<{
+  moduleUrl?: string;
+  wasmUrl?: string;
+  /** Mutable selector for immutable, content-addressed browser artifacts. */
+  indexUrl?: string;
+  variant?: string;
+  buildKind: "compatibility" | "accelerated";
+  buildHash?: string;
+}>;
+
+export type ResolvedRustEngineArtifact = RustEngineArtifact & Readonly<{
+  moduleUrl: string;
+  wasmUrl: string;
+  buildHash: string;
+}>;
+
+export const DEFAULT_RUST_ENGINE_ARTIFACT: RustEngineArtifact = {
+  indexUrl: "/engine/manifest.json",
+  variant: "compatibility",
+  buildKind: "compatibility",
+};
+
+export type RustEngineLoadErrorCode =
+  | "artifact-unavailable"
+  | "initialization-failed"
+  | "invalid-module"
+  | "protocol-mismatch"
+  | "schema-mismatch";
+
+export class RustEngineLoadError extends Error {
+  readonly name = "RustEngineLoadError";
+
+  constructor(
+    readonly code: RustEngineLoadErrorCode,
+    message: string,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+export type LoadedRustEngine = Readonly<{
+  exports: RustEngineWasmExports;
+  artifact: ResolvedRustEngineArtifact;
+  protocolVersion: number;
+  schemaVersion: number;
+  loadDurationMs: number;
+}>;
+
+export type RustEngineModuleImporter = (artifact: ResolvedRustEngineArtifact) => Promise<unknown>;
+export type RustEngineManifestFetcher = (url: string) => Promise<Readonly<{
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+}>>;
+
+export type RustEngineLoaderOptions = Readonly<{
+  artifact?: RustEngineArtifact;
+  importer?: RustEngineModuleImporter;
+  fetcher?: RustEngineManifestFetcher;
+  now?: () => number;
+  protocolVersion?: number;
+  schemaVersion?: number;
+}>;
+
+export type RustEngineLoaderDiagnostics = Readonly<{
+  state: "idle" | "loading" | "ready" | "failed";
+  attempts: number;
+  successes: number;
+  failures: number;
+  lastDurationMs: number | null;
+  lastError: Readonly<{ code: RustEngineLoadErrorCode; message: string }> | null;
+  artifact: RustEngineArtifact;
+}>;
+
+const requiredExports: readonly (keyof RustEngineWasmExports)[] = [
+  "blockwild_protocol_version",
+  "blockwild_schema_version",
+  "blockwild_engine_create",
+  "blockwild_engine_ingest",
+  "blockwild_engine_step",
+  "blockwild_engine_take_events",
+  "blockwild_engine_state_hash",
+  "blockwild_engine_destroy",
+];
+
+/** This import is intentionally indirect and is never evaluated during SSR. */
+async function importUnbundledRustModule(artifact: ResolvedRustEngineArtifact) {
+  return import(/* webpackIgnore: true */ artifact.moduleUrl) as Promise<unknown>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) return {};
+  return value as Record<string, unknown>;
+}
+
+function validateExports(value: unknown): RustEngineWasmExports {
+  const candidate = asRecord(value);
+  for (const name of requiredExports) {
+    if (typeof candidate[name] !== "function") {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact is missing export ${name}`);
+    }
+  }
+  return candidate as unknown as RustEngineWasmExports;
+}
+
+export class RustEngineLoader {
+  private readonly artifact: RustEngineArtifact;
+  private readonly importer: RustEngineModuleImporter;
+  private readonly fetcher: RustEngineManifestFetcher | null;
+  private readonly now: () => number;
+  private readonly protocolVersion: number;
+  private readonly schemaVersion: number;
+  private inFlight: Promise<LoadedRustEngine> | null = null;
+  private loaded: LoadedRustEngine | null = null;
+  private state: RustEngineLoaderDiagnostics["state"] = "idle";
+  private attempts = 0;
+  private successes = 0;
+  private failures = 0;
+  private lastDurationMs: number | null = null;
+  private lastError: RustEngineLoaderDiagnostics["lastError"] = null;
+
+  constructor(options: RustEngineLoaderOptions = {}) {
+    this.artifact = options.artifact ?? DEFAULT_RUST_ENGINE_ARTIFACT;
+    this.importer = options.importer ?? importUnbundledRustModule;
+    this.fetcher = options.fetcher ?? (typeof fetch === "function" ? fetch.bind(globalThis) : null);
+    this.now = options.now ?? (() => typeof performance === "undefined" ? Date.now() : performance.now());
+    this.protocolVersion = options.protocolVersion ?? RUST_ENGINE_PROTOCOL_VERSION;
+    this.schemaVersion = options.schemaVersion ?? RUST_ENGINE_SCHEMA_VERSION;
+  }
+
+  load(): Promise<LoadedRustEngine> {
+    if (this.loaded) return Promise.resolve(this.loaded);
+    if (this.inFlight) return this.inFlight;
+    this.state = "loading";
+    this.attempts += 1;
+    const startedAt = this.now();
+    this.inFlight = this.loadOnce(startedAt).then((loaded) => {
+      this.loaded = loaded;
+      this.state = "ready";
+      this.successes += 1;
+      this.lastDurationMs = loaded.loadDurationMs;
+      this.lastError = null;
+      return loaded;
+    }).catch((error: unknown) => {
+      const normalized = error instanceof RustEngineLoadError
+        ? error
+        : new RustEngineLoadError("artifact-unavailable", `Rust engine artifact could not be loaded: ${error instanceof Error ? error.message : String(error)}`, error);
+      this.state = "failed";
+      this.failures += 1;
+      this.lastDurationMs = Math.max(0, this.now() - startedAt);
+      this.lastError = { code: normalized.code, message: normalized.message };
+      throw normalized;
+    }).finally(() => {
+      this.inFlight = null;
+    });
+    return this.inFlight;
+  }
+
+  private async loadOnce(startedAt: number): Promise<LoadedRustEngine> {
+    const artifact = await this.resolveArtifact();
+    let namespace: Record<string, unknown>;
+    try {
+      namespace = asRecord(await this.importer(artifact));
+    } catch (error) {
+      throw new RustEngineLoadError("artifact-unavailable", `Rust engine artifact is unavailable at ${artifact.moduleUrl}`, error);
+    }
+    const initializer = namespace.default;
+    if (typeof initializer === "function") {
+      try {
+        await (initializer as (options?: { module_or_path: string }) => unknown)({
+          module_or_path: artifact.wasmUrl,
+        });
+      } catch (error) {
+        throw new RustEngineLoadError("initialization-failed", `Rust engine Wasm initialization failed for ${artifact.wasmUrl}`, error);
+      }
+    }
+    const exports = validateExports(namespace);
+    const protocolVersion = exports.blockwild_protocol_version();
+    if (protocolVersion !== this.protocolVersion) {
+      throw new RustEngineLoadError("protocol-mismatch", `Rust engine protocol ${protocolVersion} is incompatible with browser protocol ${this.protocolVersion}`);
+    }
+    const schemaVersion = exports.blockwild_schema_version();
+    if (schemaVersion !== this.schemaVersion) {
+      throw new RustEngineLoadError("schema-mismatch", `Rust engine schema ${schemaVersion} is incompatible with browser schema ${this.schemaVersion}`);
+    }
+    return {
+      exports,
+      artifact,
+      protocolVersion,
+      schemaVersion,
+      loadDurationMs: Math.max(0, this.now() - startedAt),
+    };
+  }
+
+  private async resolveArtifact(): Promise<ResolvedRustEngineArtifact> {
+    if (this.artifact.moduleUrl && this.artifact.wasmUrl) {
+      return {
+        ...this.artifact,
+        moduleUrl: this.artifact.moduleUrl,
+        wasmUrl: this.artifact.wasmUrl,
+        buildHash: this.artifact.buildHash ?? "unversioned",
+      };
+    }
+    if (!this.artifact.indexUrl || !this.fetcher) {
+      throw new RustEngineLoadError("artifact-unavailable", "Rust engine manifest resolution is unavailable in this environment");
+    }
+    const base = typeof location === "undefined" ? "http://localhost/" : location.href;
+    const indexUrl = new URL(this.artifact.indexUrl, base).href;
+    const indexResponse = await this.fetcher(indexUrl);
+    if (!indexResponse.ok) {
+      throw new RustEngineLoadError("artifact-unavailable", `Rust engine artifact index returned HTTP ${indexResponse.status} at ${indexUrl}`);
+    }
+    const index = asRecord(await indexResponse.json());
+    if (index.schema !== 1 || typeof index.defaultVariant !== "string") {
+      throw new RustEngineLoadError("invalid-module", "Rust engine artifact index has an unsupported schema");
+    }
+    const variant = this.artifact.variant ?? index.defaultVariant;
+    const artifacts = asRecord(index.artifacts);
+    const entry = asRecord(artifacts[variant]);
+    const hash = typeof entry.hash === "string" ? entry.hash : "";
+    if (!/^[a-f0-9]{64}$/.test(hash) || entry.directory !== hash || entry.manifest !== `${hash}/manifest.json`) {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact entry ${variant} is not content-addressed`);
+    }
+    const manifestUrl = new URL(`${hash}/manifest.json`, indexUrl).href;
+    const manifestResponse = await this.fetcher(manifestUrl);
+    if (!manifestResponse.ok) {
+      throw new RustEngineLoadError("artifact-unavailable", `Rust engine artifact manifest returned HTTP ${manifestResponse.status} at ${manifestUrl}`);
+    }
+    const manifest = asRecord(await manifestResponse.json());
+    const files = manifest.files;
+    if (manifest.schema !== 1 || manifest.artifactHash !== hash || manifest.variant !== variant || !Array.isArray(files)) {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact manifest ${variant} is malformed or mismatched`);
+    }
+    const safeFile = (role: string) => files.find((value: unknown) => {
+      const file = asRecord(value);
+      return file.role === role && typeof file.path === "string" && !file.path.includes("..") && !file.path.startsWith("/");
+    });
+    const glue = asRecord(safeFile("glue"));
+    const wasm = asRecord(safeFile("wasm"));
+    if (typeof glue.path !== "string" || typeof wasm.path !== "string") {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact ${variant} is missing glue or Wasm files`);
+    }
+    return {
+      ...this.artifact,
+      moduleUrl: new URL(glue.path, manifestUrl).href,
+      wasmUrl: new URL(wasm.path, manifestUrl).href,
+      buildKind: variant === "accelerated" ? "accelerated" : this.artifact.buildKind,
+      buildHash: hash,
+      variant,
+    };
+  }
+
+  reset() {
+    this.loaded = null;
+    this.inFlight = null;
+    this.state = "idle";
+    this.lastError = null;
+    this.lastDurationMs = null;
+  }
+
+  diagnostics(): RustEngineLoaderDiagnostics {
+    return {
+      state: this.state,
+      attempts: this.attempts,
+      successes: this.successes,
+      failures: this.failures,
+      lastDurationMs: this.lastDurationMs,
+      lastError: this.lastError,
+      artifact: this.artifact,
+    };
+  }
+}

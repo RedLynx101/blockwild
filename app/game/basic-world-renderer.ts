@@ -10,6 +10,8 @@ const REQUEST_INTERVAL_MS = 650;
 const MAX_PROXY_TRIANGLES = 180_000;
 
 export type BasicWorldRendererStats = Readonly<{
+  enabled: boolean;
+  reason: "active" | "inactive" | "feature-gated";
   supported: boolean;
   active: boolean;
   pausedForFramePressure: boolean;
@@ -31,6 +33,34 @@ export type BasicWorldRendererStats = Readonly<{
   transitions: number;
   adaptiveDowngrades: number;
 }>;
+
+/** Stable zero-work telemetry for the deliberately disabled production path. */
+export function disabledBasicWorldRendererStats(): BasicWorldRendererStats {
+  return Object.freeze({
+    enabled: false,
+    reason: "feature-gated",
+    supported: false,
+    active: false,
+    pausedForFramePressure: false,
+    queued: 0,
+    oldestJobMilliseconds: 0,
+    requested: 0,
+    submitted: 0,
+    completed: 0,
+    failed: 0,
+    stale: 0,
+    cancelled: 0,
+    generationMilliseconds: 0,
+    uploadMilliseconds: 0,
+    triangles: 0,
+    vertices: 0,
+    drawCalls: 0,
+    bytes: 0,
+    ringCompleteness: 1,
+    transitions: 0,
+    adaptiveDowngrades: 0,
+  });
+}
 
 export type BasicWorldRendererInput = Readonly<{
   world: ChunkWorld;
@@ -275,6 +305,8 @@ export class BasicWorldRenderer {
   stats(framePressure = false): BasicWorldRendererStats {
     const now = typeof performance === "undefined" ? Date.now() : performance.now();
     return Object.freeze({
+      enabled: true,
+      reason: this.group.visible ? "active" : "inactive",
       supported: this.worker !== null || typeof document !== "undefined",
       active: this.group.visible,
       pausedForFramePressure: this.group.visible && framePressure,

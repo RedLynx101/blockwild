@@ -610,7 +610,7 @@ The table below covers viable engine targets. Priority reflects expected archite
 | navigation/pathfinding | `simulation` | R5 | batchable and parallel | behavior changes |
 | entity hot state and movement | `simulation` | R6 | removes JS object churn | migration breadth |
 | creature AI/ecology/spawning | `simulation/gameplay` | R6 | deterministic tiered scheduling | emergent-content regressions |
-| player physics/swimming/mounts | `simulation` | R6 | shared authority and replay | control feel |
+| player physics/swimming/mounts | `simulation` | R5 | closes the R4 read boundary and enables shared authority/replay | control feel |
 | inventories/items/crafting | `gameplay` | R7 | single authority for UI/agent/network | metadata compatibility |
 | machines, Waygrid, power, pipes | `simulation/gameplay` | R7 | aggregate networks, future scale | topology and save migrations |
 | combat, projectiles, magic, status | `gameplay` | R7 | host parity and replays | timing/feedback |

@@ -1,0 +1,622 @@
+{
+  "schemaVersion": 1,
+  "name": "blockwild-r1-determinism",
+  "contracts": {
+    "coordinateType": "i32",
+    "seedEncoding": "explicit-utf16-code-units",
+    "stableIdEncoding": "generation:u32|index:u32",
+    "batchBoundary": {
+      "callsPerEvaluation": 2,
+      "aabbQueries": 3,
+      "rayQueries": 3,
+      "policy": "one-coarse-call-per-query-kind"
+    }
+  },
+  "coordinates": [
+    {
+      "label": "i32-min",
+      "value": -2147483648,
+      "result": {
+        "chunk": -134217728,
+        "local": 0
+      }
+    },
+    {
+      "label": "far-negative",
+      "value": -1000001,
+      "result": {
+        "chunk": -62501,
+        "local": 15
+      }
+    },
+    {
+      "label": "negative-boundary-below",
+      "value": -17,
+      "result": {
+        "chunk": -2,
+        "local": 15
+      }
+    },
+    {
+      "label": "negative-boundary",
+      "value": -16,
+      "result": {
+        "chunk": -1,
+        "local": 0
+      }
+    },
+    {
+      "label": "negative-one",
+      "value": -1,
+      "result": {
+        "chunk": -1,
+        "local": 15
+      }
+    },
+    {
+      "label": "negative-zero",
+      "value": 0,
+      "negativeZero": true,
+      "result": {
+        "chunk": 0,
+        "local": 0
+      }
+    },
+    {
+      "label": "zero",
+      "value": 0,
+      "result": {
+        "chunk": 0,
+        "local": 0
+      }
+    },
+    {
+      "label": "positive-boundary-below",
+      "value": 15,
+      "result": {
+        "chunk": 0,
+        "local": 15
+      }
+    },
+    {
+      "label": "positive-boundary",
+      "value": 16,
+      "result": {
+        "chunk": 1,
+        "local": 0
+      }
+    },
+    {
+      "label": "positive-boundary-above",
+      "value": 17,
+      "result": {
+        "chunk": 1,
+        "local": 1
+      }
+    },
+    {
+      "label": "far-positive",
+      "value": 1000001,
+      "result": {
+        "chunk": 62500,
+        "local": 1
+      }
+    },
+    {
+      "label": "i32-max",
+      "value": 2147483647,
+      "result": {
+        "chunk": 134217727,
+        "local": 15
+      }
+    }
+  ],
+  "blockIndexes": [
+    {
+      "localX": 0,
+      "y": -64,
+      "localZ": 0,
+      "index": 0,
+      "roundTrip": {
+        "x": 0,
+        "y": -64,
+        "z": 0
+      }
+    },
+    {
+      "localX": 15,
+      "y": -64,
+      "localZ": 15,
+      "index": 255,
+      "roundTrip": {
+        "x": 15,
+        "y": -64,
+        "z": 15
+      }
+    },
+    {
+      "localX": 0,
+      "y": -63,
+      "localZ": 0,
+      "index": 256,
+      "roundTrip": {
+        "x": 0,
+        "y": -63,
+        "z": 0
+      }
+    },
+    {
+      "localX": 7,
+      "y": 0,
+      "localZ": 11,
+      "index": 16567,
+      "roundTrip": {
+        "x": 7,
+        "y": 0,
+        "z": 11
+      }
+    },
+    {
+      "localX": 15,
+      "y": 127,
+      "localZ": 15,
+      "index": 49151,
+      "roundTrip": {
+        "x": 15,
+        "y": 127,
+        "z": 15
+      }
+    }
+  ],
+  "seeds": [
+    {
+      "label": "empty",
+      "utf16Units": [],
+      "hash": 2166136261
+    },
+    {
+      "label": "ascii",
+      "utf16Units": [
+        66,
+        108,
+        111,
+        99,
+        107,
+        119,
+        105,
+        108,
+        100
+      ],
+      "hash": 3449464762
+    },
+    {
+      "label": "versioned",
+      "utf16Units": [
+        119,
+        111,
+        114,
+        108,
+        100,
+        45,
+        98,
+        101,
+        108,
+        111,
+        119,
+        45,
+        118,
+        49,
+        53
+      ],
+      "hash": 3687954586
+    },
+    {
+      "label": "emoji-pair",
+      "utf16Units": [
+        65,
+        55356,
+        57151,
+        66
+      ],
+      "hash": 3408612333
+    },
+    {
+      "label": "combining",
+      "utf16Units": [
+        101,
+        769
+      ],
+      "hash": 2484688179
+    },
+    {
+      "label": "precomposed",
+      "utf16Units": [
+        233
+      ],
+      "hash": 1812687940
+    },
+    {
+      "label": "lone-high-surrogate",
+      "utf16Units": [
+        55356
+      ],
+      "hash": 948053755
+    },
+    {
+      "label": "lone-low-surrogate",
+      "utf16Units": [
+        57151
+      ],
+      "hash": 964521870
+    },
+    {
+      "label": "embedded-null",
+      "utf16Units": [
+        65,
+        0,
+        66
+      ],
+      "hash": 2484984210
+    }
+  ],
+  "terrainHashes": [
+    {
+      "label": "zero",
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "seed": 0,
+      "hash2Bits": 0,
+      "hash3Bits": 0
+    },
+    {
+      "label": "negative-world",
+      "x": -17,
+      "y": -64,
+      "z": 33,
+      "seed": 3449464762,
+      "hash2Bits": 12922865,
+      "hash3Bits": 2300723848
+    },
+    {
+      "label": "chunk-negative-edge",
+      "x": -16,
+      "y": -1,
+      "z": -16,
+      "seed": 3687954586,
+      "hash2Bits": 2621441102,
+      "hash3Bits": 2731425935
+    },
+    {
+      "label": "chunk-positive-edge",
+      "x": 16,
+      "y": 0,
+      "z": 16,
+      "seed": 3687954586,
+      "hash2Bits": 4109940709,
+      "hash3Bits": 705115904
+    },
+    {
+      "label": "upper-world",
+      "x": 2048,
+      "y": 127,
+      "z": -2048,
+      "seed": 4294967295,
+      "hash2Bits": 3330322861,
+      "hash3Bits": 2921906554
+    },
+    {
+      "label": "i32-extremes",
+      "x": 2147483647,
+      "y": 127,
+      "z": -2147483648,
+      "seed": 3687954586,
+      "hash2Bits": 413212002,
+      "hash3Bits": 1837433641
+    }
+  ],
+  "stableIds": [
+    {
+      "index": 0,
+      "generation": 0,
+      "packedHex": "0000000000000000"
+    },
+    {
+      "index": 1,
+      "generation": 0,
+      "packedHex": "0000000000000001"
+    },
+    {
+      "index": 0,
+      "generation": 1,
+      "packedHex": "0000000100000000"
+    },
+    {
+      "index": 305419896,
+      "generation": 2427178479,
+      "packedHex": "90abcdef12345678"
+    },
+    {
+      "index": 4294967295,
+      "generation": 4294967295,
+      "packedHex": "ffffffffffffffff"
+    }
+  ],
+  "spatial": {
+    "input": {
+      "cellSize": 8,
+      "entries": [
+        {
+          "id": {
+            "index": 7,
+            "generation": 1
+          },
+          "bounds": {
+            "min": [
+              8,
+              0,
+              0
+            ],
+            "max": [
+              9,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "id": {
+            "index": 3,
+            "generation": 2
+          },
+          "bounds": {
+            "min": [
+              16.5,
+              2,
+              0.5
+            ],
+            "max": [
+              15.5,
+              -2,
+              -0.5
+            ]
+          }
+        },
+        {
+          "id": {
+            "index": 2,
+            "generation": 1
+          },
+          "bounds": {
+            "min": [
+              0,
+              0,
+              0
+            ],
+            "max": [
+              1,
+              2,
+              1
+            ]
+          }
+        },
+        {
+          "id": {
+            "index": 1,
+            "generation": 1
+          },
+          "bounds": {
+            "min": [
+              -8,
+              -1,
+              -8
+            ],
+            "max": [
+              -7,
+              1,
+              -7
+            ]
+          }
+        },
+        {
+          "id": {
+            "index": 4294967295,
+            "generation": 0
+          },
+          "bounds": {
+            "min": [
+              2,
+              0,
+              -0.25
+            ],
+            "max": [
+              3,
+              1,
+              0.25
+            ]
+          }
+        }
+      ],
+      "aabbQueries": [
+        {
+          "queryId": 9,
+          "bounds": {
+            "min": [
+              16.5,
+              -4,
+              -1
+            ],
+            "max": [
+              16.5,
+              4,
+              1
+            ]
+          }
+        },
+        {
+          "queryId": 3,
+          "bounds": {
+            "min": [
+              -7,
+              -1,
+              -7
+            ],
+            "max": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "queryId": 1,
+          "bounds": {
+            "min": [
+              100,
+              100,
+              100
+            ],
+            "max": [
+              101,
+              101,
+              101
+            ]
+          }
+        }
+      ],
+      "rayQueries": [
+        {
+          "queryId": 8,
+          "ray": {
+            "origin": [
+              20,
+              0.5,
+              0
+            ],
+            "direction": [
+              -1,
+              0,
+              0
+            ],
+            "maxDistance": 32
+          }
+        },
+        {
+          "queryId": 2,
+          "ray": {
+            "origin": [
+              -12,
+              0,
+              -7.5
+            ],
+            "direction": [
+              1,
+              0,
+              0
+            ],
+            "maxDistance": 8
+          }
+        },
+        {
+          "queryId": 5,
+          "ray": {
+            "origin": [
+              0,
+              3,
+              0
+            ],
+            "direction": [
+              0,
+              1,
+              0
+            ],
+            "maxDistance": 10
+          }
+        }
+      ]
+    },
+    "output": {
+      "aabb": [
+        {
+          "queryId": 1,
+          "ids": []
+        },
+        {
+          "queryId": 3,
+          "ids": [
+            "0000000100000001",
+            "0000000100000002"
+          ]
+        },
+        {
+          "queryId": 9,
+          "ids": [
+            "0000000200000003"
+          ]
+        }
+      ],
+      "ray": [
+        {
+          "queryId": 2,
+          "hits": [
+            {
+              "id": "0000000100000001",
+              "distance": 4
+            }
+          ]
+        },
+        {
+          "queryId": 5,
+          "hits": []
+        },
+        {
+          "queryId": 8,
+          "hits": [
+            {
+              "id": "0000000200000003",
+              "distance": 3.5
+            },
+            {
+              "id": "0000000100000007",
+              "distance": 11
+            },
+            {
+              "id": "00000000ffffffff",
+              "distance": 17
+            },
+            {
+              "id": "0000000100000002",
+              "distance": 19
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "replay": {
+    "header": {
+      "engineVersion": 1,
+      "protocolVersion": 1,
+      "contentHash": "00000000000000000000000000000000",
+      "generatorHash": "00000000000000000000000000000000",
+      "worldSeed": "rust-r1-golden",
+      "startingHash": "7b9f0071103332f0c83a571e907d25e3"
+    },
+    "frames": [
+      {
+        "tick": "1",
+        "commandBatchHex": "6d6f76653a6e6f727468",
+        "platformResultsHex": "",
+        "expectedHash": "f532371a12b75861c83a57c61ff48453"
+      },
+      {
+        "tick": "2",
+        "commandBatchHex": "706c6163653a73746f6e65",
+        "platformResultsHex": "736176653a6f6b",
+        "expectedHash": "5443aabe48b5ff87c83a57b6e7718c17"
+      }
+    ],
+    "canonicalHash": "7cb774423622fdda707ab952f86caf64",
+    "encodedHex": "42574550010001001e0000000000000000000000a8000000000000000000000001000000010000000000000000000000000000000000000000000000000000000000000000000e000000727573742d72312d676f6c64656e7b9f0071103332f0c83a571e907d25e30200000001000000000000000a0000006d6f76653a6e6f72746800000000f532371a12b75861c83a57c61ff4845302000000000000000b000000706c6163653a73746f6e6507000000736176653a6f6b5443aabe48b5ff87c83a57b6e7718c17"
+  }
+}

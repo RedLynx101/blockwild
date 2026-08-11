@@ -9,6 +9,13 @@ export const DEFAULT_SIMULATION_DISTANCE = 8;
 export type ResourceMode = "auto" | "cpu" | "memory";
 
 /**
+ * The legacy far-field proxy is deliberately feature-gated while the streamed
+ * Rust/WGPU replacement is built. Next only exposes explicitly prefixed build
+ * variables to the browser, so stale local settings cannot turn it back on.
+ */
+export const BASIC_RENDER_DISTANCE_ENABLED = process.env.NEXT_PUBLIC_BLOCKWILD_BASIC_RENDER_DISTANCE === "1";
+
+/**
  * Sentient residents keep their authored model at conversational range, use a
  * compact role-readable proxy across the wider town, and sleep once outside
  * the active simulation window. The coarse cadence is deliberately independent
@@ -94,7 +101,10 @@ export type ViewDistanceSettings = Readonly<{
 const finiteInteger = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
 
-export function normalizeViewDistances(value: Partial<ViewDistanceSettings> | null | undefined): ViewDistanceSettings {
+export function normalizeViewDistances(
+  value: Partial<ViewDistanceSettings> | null | undefined,
+  options: Readonly<{ basicRenderDistanceEnabled?: boolean }> = {},
+): ViewDistanceSettings {
   const renderDistance = Math.max(
     MIN_RENDER_DISTANCE,
     Math.min(MAX_RENDER_DISTANCE, finiteInteger(value?.renderDistance, DEFAULT_RENDER_DISTANCE)),
@@ -103,10 +113,12 @@ export function normalizeViewDistances(value: Partial<ViewDistanceSettings> | nu
     MIN_RENDER_DISTANCE,
     Math.min(renderDistance, finiteInteger(value?.simulationDistance, DEFAULT_SIMULATION_DISTANCE)),
   );
-  const basicRenderDistance = Math.max(
-    renderDistance,
-    Math.min(MAX_BASIC_RENDER_DISTANCE, finiteInteger(value?.basicRenderDistance, DEFAULT_BASIC_RENDER_DISTANCE)),
-  );
+  const basicRenderDistance = (options.basicRenderDistanceEnabled ?? BASIC_RENDER_DISTANCE_ENABLED)
+    ? Math.max(
+      renderDistance,
+      Math.min(MAX_BASIC_RENDER_DISTANCE, finiteInteger(value?.basicRenderDistance, DEFAULT_BASIC_RENDER_DISTANCE)),
+    )
+    : renderDistance;
   return { renderDistance, simulationDistance, basicRenderDistance };
 }
 

@@ -41,6 +41,7 @@ yarn-error.log*
 next-env.d.ts
 *.tsbuildinfo
 /dist/
+/engine/target/
 /.wrangler/
 /.sites-runtime/
 /.blockwild-agent/

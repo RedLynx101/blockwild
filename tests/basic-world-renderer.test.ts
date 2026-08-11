@@ -1,11 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BasicWorldRenderer } from "../app/game/basic-world-renderer.ts";
+import { BasicWorldRenderer, disabledBasicWorldRendererStats } from "../app/game/basic-world-renderer.ts";
 import { BiomeId, normalizeWorldGenerationOptions, type ChunkWorld, type ColumnSample } from "../app/game/world.ts";
 
 const column: ColumnSample = { height: 42, waterline: 32, biome: BiomeId.Meadow, temperature: 0.5, moisture: 0.5, continental: 0.5, river: 0, mountain: 0 };
 const world = { seed: 19, seedText: "BASIC-RENDERER", sampleColumn: () => column } as unknown as ChunkWorld;
 const generationOptions = normalizeWorldGenerationOptions();
+
+test("feature-gated basic rendering reports deliberate zero work", () => {
+  assert.deepEqual(disabledBasicWorldRendererStats(), {
+    enabled: false,
+    reason: "feature-gated",
+    supported: false,
+    active: false,
+    pausedForFramePressure: false,
+    queued: 0,
+    oldestJobMilliseconds: 0,
+    requested: 0,
+    submitted: 0,
+    completed: 0,
+    failed: 0,
+    stale: 0,
+    cancelled: 0,
+    generationMilliseconds: 0,
+    uploadMilliseconds: 0,
+    triangles: 0,
+    vertices: 0,
+    drawCalls: 0,
+    bytes: 0,
+    ringCompleteness: 1,
+    transitions: 0,
+    adaptiveDowngrades: 0,
+  });
+});
 
 test("basic renderer performs no proxy work when basic equals full distance", () => {
   const renderer = new BasicWorldRenderer();

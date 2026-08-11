@@ -1,0 +1,21 @@
+[package]
+name = "blockwild-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+blockwild-types.workspace = true
+blockwild-protocol.workspace = true
+blockwild-engine.workspace = true
+blockwild-render.workspace = true
+
+[[bin]]
+name = "blockwild-tools"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+

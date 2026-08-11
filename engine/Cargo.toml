@@ -1,0 +1,42 @@
+[workspace]
+members = [
+  "crates/blockwild-types",
+  "crates/blockwild-protocol",
+  "crates/blockwild-engine",
+  "crates/blockwild-render",
+  "crates/blockwild-wasm",
+  "crates/blockwild-tools",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91.1"
+license = "MIT"
+repository = "https://github.com/RedLynx101/blockwild"
+
+[workspace.dependencies]
+blockwild-types = { path = "crates/blockwild-types" }
+blockwild-protocol = { path = "crates/blockwild-protocol" }
+blockwild-engine = { path = "crates/blockwild-engine" }
+blockwild-render = { path = "crates/blockwild-render" }
+wasm-bindgen = "=0.2.127"
+wasm-bindgen-futures = "=0.4.77"
+wgpu = { version = "=30.0.0", default-features = false, features = ["std", "wgsl"] }
+pollster = "=0.4.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.bench]
+debug = 1

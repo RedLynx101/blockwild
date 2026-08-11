@@ -1,0 +1,96 @@
+name: Blockwild Rust Engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "engine/**"
+      - "app/game/rust-engine-*.ts"
+      - "app/game/engine-facade.ts"
+      - "scripts/*rust-engine*.mjs"
+      - "scripts/benchmark-rust-browser.mjs"
+      - "tests/rust-*.test.*"
+      - "public/engine/**"
+      - ".github/workflows/rust-engine.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "engine/**"
+      - "app/game/rust-engine-*.ts"
+      - "app/game/engine-facade.ts"
+      - "scripts/*rust-engine*.mjs"
+      - "scripts/benchmark-rust-browser.mjs"
+      - "tests/rust-*.test.*"
+      - "public/engine/**"
+      - ".github/workflows/rust-engine.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blockwild-rust-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native-wasm-and-browser-contract:
+    name: Native, Wasm, and browser contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install 1.91.1 --component rustfmt,clippy --target wasm32-unknown-unknown
+          rustup default 1.91.1
+      - name: Cache Cargo downloads and targets
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/target
+          key: rust-engine-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+      - name: Format
+        working-directory: engine
+        run: cargo fmt --all --check
+      - name: Native checks and tests
+        working-directory: engine
+        run: |
+          cargo check --workspace --all-targets --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+      - name: Deterministic replay and renderer fixtures
+        working-directory: engine
+        run: |
+          cargo run --locked -p blockwild-tools -- replay-self-test
+          cargo run --locked -p blockwild-tools -- render-fixture
+          cargo run --locked -p blockwild-tools -- render-smoke
+      - name: Compile compatibility Wasm
+        working-directory: engine
+        run: cargo build --locked --release --target wasm32-unknown-unknown -p blockwild-wasm
+      - name: Use Node.js 22.13.1
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - name: Install browser dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify TypeScript protocol and tooling
+        run: npm run test:rust-engine
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Rebuild immutable browser artifact
+        run: |
+          npm run build:rust-engine
+          npm run build:rust-renderer-lab
+      - name: Reject stale generated artifact
+        run: |
+          npm run check:rust-engine
+          git diff --exit-code -- public/engine

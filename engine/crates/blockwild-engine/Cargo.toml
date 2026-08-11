@@ -1,0 +1,18 @@
+[package]
+name = "blockwild-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+blockwild-types.workspace = true
+blockwild-protocol.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
