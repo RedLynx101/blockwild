@@ -193,6 +193,7 @@ class FakePeerConnection implements PeerConnectionLike {
 function makeSession(identity: PeerIdentity, network: FakeRtcNetwork, now: () => number, events: MultiplayerEvent[]) {
   return new MultiplayerSession({
     identity,
+    authorityMode: "legacy-compatibility",
     peerConnectionFactory: network.factory,
     randomId: deterministicIds(identity.name.replace(/\s/gu, "")),
     now,

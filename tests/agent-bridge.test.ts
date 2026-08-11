@@ -21,13 +21,13 @@ test("typed agent bridge constructs fresh host-authorized commands without expos
     connect: async () => ({ hostName: "Noah" }),
     observe: () => observation,
     latestResult: () => null,
-    sendCommand: (command) => (sent.push(command), true),
+    sendCommand: (command) => (sent.push(command), { accepted: true, code: "accepted" }),
     sendChat: () => true,
     publishVoice: (input) => (voices.push(input), { ok: true }),
     disconnect: () => undefined,
   });
   assert.deepEqual(await bridge.connect({ roomCode: "wild test", name: " Mica " }), { connected: true, hostName: "Noah", roomCode: "WILDTEST" });
-  const issued = bridge.command({ kind: "observe", clientIntent: "Check the nearby path" });
+  const issued = await bridge.command({ kind: "observe", clientIntent: "Check the nearby path" });
   assert.equal(issued.accepted, true);
   assert.equal(sent[0]?.agentId, "agent_1");
   assert.equal(sent[0]?.expectedWorldRevision, 42);
@@ -41,14 +41,14 @@ test("typed agent bridge constructs fresh host-authorized commands without expos
   assert.deepEqual(bridge.publishVoice({ mimeType: "audio/mpeg", dataBase64: "", text: "No audio", textHash: "hash" }), { ok: false, code: "invalid_voice_payload" });
 });
 
-test("typed agent bridge refuses mutation before an authoritative observation", () => {
+test("typed agent bridge refuses mutation before an authoritative observation", async () => {
   let sends = 0;
   const bridge = createAgentBrowserBridge({
     getStatus: () => ({ connected: false, role: null, roomCode: "", agentName: "Mica" }),
     connect: async () => ({ hostName: "Noah" }), observe: () => null, latestResult: () => null,
     sendCommand: () => (sends += 1, true), sendChat: () => false, disconnect: () => undefined,
   });
-  assert.deepEqual(bridge.command({ kind: "move_to", arguments: { target: { x: 1, y: 2, z: 3 } } }), { accepted: false, commandId: "", error: "no_observation" });
+  assert.deepEqual(await bridge.command({ kind: "move_to", arguments: { target: { x: 1, y: 2, z: 3 } } }), { accepted: false, commandId: "", error: "no_observation" });
   assert.equal(sends, 0);
 });
 
@@ -82,4 +82,38 @@ test("local test-admin bridge is explicit and keeps destructive confirmation sep
   assert.deepEqual(bridge.diagnosticsNoteFallback("door UI"), { ok: true, reason: "door UI" });
   await bridge.host({ roomCode: "test room", name: "Mica" });
   assert.deepEqual(calls, ["host:TESTROOM"]);
+});
+
+test("browser bridge waits for an authority receipt and invalidates pending work on disconnect", async () => {
+  let resolveReceipt!: (value: { accepted: boolean; code?: string }) => void;
+  const receipt = new Promise<{ accepted: boolean; code?: string }>((resolve) => { resolveReceipt = resolve; });
+  let disconnected = false;
+  const bridge = createAgentBrowserBridge({
+    getStatus: () => ({ connected: !disconnected, role: "guest", roomCode: "WILD-TEST", agentName: "Mica" }),
+    connect: async () => ({ hostName: "Noah" }),
+    observe: () => observation,
+    latestResult: () => null,
+    sendCommand: () => receipt,
+    sendChat: () => false,
+    disconnect: async () => { disconnected = true; },
+  });
+  const pending = bridge.command({ kind: "observe", commandId: "command_pending_001" });
+  assert.deepEqual(await bridge.command({ kind: "observe", commandId: "command_pending_001" }), {
+    accepted: false, commandId: "command_pending_001", error: "command_pending",
+  });
+  await bridge.disconnect();
+  resolveReceipt({ accepted: true });
+  assert.deepEqual(await pending, { accepted: false, commandId: "command_pending_001", error: "disconnected" });
+  assert.equal(bridge.status().lastCommandId, null, "a late receipt cannot revive a disconnected command");
+});
+
+test("browser bridge does not promote a legacy synchronous boolean into a Rust receipt", async () => {
+  const bridge = createAgentBrowserBridge({
+    getStatus: () => ({ connected: true, role: "guest", roomCode: "WILD-TEST", agentName: "Mica" }),
+    connect: async () => ({ hostName: "Noah" }), observe: () => observation, latestResult: () => null,
+    sendCommand: () => true, sendChat: () => false, disconnect: () => undefined,
+  });
+  assert.deepEqual(await bridge.command({ kind: "observe", commandId: "command_boolean_001" }), {
+    accepted: false, commandId: "command_boolean_001", error: "rust_receipt_required",
+  });
 });

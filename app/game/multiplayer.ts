@@ -27,6 +27,20 @@ import {
   type AgentPeerKind,
   type AgentVoiceChunk,
 } from "./agent-platform";
+import {
+  createNetworkInterestSetV1,
+  createNetworkAuthorityIdentityV1,
+  type NetworkAuthorityIdentityV1,
+  type NetworkCapabilityV1,
+  type NetworkInterestSetV1,
+} from "./network-authority-contract";
+import type {
+  RustMultiplayerAuthorityModeV1,
+  RustMultiplayerAuthorityPeerV1,
+  RustMultiplayerAuthorityV1,
+} from "./rust-multiplayer-authority";
+import type { RustIntegratedNetworkDeltaBuildRequestV1 } from "./rust-integrated-runtime-network-lifecycle";
+import { TypeScriptCanonicalHasher } from "./rust-kernel-shadow";
 
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
@@ -58,6 +72,12 @@ const MAX_MOVEMENT_BUFFERED_BYTES = 64 * 1024;
 const MAX_VOICE_BUFFERED_BYTES = 512 * 1024;
 const MAX_PROTOCOL_STRIKES = 3;
 const COORDINATE_LIMIT = 30_000_000;
+const RUST_AUTHORITY_DELTA_SCHEMA = 1 as const;
+const RUST_AUTHORITY_DELTA_CHUNK_BYTES = 96 * 1024;
+const RUST_AUTHORITY_MAX_DELTA_BYTES = 16 * 1024 * 1024;
+const RUST_AUTHORITY_MAX_DELTA_CHUNKS = Math.ceil(RUST_AUTHORITY_MAX_DELTA_BYTES / RUST_AUTHORITY_DELTA_CHUNK_BYTES);
+const RUST_AUTHORITY_MAX_REASSEMBLIES_PER_PEER = 4;
+const RUST_AUTHORITY_REASSEMBLY_TIMEOUT_MS = 30_000;
 
 export type MultiplayerRole = "host" | "guest";
 export type MultiplayerSessionState = "idle" | "hosting" | "joining" | "connected" | "disconnected" | "closed" | "error";
@@ -577,6 +597,19 @@ export type WorldSnapshot = {
   guildBook?: unknown;
 };
 
+/** Platform framing only. The packet remains opaque until Rust validates it. */
+export type RustAuthorityDeltaChunk = Readonly<{
+  schema: typeof RUST_AUTHORITY_DELTA_SCHEMA;
+  transferId: string;
+  keyframe: boolean;
+  packetBytes: number;
+  packetHash: string;
+  chunkIndex: number;
+  chunkCount: number;
+  data: string;
+  interest: NetworkInterestSetV1;
+}>;
+
 export type MultiplayerPayloadMap = {
   hello: { identity: PeerIdentity; role: MultiplayerRole };
   heartbeat: { nonce: string; reply: boolean };
@@ -605,6 +638,7 @@ export type MultiplayerPayloadMap = {
   "agent-capabilities": AgentCapabilityGrant;
   chat: AgentChatMessage;
   "voice-chunk": AgentVoiceChunk;
+  "rust-authority-delta": RustAuthorityDeltaChunk;
 };
 
 export type MultiplayerMessageType = keyof MultiplayerPayloadMap;
@@ -617,6 +651,10 @@ export type MultiplayerEnvelope<K extends MultiplayerMessageType = MultiplayerMe
   sentAt: number;
   from: string;
   payload: MultiplayerPayloadMap[K];
+  /** Required outside explicit legacy compatibility; authored by the Rust runtime. */
+  authority?: NetworkAuthorityIdentityV1;
+  /** Dense Rust command stream; independent of transport/control sequencing. */
+  authoritySequence?: number;
 };
 
 export type PeerInfo = {
@@ -635,6 +673,9 @@ export type MultiplayerEvent =
   | { type: "state"; previous: MultiplayerSessionState; state: MultiplayerSessionState }
   | { type: "peer"; peer: PeerInfo; reason?: string }
   | { type: "message"; peer: PeerInfo; channel: MultiplayerChannelKind; envelope: MultiplayerEnvelope }
+  | { type: "authority-rejection"; peer: PeerInfo; commandId: string; code: string }
+  | { type: "authority-delta"; peer: PeerInfo; keyframe: boolean; sequence: number; stateHash: string; packet: Uint8Array }
+  | { type: "authority-resync"; peer: PeerInfo; code: string }
   | { type: "error"; error: Error; peer?: PeerInfo };
 
 export type MultiplayerListener = (event: MultiplayerEvent) => void;
@@ -695,8 +736,16 @@ export type MultiplayerOptions = {
   autoMaintenance?: boolean;
   /** Developer-only outbound transport delay used for real browser QA. */
   artificialLatencyMs?: { min: number; max: number };
+  /** Rust is mandatory unless a caller names the non-promotable compatibility mode. */
+  authorityMode?: RustMultiplayerAuthorityModeV1;
+  rustAuthority?: RustMultiplayerAuthorityV1;
+  authorityInterest?: (input: Readonly<{ sessionId: string; local: PeerIdentity; peer: PeerIdentity; role: MultiplayerRole }>) => NetworkInterestSetV1;
+  authorityTimeoutMs?: number;
+  authorityGrantLifetimeMs?: number;
   onEvent?: MultiplayerListener;
 };
+
+type AuthoritySignalV1 = Readonly<{ schema: 1; packet: string }>;
 
 type OfferSignal = {
   version: typeof MULTIPLAYER_PROTOCOL_VERSION;
@@ -706,6 +755,7 @@ type OfferSignal = {
   token: string;
   identity: PeerIdentity;
   description: RTCSessionDescriptionInit;
+  authority?: AuthoritySignalV1;
 };
 
 type AnswerSignal = {
@@ -716,6 +766,7 @@ type AnswerSignal = {
   token: string;
   identity: PeerIdentity;
   description: RTCSessionDescriptionInit;
+  authority?: AuthoritySignalV1;
 };
 
 export type ManualSignal = OfferSignal | AnswerSignal;
@@ -738,14 +789,35 @@ type PeerRecord = {
   protocolStrikes: number;
   pendingHeartbeatNonce: string | null;
   pendingHeartbeatAt: number;
+  authorityCapabilities: readonly NetworkCapabilityV1[];
+  authorityGeneration: number;
+  authorityGrant: RustMultiplayerAuthorityPeerV1 | null;
+  lastAgentGrant: AgentCapabilityGrant | null;
+  authorityQueue: Promise<void>;
+  acceptedAuthorityCommands: Set<string>;
+  deliveredAuthorityReceipts: Set<string>;
   closed: boolean;
 };
 
+type RustDeltaReassembly = {
+  transferId: string;
+  keyframe: boolean;
+  packetBytes: number;
+  packetHash: string;
+  chunkCount: number;
+  interest: NetworkInterestSetV1;
+  chunks: Array<Uint8Array | null>;
+  receivedBytes: number;
+  expiresAt: number;
+};
+
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "tcg-action", "map-share", "agent-command", "agent-result", "agent-observation", "agent-capabilities", "chat", "voice-chunk",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "tcg-action", "map-share", "agent-command", "agent-result", "agent-observation", "agent-capabilities", "chat", "voice-chunk", "rust-authority-delta",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
 const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "tcg-action", "map-share", "agent-command", "chat", "voice-chunk"]);
+const RUST_GUEST_PRESENTATION_TYPES = new Set<MultiplayerMessageType>(["agent-result", "agent-observation", "agent-capabilities", "chat", "voice-chunk", "rust-authority-delta"]);
+const IMMEDIATE_AUTHORITY_RELEASE_TYPES = new Set<MultiplayerMessageType>(["player-pose", "sleep-vote", "map-share", "chat", "voice-chunk"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -1321,6 +1393,46 @@ function validateSessionWorldOptions(value: unknown): value is SessionWorldOptio
     && (value.origin === undefined || (isRecord(value.origin) && ["wilderness", "near-any-settlement", "culture-settlement"].includes(value.origin.mode as string)));
 }
 
+function validateAuthorityIdentity(value: unknown): value is NetworkAuthorityIdentityV1 {
+  if (!isRecord(value) || !isRecord(value.address) || !isRecord(value.revision) || typeof value.stateHash !== "string") return false;
+  try {
+    const canonical = createNetworkAuthorityIdentityV1({
+      universeId: String(value.address.universeId ?? ""), locationId: String(value.address.locationId ?? ""),
+    }, {
+      epoch: Number(value.revision.epoch), world: Number(value.revision.world), entities: Number(value.revision.entities),
+      gameplay: Number(value.revision.gameplay), persistence: Number(value.revision.persistence),
+    });
+    return canonical.stateHash === value.stateHash;
+  } catch { return false; }
+}
+
+function validateNetworkInterest(value: unknown): value is NetworkInterestSetV1 {
+  if (!isRecord(value) || !Array.isArray(value.chunks) || !Array.isArray(value.entityIds)) return false;
+  try {
+    const canonical = createNetworkInterestSetV1({
+      sequence: Number(value.sequence),
+      chunks: value.chunks as NetworkInterestSetV1["chunks"],
+      entityIds: value.entityIds as readonly string[],
+    });
+    return canonical.interestHash === value.interestHash;
+  } catch { return false; }
+}
+
+function validateRustAuthorityDeltaChunk(value: unknown): value is RustAuthorityDeltaChunk {
+  return isRecord(value)
+    && value.schema === RUST_AUTHORITY_DELTA_SCHEMA
+    && isShortString(value.transferId, 180)
+    && typeof value.keyframe === "boolean"
+    && isInteger(value.packetBytes, 1, RUST_AUTHORITY_MAX_DELTA_BYTES)
+    && typeof value.packetHash === "string" && /^[0-9a-f]{32}$/u.test(value.packetHash)
+    && isInteger(value.chunkIndex, 0, RUST_AUTHORITY_MAX_DELTA_CHUNKS - 1)
+    && isInteger(value.chunkCount, 1, RUST_AUTHORITY_MAX_DELTA_CHUNKS)
+    && (value.chunkIndex as number) < (value.chunkCount as number)
+    && typeof value.data === "string" && value.data.length > 0 && value.data.length <= Math.ceil(RUST_AUTHORITY_DELTA_CHUNK_BYTES * 4 / 3) + 8
+    && /^[A-Za-z0-9_-]+$/u.test(value.data)
+    && validateNetworkInterest(value.interest);
+}
+
 export function validatePayload<K extends MultiplayerMessageType>(type: K, value: unknown): value is MultiplayerPayloadMap[K] {
   if (!isRecord(value)) return false;
   switch (type) {
@@ -1342,6 +1454,8 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
       return validateAgentChatMessage(value);
     case "voice-chunk":
       return validateAgentVoiceChunk(value);
+    case "rust-authority-delta":
+      return validateRustAuthorityDeltaChunk(value);
     case "player-pose":
       return validatePose(value);
     case "block-action":
@@ -1573,7 +1687,9 @@ export function validateEnvelope(value: unknown): value is MultiplayerEnvelope {
     || !MESSAGE_TYPES.has(value.type as MultiplayerMessageType)
     || !isInteger(value.sequence, 0, Number.MAX_SAFE_INTEGER)
     || !isFiniteNumber(value.sentAt, 0, Number.MAX_SAFE_INTEGER)
-    || !isId(value.from)) return false;
+    || !isId(value.from)
+    || (value.authority !== undefined && !validateAuthorityIdentity(value.authority))
+    || (value.authoritySequence !== undefined && !isInteger(value.authoritySequence, 0, Number.MAX_SAFE_INTEGER))) return false;
   const type = value.type as MultiplayerMessageType;
   return validatePayload(type, value.payload);
 }
@@ -1638,7 +1754,10 @@ export function validateManualSignal(value: unknown): value is ManualSignal {
     || (value.kind !== "offer" && value.kind !== "answer")
     || !isId(value.sessionId)
     || !isId(value.token)
-    || !validatePeerIdentity(value.identity)) return false;
+    || !validatePeerIdentity(value.identity)
+    || (value.authority !== undefined && (!isRecord(value.authority) || value.authority.schema !== 1
+      || typeof value.authority.packet !== "string" || value.authority.packet.length < 1 || value.authority.packet.length > 32 * 1024
+      || !/^[A-Za-z0-9_-]+$/u.test(value.authority.packet)))) return false;
   return validateDescription(value.description, value.kind);
 }
 
@@ -1749,6 +1868,7 @@ function plainDescription(description: RTCSessionDescriptionInit | null, expecte
 export class MultiplayerSession {
   readonly identity: PeerIdentity;
   readonly rtcConfiguration: RTCConfiguration;
+  readonly authorityMode: RustMultiplayerAuthorityModeV1;
   role: MultiplayerRole | null = null;
   sessionId: string | null = null;
   state: MultiplayerSessionState = "idle";
@@ -1761,15 +1881,23 @@ export class MultiplayerSession {
   private readonly connectionTimeoutMs: number;
   private readonly iceGatheringTimeoutMs: number;
   private readonly artificialLatencyMs: { min: number; max: number } | null;
+  private readonly rustAuthority: RustMultiplayerAuthorityV1 | null;
+  private readonly authorityInterest: MultiplayerOptions["authorityInterest"];
+  private readonly authorityTimeoutMs: number;
+  private readonly authorityGrantLifetimeMs: number;
   private readonly peers = new Map<string, PeerRecord>();
   private readonly listeners = new Set<MultiplayerListener>();
   private maintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private reliableSequence = 0;
   private movementSequence = 0;
   private voiceSequence = 0;
+  private authorityCommandSequence = 0;
   private readonly artificialSendTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly nextReliableArtificialSendAt = new Map<string, number>();
   private readonly nextVoiceArtificialSendAt = new Map<string, number>();
+  private readonly authorityOperations = new Set<Promise<unknown>>();
+  private readonly authorityGenerations = new Map<string, number>();
+  private readonly rustDeltaReassemblies = new Map<string, RustDeltaReassembly>();
   /** Final host responses retained briefly so reconnect/retry is exactly-once. */
   private readonly responseCache = new Map<string, {
     peerId: string;
@@ -1786,6 +1914,17 @@ export class MultiplayerSession {
       if (!support.supported) throw new MultiplayerProtocolError(support.reasons.join(" "));
     }
     this.identity = copyIdentity(options.identity);
+    this.authorityMode = options.authorityMode ?? "rust-authoritative";
+    this.rustAuthority = options.rustAuthority ?? null;
+    this.authorityInterest = options.authorityInterest;
+    this.authorityTimeoutMs = options.authorityTimeoutMs ?? 10_000;
+    this.authorityGrantLifetimeMs = options.authorityGrantLifetimeMs ?? 10 * 60_000;
+    if (this.authorityMode === "rust-authoritative" && (!this.rustAuthority || !this.authorityInterest)) {
+      throw new MultiplayerProtocolError("Rust multiplayer authority and an interest provider are required. Use authorityMode 'legacy-compatibility' only for the bounded compatibility path.");
+    }
+    if (this.authorityMode === "legacy-compatibility" && this.rustAuthority) {
+      throw new MultiplayerProtocolError("Legacy compatibility cannot run beside Rust authority");
+    }
     this.peerConnectionFactory = options.peerConnectionFactory ?? defaultPeerConnectionFactory;
     this.rtcConfiguration = options.rtcConfiguration ?? {
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -1802,6 +1941,8 @@ export class MultiplayerSession {
       || !isFiniteNumber(this.peerTimeoutMs, this.heartbeatIntervalMs * 2, 300_000)
       || !isFiniteNumber(this.connectionTimeoutMs, 5_000, 600_000)
       || !isFiniteNumber(this.iceGatheringTimeoutMs, 500, 60_000)
+      || !isFiniteNumber(this.authorityTimeoutMs, 250, 60_000)
+      || !isFiniteNumber(this.authorityGrantLifetimeMs, 1_000, 24 * 60 * 60_000)
       || (this.artificialLatencyMs !== null && (!isFiniteNumber(this.artificialLatencyMs.min, 0, 2_000)
         || !isFiniteNumber(this.artificialLatencyMs.max, this.artificialLatencyMs.min, 2_000)))) {
       throw new MultiplayerProtocolError("Invalid multiplayer timeout configuration");
@@ -1822,6 +1963,70 @@ export class MultiplayerSession {
   getPeer(peerIdOrToken: string) {
     const peer = this.resolvePeer(peerIdOrToken);
     return peer ? this.peerInfo(peer) : null;
+  }
+
+  private authority() {
+    if (!this.rustAuthority) throw new MultiplayerProtocolError("Rust multiplayer authority is unavailable");
+    return this.rustAuthority;
+  }
+
+  private canonicalInterest(peer: PeerIdentity, role: MultiplayerRole) {
+    if (!this.sessionId || !this.authorityInterest) throw new MultiplayerProtocolError("Rust multiplayer interest is unavailable");
+    return createNetworkInterestSetV1(this.authorityInterest({ sessionId: this.sessionId, local: this.identity, peer, role }));
+  }
+
+  private authorityPeer(peer: PeerRecord, capabilities = peer.authorityCapabilities): RustMultiplayerAuthorityPeerV1 {
+    if (!this.sessionId || !peer.identity) throw new MultiplayerProtocolError("Cannot grant an unidentified multiplayer peer");
+    const peerKind = peer.identity.peerKind ?? "human";
+    const grantedCapabilities = peerKind === "agent"
+      ? capabilities.filter((capability) => capability === "agent-work" || capability === "chat")
+      : capabilities.filter((capability) => capability !== "agent-work");
+    return Object.freeze({
+      sessionId: this.sessionId,
+      peerId: peer.identity.id,
+      connectionId: peer.token,
+      actorId: peer.identity.id,
+      peerKind,
+      role: this.role === "host" ? "guest" : "host",
+      capabilities: grantedCapabilities,
+      expiresAt: this.now() + this.authorityGrantLifetimeMs,
+      nextSequence: 0,
+      interest: this.canonicalInterest(peer.identity, this.role!),
+      connectionGeneration: peer.authorityGeneration,
+    });
+  }
+
+  private trackAuthority<T>(operation: Promise<T>) {
+    this.authorityOperations.add(operation);
+    void operation.finally(() => this.authorityOperations.delete(operation)).catch(() => undefined);
+    return operation;
+  }
+
+  private async authorityDeadline<T>(operation: Promise<T>, label: string) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new MultiplayerProtocolError(`${label} exceeded the Rust authority deadline`)), this.authorityTimeoutMs);
+    });
+    try { return await Promise.race([operation, timeout]); }
+    finally { if (timer !== null) clearTimeout(timer); }
+  }
+
+  private queuePeerAuthority(peer: PeerRecord, operation: () => Promise<void>) {
+    const queued = peer.authorityQueue.then(operation, operation);
+    peer.authorityQueue = queued.catch(() => undefined);
+    this.trackAuthority(queued);
+    return queued;
+  }
+
+  private nextAuthorityGeneration(peerId: string) {
+    const next = (this.authorityGenerations.get(peerId) ?? 0) + 1;
+    this.authorityGenerations.set(peerId, next);
+    return next;
+  }
+
+  async drainAuthority() {
+    await Promise.allSettled([...this.authorityOperations]);
+    if (this.rustAuthority) await this.rustAuthority.drain();
   }
 
   /**
@@ -1921,6 +2126,13 @@ export class MultiplayerSession {
       protocolStrikes: 0,
       pendingHeartbeatNonce: null,
       pendingHeartbeatAt: 0,
+      authorityCapabilities: Object.freeze([]),
+      authorityGeneration: identity ? this.nextAuthorityGeneration(identity.id) : 0,
+      authorityGrant: null,
+      lastAgentGrant: null,
+      authorityQueue: Promise.resolve(),
+      acceptedAuthorityCommands: new Set(),
+      deliveredAuthorityReceipts: new Set(),
       closed: false,
     };
     this.peers.set(token, peer);
@@ -2038,6 +2250,13 @@ export class MultiplayerSession {
         token,
         identity: copyIdentity(this.identity),
         description: plainDescription(peer.connection.localDescription, "offer"),
+        ...(this.authorityMode === "rust-authoritative" ? { authority: {
+          schema: 1 as const,
+          packet: bytesToBase64Url(this.authority().createHandshake({
+            sessionId: this.sessionId!, peerId: this.identity.id,
+            peerKind: this.identity.peerKind ?? "human", role: "host",
+          })),
+        } } : {}),
       };
       this.emitPeer(peer, "invite-created");
       return { token, inviteCode: encodeInviteCode(signal) };
@@ -2069,6 +2288,21 @@ export class MultiplayerSession {
       else channel.close();
     };
     try {
+      let peerHandshake: Uint8Array | null = null;
+      if (this.authorityMode === "rust-authoritative") {
+        if (!signal.authority) throw new MultiplayerProtocolError("Host invite is missing the required Rust authority handshake");
+        peerHandshake = this.authority().createHandshake({
+          sessionId: signal.sessionId, peerId: this.identity.id,
+          peerKind: this.identity.peerKind ?? "human", role: "guest",
+        });
+        const negotiated = await this.authorityDeadline(
+          this.authority().negotiate(base64UrlToBytes(signal.authority.packet), peerHandshake),
+          "Rust authority handshake",
+        );
+        peer.authorityCapabilities = negotiated.capabilities;
+        peer.authorityGrant = this.authorityPeer(peer, negotiated.capabilities);
+        await this.authorityDeadline(this.authority().installPeer(peer.authorityGrant), "Rust peer grant");
+      }
       await peer.connection.setRemoteDescription(signal.description);
       const answer = await peer.connection.createAnswer();
       if (!validateDescription(answer, "answer")) throw new MultiplayerProtocolError("Browser created an invalid WebRTC answer");
@@ -2083,6 +2317,7 @@ export class MultiplayerSession {
         token: signal.token,
         identity: copyIdentity(this.identity),
         description: plainDescription(peer.connection.localDescription, "answer"),
+        ...(peerHandshake ? { authority: { schema: 1 as const, packet: bytesToBase64Url(peerHandshake) } } : {}),
       };
       return { host: copyIdentity(signal.identity), answerCode: encodeInviteCode(response) };
     } catch (error) {
@@ -2111,8 +2346,23 @@ export class MultiplayerSession {
       if (!existing.closed && existing !== peer && existing.identity?.id === signal.identity.id) throw new MultiplayerProtocolError("That guest identity is already connected");
     }
     peer.identity = copyIdentity(signal.identity);
+    peer.authorityGeneration = this.nextAuthorityGeneration(signal.identity.id);
     peer.state = "connecting";
     try {
+      if (this.authorityMode === "rust-authoritative") {
+        if (!signal.authority) throw new MultiplayerProtocolError("Guest answer is missing the required Rust authority handshake");
+        const hostHandshake = this.authority().createHandshake({
+          sessionId: this.sessionId, peerId: this.identity.id,
+          peerKind: this.identity.peerKind ?? "human", role: "host",
+        });
+        const negotiated = await this.authorityDeadline(
+          this.authority().negotiate(hostHandshake, base64UrlToBytes(signal.authority.packet)),
+          "Rust authority handshake",
+        );
+        peer.authorityCapabilities = negotiated.capabilities;
+        peer.authorityGrant = this.authorityPeer(peer, negotiated.capabilities);
+        await this.authorityDeadline(this.authority().installPeer(peer.authorityGrant), "Rust peer grant");
+      }
       await peer.connection.setRemoteDescription(signal.description);
       this.emitPeer(peer, "answer-accepted");
       this.maybeMarkConnected(peer);
@@ -2156,6 +2406,10 @@ export class MultiplayerSession {
       sentAt: this.now(),
       from: this.identity.id,
       payload,
+      ...(this.authorityMode === "rust-authoritative" ? { authority: this.authority().currentIdentity() } : {}),
+      ...(this.authorityMode === "rust-authoritative" && this.role === "guest" && !CONTROL_TYPES.has(type)
+        ? { authoritySequence: this.authorityCommandSequence++ }
+        : {}),
     };
     if (!validateEnvelope(envelope)) throw new MultiplayerProtocolError(`Invalid ${type} payload`);
     return envelope;
@@ -2206,6 +2460,7 @@ export class MultiplayerSession {
   }
 
   private pruneResponseCache(at = this.now()) {
+    if (this.authorityMode !== "legacy-compatibility") return;
     for (const [key, entry] of this.responseCache) if (entry.expiresAt <= at) this.responseCache.delete(key);
     while (this.responseCache.size > 1_024) {
       const oldest = this.responseCache.keys().next().value as string | undefined;
@@ -2215,7 +2470,7 @@ export class MultiplayerSession {
   }
 
   private cacheHostResponse(peer: PeerRecord, type: MultiplayerMessageType, payload: MultiplayerPayloadMap[MultiplayerMessageType]) {
-    if (this.role !== "host" || !peer.identity || !isRecord(payload) || !("requestId" in payload) || !("status" in payload)) return;
+    if (this.authorityMode !== "legacy-compatibility" || this.role !== "host" || !peer.identity || !isRecord(payload) || !("requestId" in payload) || !("status" in payload)) return;
     const requestId = typeof payload.requestId === "string" ? payload.requestId : null;
     if (!requestId || (payload.status !== "accepted" && payload.status !== "rejected")) return;
     this.pruneResponseCache();
@@ -2235,6 +2490,7 @@ export class MultiplayerSession {
   }
 
   private replayCachedResponse(peer: PeerRecord, requestId: string) {
+    if (this.authorityMode !== "legacy-compatibility") return false;
     if (!peer.identity) return false;
     this.pruneResponseCache();
     const cached = this.responseCache.get(`${peer.identity.id}|${requestId}`);
@@ -2246,6 +2502,21 @@ export class MultiplayerSession {
       replayed = this.sendEncoded(peer, "reliable", encoded) || replayed;
     }
     return replayed;
+  }
+
+  private completedAuthorityCommandId(payload: unknown) {
+    if (!isRecord(payload)) return null;
+    if (payload.terminal === true && typeof payload.commandId === "string") return payload.commandId;
+    if ((payload.status === "accepted" || payload.status === "rejected") && typeof payload.requestId === "string") return payload.requestId;
+    return null;
+  }
+
+  private releaseCompletedAuthorityCommand(peer: PeerRecord, payload: unknown) {
+    const commandId = this.completedAuthorityCommandId(payload);
+    if (!commandId || !peer.acceptedAuthorityCommands.delete(commandId)) return;
+    void this.queuePeerAuthority(peer, async () => {
+      await this.authorityDeadline(this.authority().releaseCommand(commandId), "command lease release");
+    }).catch((error) => this.emitError(error, peer));
   }
 
   send<K extends Exclude<MultiplayerMessageType, "hello" | "heartbeat" | "goodbye">>(type: K, payload: MultiplayerPayloadMap[K], peerId?: string) {
@@ -2269,7 +2540,9 @@ export class MultiplayerSession {
     // High-rate reconstructable world images belong on the unordered,
     // no-retransmit lane. A stale mob frame must never head-of-line block a
     // chest, placement, trade, or selected-slot acknowledgement.
-    const kind: MultiplayerChannelKind = type === "voice-chunk"
+    const kind: MultiplayerChannelKind = this.authorityMode === "rust-authoritative" && this.role === "guest"
+      ? "reliable"
+      : type === "voice-chunk"
       ? "voice"
       : type === "player-pose" || type === "mob-snapshot" || type === "drop-snapshot" || type === "time-weather"
         ? "movement"
@@ -2290,6 +2563,7 @@ export class MultiplayerSession {
       recipients.push(peer);
     }
     if (!recipients.length) return 0;
+    const authoritySequenceBefore = this.authorityCommandSequence;
     const envelope = this.makeEnvelope(type, payload, kind) as MultiplayerEnvelope;
     const encoded = encodeEnvelope(envelope, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : kind === "voice" ? MAX_VOICE_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
     let sent = 0;
@@ -2299,7 +2573,11 @@ export class MultiplayerSession {
       // backpressure. The mutation may already be committed; a retry must
       // replay the decision rather than execute it a second time.
       if (kind === "reliable") this.cacheHostResponse(peer, type, payload as MultiplayerPayloadMap[MultiplayerMessageType]);
+      if (this.authorityMode === "rust-authoritative" && this.role === "host") this.releaseCompletedAuthorityCommand(peer, payload);
       if (delivered) sent += 1;
+    }
+    if (sent === 0 && this.authorityMode === "rust-authoritative" && this.role === "guest") {
+      this.authorityCommandSequence = authoritySequenceBefore;
     }
     return sent;
   }
@@ -2325,9 +2603,174 @@ export class MultiplayerSession {
   sendAgentCommand(payload: AgentCommandEnvelope, peerId?: string) { return this.send("agent-command", payload, peerId); }
   sendAgentResult(payload: AgentCommandResult, peerId?: string) { return this.send("agent-result", payload, peerId); }
   sendAgentObservation(payload: AgentObservationV1, peerId?: string) { return this.send("agent-observation", payload, peerId); }
-  sendAgentCapabilities(payload: AgentCapabilityGrant, peerId?: string) { return this.send("agent-capabilities", payload, peerId); }
+  sendAgentCapabilities(payload: AgentCapabilityGrant, peerId?: string) {
+    if (this.authorityMode === "legacy-compatibility") return this.send("agent-capabilities", payload, peerId);
+    this.ensureOpen();
+    if (this.role !== "host") throw new MultiplayerProtocolError("Only a Rust-authoritative host can grant agent capabilities");
+    const peer = this.resolvePeer(peerId ?? payload.connectionId);
+    if (!peer?.identity || peer.identity.id !== payload.agentId || peer.identity.peerKind !== "agent") {
+      throw new MultiplayerProtocolError("Agent capability grant does not match an active agent peer");
+    }
+    if (!peer.authorityGrant) throw new MultiplayerProtocolError("Agent peer has no Rust authority grant");
+    peer.lastAgentGrant = structuredClone(payload);
+    const generation = peer.authorityGeneration;
+    void this.queuePeerAuthority(peer, async () => {
+      await this.authorityDeadline(this.authority().installAgentGrant(payload, peer.authorityGrant!), "agent grant install");
+      if (peer.closed || peer.authorityGeneration !== generation || this.disposed) return;
+      this.send("agent-capabilities", payload, peer.identity!.id);
+    }).catch((error) => this.emitError(error, peer));
+    return 1;
+  }
   sendChat(payload: AgentChatMessage, peerId?: string) { return this.send("chat", payload, peerId); }
   sendVoiceChunk(payload: AgentVoiceChunk, peerId?: string) { return this.send("voice-chunk", payload, peerId); }
+
+  /**
+   * Build one interest-filtered Rust delta and transport it as bounded chunks.
+   * The payload remains opaque to TypeScript; guests emit it only after the
+   * integrated Rust receiver accepts its sequence, identity and keyframe.
+   */
+  async sendRustAuthorityDelta(
+    value: Omit<RustIntegratedNetworkDeltaBuildRequestV1, "sessionId" | "peerId" | "from" | "interest">,
+    peerId: string,
+  ) {
+    this.ensureOpen();
+    if (this.authorityMode !== "rust-authoritative" || this.role !== "host" || !this.sessionId) {
+      throw new MultiplayerProtocolError("Rust deltas require an active Rust-authoritative host");
+    }
+    const peer = this.resolvePeer(peerId);
+    if (!peer?.identity || peer.closed || !peer.authorityGrant) throw new MultiplayerProtocolError("Rust delta peer is unavailable");
+    const interest = peer.authorityGrant.interest;
+    const result = await this.authorityDeadline(this.authority().buildDelta({
+      ...value,
+      sessionId: this.sessionId,
+      peerId: peer.identity.id,
+      from: this.authority().currentIdentity(),
+      interest,
+    }), "delta build");
+    if (result.packet.byteLength < 1 || result.packet.byteLength > RUST_AUTHORITY_MAX_DELTA_BYTES) {
+      throw new MultiplayerProtocolError("Rust authority delta exceeds the transport budget");
+    }
+    const transferId = this.checkedId("rust-delta");
+    const packetHash = new TypeScriptCanonicalHasher("blockwild-multiplayer-delta-frame-v1").writeBytes(result.packet).finishHex();
+    const chunkCount = Math.ceil(result.packet.byteLength / RUST_AUTHORITY_DELTA_CHUNK_BYTES);
+    let sentChunks = 0;
+    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      const start = chunkIndex * RUST_AUTHORITY_DELTA_CHUNK_BYTES;
+      const payload: RustAuthorityDeltaChunk = Object.freeze({
+        schema: RUST_AUTHORITY_DELTA_SCHEMA,
+        transferId,
+        keyframe: value.keyframe,
+        packetBytes: result.packet.byteLength,
+        packetHash,
+        chunkIndex,
+        chunkCount,
+        data: bytesToBase64Url(result.packet.subarray(start, start + RUST_AUTHORITY_DELTA_CHUNK_BYTES)),
+        interest,
+      });
+      if (this.send("rust-authority-delta", payload, peer.identity.id) === 1) sentChunks += 1;
+    }
+    if (sentChunks !== chunkCount) throw new MultiplayerProtocolError(`Rust delta transport accepted ${sentChunks}/${chunkCount} chunks`);
+    return Object.freeze({
+      transferId,
+      packetBytes: result.packet.byteLength,
+      chunkCount,
+      scopeProbes: result.scopeProbes,
+      candidateRecords: result.candidateRecords,
+      emittedRecords: result.emittedRecords,
+    });
+  }
+
+  async refreshRustPeerGrant(peerId: string) {
+    this.ensureOpen();
+    if (this.authorityMode !== "rust-authoritative") throw new MultiplayerProtocolError("Legacy compatibility has no Rust peer grant");
+    const peer = this.resolvePeer(peerId);
+    if (!peer?.identity || peer.closed) throw new MultiplayerProtocolError("Rust authority peer is unavailable");
+    const grant = this.authorityPeer(peer);
+    peer.authorityGrant = grant;
+    await this.queuePeerAuthority(peer, async () => {
+      await this.authorityDeadline(this.authority().installPeer(grant), "peer grant refresh");
+    });
+  }
+
+  private acceptRustDeltaChunk(peer: PeerRecord, envelope: MultiplayerEnvelope<"rust-authority-delta">) {
+    const payload = envelope.payload;
+    const key = `${peer.token}|${payload.transferId}`;
+    let frame = this.rustDeltaReassemblies.get(key);
+    if (!frame) {
+      const activeForPeer = [...this.rustDeltaReassemblies.keys()].filter((candidate) => candidate.startsWith(`${peer.token}|`)).length;
+      if (activeForPeer >= RUST_AUTHORITY_MAX_REASSEMBLIES_PER_PEER) {
+        this.protocolStrike(peer, "Too many concurrent Rust delta reassemblies");
+        return;
+      }
+      frame = {
+        transferId: payload.transferId,
+        keyframe: payload.keyframe,
+        packetBytes: payload.packetBytes,
+        packetHash: payload.packetHash,
+        chunkCount: payload.chunkCount,
+        interest: payload.interest,
+        chunks: Array.from({ length: payload.chunkCount }, () => null),
+        receivedBytes: 0,
+        expiresAt: this.now() + RUST_AUTHORITY_REASSEMBLY_TIMEOUT_MS,
+      };
+      this.rustDeltaReassemblies.set(key, frame);
+    } else if (frame.keyframe !== payload.keyframe || frame.packetBytes !== payload.packetBytes
+      || frame.packetHash !== payload.packetHash || frame.chunkCount !== payload.chunkCount
+      || frame.interest.interestHash !== payload.interest.interestHash) {
+      this.rustDeltaReassemblies.delete(key);
+      this.protocolStrike(peer, "Conflicting Rust delta transfer metadata");
+      return;
+    }
+    let chunk: Uint8Array;
+    try { chunk = base64UrlToBytes(payload.data); }
+    catch (error) { this.protocolStrike(peer, error instanceof Error ? error.message : "Invalid Rust delta chunk"); return; }
+    if (chunk.byteLength < 1 || chunk.byteLength > RUST_AUTHORITY_DELTA_CHUNK_BYTES) {
+      this.protocolStrike(peer, "Rust delta chunk exceeds its decoded budget");
+      return;
+    }
+    const existing = frame.chunks[payload.chunkIndex];
+    if (existing) {
+      const identical = existing.byteLength === chunk.byteLength && existing.every((value, index) => value === chunk[index]);
+      if (!identical) this.protocolStrike(peer, "Conflicting duplicate Rust delta chunk");
+      return;
+    }
+    frame.chunks[payload.chunkIndex] = chunk;
+    frame.receivedBytes += chunk.byteLength;
+    if (frame.receivedBytes > frame.packetBytes) {
+      this.rustDeltaReassemblies.delete(key);
+      this.protocolStrike(peer, "Rust delta chunks exceed the declared packet size");
+      return;
+    }
+    if (frame.chunks.some((candidate) => candidate === null)) return;
+    this.rustDeltaReassemblies.delete(key);
+    if (frame.receivedBytes !== frame.packetBytes) { this.protocolStrike(peer, "Rust delta packet size mismatch"); return; }
+    const packet = new Uint8Array(frame.packetBytes);
+    let offset = 0;
+    for (const candidate of frame.chunks) { packet.set(candidate!, offset); offset += candidate!.byteLength; }
+    const packetHash = new TypeScriptCanonicalHasher("blockwild-multiplayer-delta-frame-v1").writeBytes(packet).finishHex();
+    if (packetHash !== frame.packetHash) { this.protocolStrike(peer, "Rust delta packet hash mismatch"); return; }
+    const generation = peer.authorityGeneration;
+    void this.queuePeerAuthority(peer, async () => {
+      const result = await this.authorityDeadline(this.authority().acceptDelta({
+        sessionId: this.sessionId!,
+        peerId: this.identity.id,
+        connectionGeneration: generation,
+        keyframe: frame!.keyframe,
+        interest: frame!.interest,
+        remoteIdentity: envelope.authority!,
+        packet,
+      }), "delta validation");
+      if (peer.closed || peer.authorityGeneration !== generation || this.disposed) return;
+      if (result.code === "applied") {
+        this.emit({ type: "authority-delta", peer: this.peerInfo(peer), keyframe: frame!.keyframe, sequence: result.sequence, stateHash: result.stateHash, packet });
+      } else if (result.code !== "duplicate") {
+        this.emit({ type: "authority-resync", peer: this.peerInfo(peer), code: result.code });
+      }
+    }).catch((error) => {
+      this.emitError(error, peer);
+      if (!peer.closed) this.closePeer(peer, "rust-delta-validation-failed", "failed");
+    });
+  }
 
   private protocolStrike(peer: PeerRecord, message: string) {
     if (peer.closed) return;
@@ -2339,6 +2782,25 @@ export class MultiplayerSession {
   private incomingTypeAllowed(type: MultiplayerMessageType) {
     if (CONTROL_TYPES.has(type)) return true;
     return this.role === "host" ? GUEST_OUTBOUND_TYPES.has(type) : true;
+  }
+
+  private acceptTransportSequence(peer: PeerRecord, kind: MultiplayerChannelKind, sequence: number) {
+    const lastSequence = kind === "reliable" ? peer.lastReliableSequence : kind === "movement" ? peer.lastMovementSequence : peer.lastVoiceSequence;
+    if (sequence <= lastSequence) return false;
+    if (kind === "reliable") peer.lastReliableSequence = sequence;
+    else if (kind === "movement") peer.lastMovementSequence = sequence;
+    else peer.lastVoiceSequence = sequence;
+    return true;
+  }
+
+  private envelopeActorId(peer: PeerRecord, envelope: MultiplayerEnvelope) {
+    if (!isRecord(envelope.payload)) return peer.identity?.id ?? envelope.from;
+    const payload = envelope.payload as Record<string, unknown>;
+    for (const key of ["actorId", "playerId", "agentId", "authorId"] as const) {
+      const value = payload[key];
+      if (typeof value === "string") return value;
+    }
+    return peer.identity?.id ?? envelope.from;
   }
 
   private validateActorOwnership(peer: PeerRecord, envelope: MultiplayerEnvelope) {
@@ -2357,16 +2819,75 @@ export class MultiplayerSession {
     return true;
   }
 
+  private authorizeRustInbound(peer: PeerRecord, kind: MultiplayerChannelKind, envelope: MultiplayerEnvelope, encodedEnvelope: string) {
+    if (!peer.identity || !envelope.authority || !this.sessionId) return;
+    const generation = peer.authorityGeneration;
+    void this.queuePeerAuthority(peer, async () => {
+      const authorization = this.authority().authorizeInbound({
+        sessionId: this.sessionId!,
+        peerId: peer.identity!.id,
+        connectionId: peer.token,
+        actorId: this.envelopeActorId(peer, envelope),
+        peerKind: peer.identity!.peerKind ?? "human",
+        messageType: envelope.type,
+        sequence: envelope.authoritySequence!,
+        sentAt: envelope.sentAt,
+        expected: envelope.authority!,
+        encodedEnvelope,
+        payload: envelope.payload,
+      });
+      let settledOnTime = false;
+      try {
+        const decision = await this.authorityDeadline(authorization, `${envelope.type} authorization`);
+        settledOnTime = true;
+        if (!decision.accepted) {
+          if (!peer.closed && peer.authorityGeneration === generation) {
+            this.emit({ type: "authority-rejection", peer: this.peerInfo(peer), commandId: decision.commandId, code: decision.code });
+          }
+          return;
+        }
+        if (!decision.receiptHash) throw new MultiplayerProtocolError("Rust accepted a command without a canonical receipt hash");
+        if (peer.closed || peer.authorityGeneration !== generation || this.disposed) {
+          await this.authority().releaseCommand(decision.commandId);
+          return;
+        }
+        if (peer.deliveredAuthorityReceipts.has(decision.receiptHash)) return;
+        peer.deliveredAuthorityReceipts.add(decision.receiptHash);
+        while (peer.deliveredAuthorityReceipts.size > 4_096) {
+          const oldest = peer.deliveredAuthorityReceipts.values().next().value as string | undefined;
+          if (!oldest) break;
+          peer.deliveredAuthorityReceipts.delete(oldest);
+        }
+        if (!IMMEDIATE_AUTHORITY_RELEASE_TYPES.has(envelope.type)) peer.acceptedAuthorityCommands.add(decision.commandId);
+        peer.lastSeenAt = this.now();
+        peer.protocolStrikes = Math.max(0, peer.protocolStrikes - 1);
+        this.emit({ type: "message", peer: this.peerInfo(peer), channel: kind, envelope });
+        if (IMMEDIATE_AUTHORITY_RELEASE_TYPES.has(envelope.type)) await this.authority().releaseCommand(decision.commandId);
+      } catch (error) {
+        if (!settledOnTime) {
+          void authorization.then((late) => late.accepted ? this.authority().releaseCommand(late.commandId) : undefined).catch(() => undefined);
+        }
+        this.emitError(error, peer);
+        if (!peer.closed) this.closePeer(peer, "rust-authority-unavailable", "failed");
+      }
+    }).catch(() => undefined);
+  }
+
   private handleChannelMessage(peer: PeerRecord, kind: MultiplayerChannelKind, data: unknown) {
     if (peer.closed) return;
     let envelope: MultiplayerEnvelope;
+    let encodedEnvelope: string;
     try {
-      envelope = decodeEnvelope(data, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : kind === "voice" ? MAX_VOICE_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
+      const maxBytes = kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : kind === "voice" ? MAX_VOICE_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES;
+      encodedEnvelope = decodeText(data, maxBytes);
+      envelope = decodeEnvelope(encodedEnvelope, maxBytes);
     } catch (error) {
       this.protocolStrike(peer, error instanceof Error ? error.message : "Invalid multiplayer message");
       return;
     }
-    const expectedKind: MultiplayerChannelKind = envelope.type === "voice-chunk"
+    const expectedKind: MultiplayerChannelKind = this.authorityMode === "rust-authoritative" && this.role === "host" && !CONTROL_TYPES.has(envelope.type)
+      ? "reliable"
+      : envelope.type === "voice-chunk"
       ? "voice"
       : envelope.type === "player-pose" || envelope.type === "mob-snapshot" || envelope.type === "drop-snapshot" || envelope.type === "time-weather"
         ? "movement"
@@ -2376,19 +2897,33 @@ export class MultiplayerSession {
       this.protocolStrike(peer, "Message identity or session mismatch");
       return;
     }
-    if (!this.incomingTypeAllowed(envelope.type)) {
-      this.protocolStrike(peer, `Remote role is not allowed to send ${envelope.type}`);
-      return;
+    if (this.authorityMode === "rust-authoritative") {
+      if (!envelope.authority) { this.protocolStrike(peer, "Rust-authoritative envelope omitted its authority identity"); return; }
+      if (this.role === "host" && !CONTROL_TYPES.has(envelope.type)
+        && !isInteger(envelope.authoritySequence, 0, Number.MAX_SAFE_INTEGER)) {
+        this.protocolStrike(peer, "Rust-authoritative guest command omitted its dense authority sequence");
+        return;
+      }
+      if (this.role === "host" && !GUEST_OUTBOUND_TYPES.has(envelope.type)) {
+        this.protocolStrike(peer, `Guest transport is not allowed to carry ${envelope.type}`);
+        return;
+      }
+      if (this.role === "guest" && !CONTROL_TYPES.has(envelope.type) && !RUST_GUEST_PRESENTATION_TYPES.has(envelope.type)) {
+        this.protocolStrike(peer, `Legacy authoritative ${envelope.type} is disabled after Rust promotion`);
+        return;
+      }
+    } else {
+      if (!this.incomingTypeAllowed(envelope.type)) {
+        this.protocolStrike(peer, `Remote role is not allowed to send ${envelope.type}`);
+        return;
+      }
+      if (!this.validateActorOwnership(peer, envelope)) {
+        this.protocolStrike(peer, "Guest action attempted to impersonate another player");
+        return;
+      }
     }
-    if (!this.validateActorOwnership(peer, envelope)) {
-      this.protocolStrike(peer, "Guest action attempted to impersonate another player");
-      return;
-    }
-    const lastSequence = kind === "reliable" ? peer.lastReliableSequence : kind === "movement" ? peer.lastMovementSequence : peer.lastVoiceSequence;
-    if (envelope.sequence <= lastSequence) return;
-    if (kind === "reliable") peer.lastReliableSequence = envelope.sequence;
-    else if (kind === "movement") peer.lastMovementSequence = envelope.sequence;
-    else peer.lastVoiceSequence = envelope.sequence;
+    if ((CONTROL_TYPES.has(envelope.type) || this.role === "guest" || this.authorityMode === "legacy-compatibility")
+      && !this.acceptTransportSequence(peer, kind, envelope.sequence)) return;
     peer.lastSeenAt = this.now();
     peer.protocolStrikes = Math.max(0, peer.protocolStrikes - 1);
 
@@ -2419,6 +2954,18 @@ export class MultiplayerSession {
       this.closePeer(peer, (envelope.payload as MultiplayerPayloadMap["goodbye"]).reason || "remote-disconnect", "disconnected");
       return;
     }
+    if (this.authorityMode === "rust-authoritative") {
+      if (this.role === "host") {
+        this.authorizeRustInbound(peer, kind, envelope, encodedEnvelope);
+        return;
+      }
+      if (envelope.type === "rust-authority-delta") {
+        this.acceptRustDeltaChunk(peer, envelope as MultiplayerEnvelope<"rust-authority-delta">);
+        return;
+      }
+      this.emit({ type: "message", peer: this.peerInfo(peer), channel: kind, envelope });
+      return;
+    }
     if (this.role === "host" && isRecord(envelope.payload) && "requestId" in envelope.payload
       && typeof envelope.payload.requestId === "string"
       && (!("status" in envelope.payload) || envelope.payload.status === undefined || envelope.payload.status === "request")
@@ -2442,6 +2989,9 @@ export class MultiplayerSession {
   maintenanceTick(at = this.now()) {
     if (this.disposed) return;
     this.pruneResponseCache(at);
+    for (const [key, frame] of this.rustDeltaReassemblies) {
+      if (frame.expiresAt <= at) this.rustDeltaReassemblies.delete(key);
+    }
     for (const peer of [...this.peers.values()]) {
       if (peer.closed) continue;
       if (peer.state !== "connected") {
@@ -2497,6 +3047,22 @@ export class MultiplayerSession {
     this.peers.delete(peer.token);
     this.nextReliableArtificialSendAt.delete(peer.token);
     this.nextVoiceArtificialSendAt.delete(peer.token);
+    for (const key of [...this.rustDeltaReassemblies.keys()]) {
+      if (key.startsWith(`${peer.token}|`)) this.rustDeltaReassemblies.delete(key);
+    }
+    if (this.authorityMode === "rust-authoritative" && peer.identity && peer.authorityGrant) {
+      const peerId = peer.identity.id;
+      const accepted = [...peer.acceptedAuthorityCommands];
+      peer.acceptedAuthorityCommands.clear();
+      const disconnectedGrant = peer.lastAgentGrant
+        ? Object.freeze({ ...peer.lastAgentGrant, status: "disconnected" as const, updatedAt: this.now() })
+        : null;
+      void this.queuePeerAuthority(peer, async () => {
+        if (disconnectedGrant) await this.authorityDeadline(this.authority().installAgentGrant(disconnectedGrant, peer.authorityGrant!), "agent disconnect grant");
+        for (const commandId of accepted) await this.authorityDeadline(this.authority().releaseCommand(commandId), "command lease release");
+        await this.authorityDeadline(this.authority().releasePeer(peerId), "peer release");
+      }).catch((error) => this.emitError(error, peer));
+    }
     this.emitPeer(peer, reason);
     this.recalculateSessionState();
   }
@@ -2514,6 +3080,7 @@ export class MultiplayerSession {
     this.artificialSendTimers.clear();
     this.nextReliableArtificialSendAt.clear();
     this.nextVoiceArtificialSendAt.clear();
+    this.rustDeltaReassemblies.clear();
     this.listeners.clear();
   }
 }

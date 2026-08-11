@@ -45,7 +45,7 @@ export type AgentBrowserBridge = Readonly<{
   host(input: Readonly<{ roomCode: string; name?: string }>): Promise<Readonly<{ hosted: boolean; roomCode: string }>>;
   observe(): AgentObservationV1 | null;
   latestResult(): AgentCommandResult | null;
-  command(input: AgentBridgeCommandInput): Readonly<{ accepted: boolean; commandId: string; error?: string }>;
+  command(input: AgentBridgeCommandInput): Promise<Readonly<{ accepted: boolean; commandId: string; error?: string }>>;
   chat(text: string, channel?: AgentChatChannel): boolean;
   publishVoice(input: AgentBridgeVoiceInput): unknown;
   worldList(): unknown;
@@ -61,16 +61,24 @@ export type AgentBrowserBridge = Readonly<{
   diagnosticsNoteFallback(reason?: string): unknown;
   testPause(paused: boolean): unknown;
   testAdvance(milliseconds: number): unknown;
-  disconnect(): void;
+  disconnect(): Promise<void>;
+}>;
+
+export type AgentBridgeCommandReceipt = Readonly<{
+  accepted: boolean;
+  code?: string;
+  error?: string;
 }>;
 
 export type AgentBridgeAdapter = Readonly<{
+  /** A synchronous boolean can survive only in the named non-promotable path. */
+  authorityMode?: "rust-authoritative" | "legacy-compatibility";
   getStatus(): Omit<AgentBridgeStatus, "schema" | "ready" | "lastObservationSequence" | "lastCommandId" | "agentId" | "testAdmin"> & Readonly<{ testAdmin?: boolean }>;
   connect(roomCode: string, name: string): Promise<{ hostName: string }>;
   host?(roomCode: string, name: string): Promise<void>;
   observe(): AgentObservationV1 | null;
   latestResult(): AgentCommandResult | null;
-  sendCommand(command: AgentCommandEnvelope): boolean;
+  sendCommand(command: AgentCommandEnvelope): boolean | AgentBridgeCommandReceipt | Promise<boolean | AgentBridgeCommandReceipt>;
   sendChat(text: string, channel: AgentChatChannel): boolean;
   publishVoice?(input: AgentBridgeVoiceInput): unknown;
   worldList?(): unknown;
@@ -86,7 +94,7 @@ export type AgentBridgeAdapter = Readonly<{
   diagnosticsNoteFallback?(reason?: string): unknown;
   testPause?(paused: boolean): unknown;
   testAdvance?(milliseconds: number): unknown;
-  disconnect(): void;
+  disconnect(): void | Promise<void>;
 }>;
 
 const cleanRoomCode = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9-]/gu, "").slice(0, 24);
@@ -100,6 +108,8 @@ const cleanName = (value: string) => value.trim().replace(/\s+/gu, " ").slice(0,
 export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrowserBridge {
   let lastCommandId: string | null = null;
   let commandSequence = 0;
+  let lifecycleEpoch = 0;
+  const pendingCommandIds = new Set<string>();
   return Object.freeze({
     version: 1 as const,
     status() {
@@ -131,7 +141,7 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
     },
     observe: () => adapter.observe(),
     latestResult: () => adapter.latestResult(),
-    command(input) {
+    async command(input) {
       const observation = adapter.observe();
       if (!observation) return { accepted: false, commandId: input.commandId ?? "", error: "no_observation" };
       const now = Date.now();
@@ -149,9 +159,24 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
         ...(input.clientIntent?.trim() ? { clientIntent: input.clientIntent.trim().slice(0, 480) } : {}),
       };
       if (!validateAgentCommand(envelope, now)) return { accepted: false, commandId, error: "invalid_command" };
-      const accepted = adapter.sendCommand(envelope);
-      if (accepted) lastCommandId = commandId;
-      return { accepted, commandId, ...(!accepted ? { error: "transport_unavailable" } : {}) };
+      if (pendingCommandIds.has(commandId)) return { accepted: false, commandId, error: "command_pending" };
+      const epoch = lifecycleEpoch;
+      pendingCommandIds.add(commandId);
+      try {
+        const response = await adapter.sendCommand(envelope);
+        const legacyBoolean = typeof response === "boolean";
+        const accepted = legacyBoolean ? adapter.authorityMode === "legacy-compatibility" && response : response.accepted;
+        const error = legacyBoolean
+          ? adapter.authorityMode === "legacy-compatibility" ? undefined : "rust_receipt_required"
+          : response.error ?? response.code;
+        if (epoch !== lifecycleEpoch) return { accepted: false, commandId, error: "disconnected" };
+        if (accepted) lastCommandId = commandId;
+        return { accepted, commandId, ...(!accepted ? { error: error ?? "transport_unavailable" } : {}) };
+      } catch (error) {
+        return { accepted: false, commandId, error: error instanceof Error ? error.message.slice(0, 160) : "authority_unavailable" };
+      } finally {
+        pendingCommandIds.delete(commandId);
+      }
     },
     chat(text, channel = "global") {
       const clean = text.trim().slice(0, 480);
@@ -188,6 +213,10 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
     diagnosticsNoteFallback: (reason = "manual visual recovery") => adapter.diagnosticsNoteFallback?.(String(reason).trim().slice(0, 160)) ?? { ok: false, code: "diagnostics_unavailable" },
     testPause: (paused) => adapter.testPause?.(paused === true) ?? { ok: false, code: "test_admin_unavailable" },
     testAdvance: (milliseconds) => adapter.testAdvance?.(Math.max(0, Math.min(10_000, Math.trunc(milliseconds)))) ?? { ok: false, code: "test_admin_unavailable" },
-    disconnect: () => adapter.disconnect(),
+    async disconnect() {
+      lifecycleEpoch += 1;
+      pendingCommandIds.clear();
+      await adapter.disconnect();
+    },
   });
 }
