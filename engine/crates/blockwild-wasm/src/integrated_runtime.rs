@@ -10,13 +10,18 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use blockwild_authority::BlockCatalogV1;
 use blockwild_engine::{
+    CONTENT_INSTALL_PAGE_TYPE_V1, CONTENT_INSTALL_RECEIPT_TYPE_V1, ENTITY_AUTHORITY_EXPORT_TYPE_V1,
+    ENTITY_AUTHORITY_IMPORT_RECEIPT_TYPE_V1, ENTITY_AUTHORITY_IMPORT_TYPE_V2, ENTITY_AUTHORITY_SNAPSHOT_TYPE_V2,
+    ENTITY_COMPATIBILITY_EXPORT_TYPE_V1, ENTITY_COMPATIBILITY_IMPORT_TYPE_V1, ENTITY_COMPATIBILITY_RECORD_TYPE_V1,
     IntegratedRuntimeBatchV2, IntegratedRuntimeConfigV2, IntegratedRuntimeError, IntegratedRuntimeIdentityV2,
-    IntegratedRuntimeReceiptV2, IntegratedRuntimeV2, decode_entity_command_batch_v1, decode_gameplay_actor_grant_v1,
-    decode_gameplay_batch_v1, decode_network_agent_grant_v1, decode_network_command_release_v1,
-    decode_network_delta_build_request_v1, decode_network_peer_grant_v1, decode_network_peer_release_v1,
-    decode_network_reconnect_request_v1, decode_network_replication_record_v1, decode_runtime_persistence_dispatch_v1,
-    decode_runtime_player_binding_v1, encode_entity_event_batch_v1, encode_gameplay_receipt_v1,
-    encode_runtime_persistence_dispatch_receipt_v1,
+    IntegratedRuntimeReceiptV2, IntegratedRuntimeV2, decode_content_install_page_v1, decode_entity_authority_export_v1,
+    decode_entity_authority_import_v2, decode_entity_command_batch_v1, decode_entity_compatibility_export_v1,
+    decode_entity_compatibility_import_v1, decode_gameplay_actor_grant_v1, decode_gameplay_batch_v1,
+    decode_network_agent_grant_v1, decode_network_command_release_v1, decode_network_delta_build_request_v1,
+    decode_network_peer_grant_v1, decode_network_peer_release_v1, decode_network_reconnect_request_v1,
+    decode_network_replication_record_v1, decode_runtime_persistence_dispatch_v1, decode_runtime_player_binding_v1,
+    encode_content_install_receipt_v1, encode_entity_authority_import_receipt_v1, encode_entity_event_batch_v1,
+    encode_gameplay_receipt_v1, encode_runtime_persistence_dispatch_receipt_v1,
 };
 use blockwild_network::{InterestSelectionStatsV1, encode_network_checkpoint_v1, encode_network_delta_v1};
 use blockwild_persistence::{PersistenceDispatchOutcomeV1, PersistenceDispatchStatusV1, PersistenceRetryDirectiveV1};
@@ -43,11 +48,19 @@ use wasm_bindgen::prelude::*;
 const WORKER_EPOCH: u32 = 1;
 const WASM_ARTIFACT_ATTESTATION_PLACEHOLDER: &str = "loader-attested";
 const MAX_COMMAND_RECEIPTS: usize = 4_096;
-const CAPABILITIES: [&str; 9] = [
+const ENTITY_EXTRACTION_SCHEMA_V3: u16 = 3;
+const ENTITY_EXTRACTION_HEADER_BYTES_V3: usize = 51;
+const MAX_ENTITY_EXTRACTION_RECORDS_V3: usize = 4_096;
+const MAX_ENTITY_EXTRACTION_BYTES_V3: usize = 4 * 1_048_576;
+const CAPABILITIES: [&str; 13] = [
     "awaited-receipts-v1",
+    "bounded-entity-extraction-v1",
     "bounded-extraction-v1-pending-live-domain-views",
     "bulk-platform-v1",
+    "content-bundle-install-v1",
+    "entity-authority-snapshot-v2",
     "entity-command-v1",
+    "entity-compatibility-bridge-v1",
     "fixed-step-input-v1-pending-live-cutover",
     "gameplay-command-v1",
     "integrated-runtime-v1",
@@ -804,6 +817,47 @@ fn dispatch_command(
                     domain_ack(*b"BWB5", operation, &candidate),
                 )
             }
+            (RuntimeDomainV1::Entities, ENTITY_AUTHORITY_EXPORT_TYPE_V1) => {
+                let request = decode_entity_authority_export_v1(&operation.payload)
+                    .map_err(|error| (error.code.into(), error.message))?;
+                let snapshot = candidate
+                    .export_entity_authority_snapshot(request.expected_revision)
+                    .map_err(|error| (error.code, error.message))?;
+                domain_operation(RuntimeDomainV1::Entities, ENTITY_AUTHORITY_SNAPSHOT_TYPE_V2, snapshot)
+            }
+            (RuntimeDomainV1::Entities, ENTITY_AUTHORITY_IMPORT_TYPE_V2) => {
+                let request = decode_entity_authority_import_v2(&operation.payload)
+                    .map_err(|error| (error.code.into(), error.message))?;
+                let receipt = candidate
+                    .import_entity_authority_snapshot(request.expected_revision, &request.snapshot)
+                    .map_err(|error| (error.code, error.message))?;
+                domain_operation(
+                    RuntimeDomainV1::Entities,
+                    ENTITY_AUTHORITY_IMPORT_RECEIPT_TYPE_V1,
+                    encode_entity_authority_import_receipt_v1(receipt)
+                        .map_err(|error| (error.code.into(), error.message))?,
+                )
+            }
+            (RuntimeDomainV1::Entities, ENTITY_COMPATIBILITY_EXPORT_TYPE_V1) => {
+                let request = decode_entity_compatibility_export_v1(&operation.payload)
+                    .map_err(|error| (error.code.into(), error.message))?;
+                let record = candidate
+                    .export_entity_compatibility_record(request.entity_id, request.expected_entity_revision)
+                    .map_err(|error| (error.code, error.message))?;
+                domain_operation(RuntimeDomainV1::Entities, ENTITY_COMPATIBILITY_RECORD_TYPE_V1, record)
+            }
+            (RuntimeDomainV1::Entities, ENTITY_COMPATIBILITY_IMPORT_TYPE_V1) => {
+                let request = decode_entity_compatibility_import_v1(&operation.payload)
+                    .map_err(|error| (error.code.into(), error.message))?;
+                let receipt = candidate
+                    .import_entity_compatibility_record(request)
+                    .map_err(|error| (error.code, error.message))?;
+                domain_operation(
+                    RuntimeDomainV1::Entities,
+                    ENTITY_RECEIPT_TYPE_V1,
+                    encode_entity_event_batch_v1(&receipt).map_err(|error| (error.code.into(), error.message))?,
+                )
+            }
             (RuntimeDomainV1::Entities, ENTITY_COMMAND_TYPE_V1) => {
                 let command = decode_entity_command_batch_v1(&operation.payload)
                     .map_err(|error| (error.code.into(), error.message))?;
@@ -841,6 +895,19 @@ fn dispatch_command(
                     RuntimeDomainV1::Gameplay,
                     GAMEPLAY_ACTOR_GRANT_RECEIPT_TYPE_V1,
                     domain_ack(*b"BWK7", operation, &candidate),
+                )
+            }
+            (RuntimeDomainV1::Gameplay, CONTENT_INSTALL_PAGE_TYPE_V1) => {
+                let command = decode_content_install_page_v1(&operation.payload)
+                    .map_err(|error| (error.code.into(), error.message))?;
+                let page_hash = CanonicalHash(wire_checksum_v1(&operation.payload));
+                let receipt = candidate
+                    .install_content_page(command, page_hash)
+                    .map_err(|error| (error.code, error.message))?;
+                domain_operation(
+                    RuntimeDomainV1::Gameplay,
+                    CONTENT_INSTALL_RECEIPT_TYPE_V1,
+                    encode_content_install_receipt_v1(&receipt).map_err(|error| (error.code.into(), error.message))?,
                 )
             }
             (RuntimeDomainV1::Gameplay, GAMEPLAY_COMMAND_TYPE_V1) => {
@@ -1211,62 +1278,114 @@ fn runtime_extraction_revision(runtime: &IntegratedRuntimeV2) -> u64 {
     .fold(0_u64, u64::saturating_add)
 }
 
-fn encode_render_extraction(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
-    let entities = runtime.entities();
-    let mut output = Vec::with_capacity(16 + entities.len().saturating_mul(160));
-    output.extend_from_slice(b"BWR6");
-    output.extend_from_slice(&1_u16.to_le_bytes());
-    output.extend_from_slice(&runtime_extraction_revision(runtime).to_le_bytes());
-    output.extend_from_slice(&(entities.len() as u32).to_le_bytes());
-    for (id, entity) in entities.hot() {
-        write_render_entity(
-            &mut output,
-            id.packed(),
-            0,
-            entity.tier as u16,
-            entity.protection.bits(),
-            &entity.record,
-        );
-    }
-    for (id, entity) in entities.cold() {
-        write_render_entity(
-            &mut output,
-            id.packed(),
-            1,
-            blockwild_entity::SimulationTier::Dormant as u16,
-            entity.protection.bits(),
-            &entity.record,
-        );
-    }
-    output
-}
-
-fn write_render_entity(
-    output: &mut Vec<u8>,
+struct RenderEntityExtractionSourceV3<'a> {
     entity_id: u64,
     residency: u8,
     simulation_tier: u16,
     protection: u64,
-    record: &blockwild_entity::EntityCompatibilityRecord,
-) {
-    output.extend_from_slice(&entity_id.to_le_bytes());
-    output.push(residency);
-    output.push(record.class as u8);
-    output.extend_from_slice(&simulation_tier.to_le_bytes());
-    output.extend_from_slice(&protection.to_le_bytes());
-    write_extraction_string(output, &record.external_entity_id);
-    write_extraction_string(output, &record.specimen_id);
-    write_extraction_string(output, &record.kind_key);
-    write_extraction_optional_string(output, record.variant_key.as_deref());
-    write_extraction_optional_string(output, record.name.as_deref());
-    write_extraction_string(
-        output,
-        record
-            .custom
-            .get("modelKey")
-            .or_else(|| record.custom.get("model"))
-            .map_or(record.kind_key.as_str(), String::as_str),
+    entity_revision: u64,
+    record: &'a blockwild_entity::EntityCompatibilityRecord,
+    components: &'a blockwild_entity::EntityComponents,
+}
+
+fn encode_render_extraction(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
+    let entities = runtime.entities();
+    let total = entities.len();
+    let mut records = Vec::with_capacity(total.min(MAX_ENTITY_EXTRACTION_RECORDS_V3).saturating_mul(256));
+    let mut selected = 0_usize;
+    let candidates = entities
+        .hot()
+        .iter()
+        .map(|(id, entity)| RenderEntityExtractionSourceV3 {
+            entity_id: id.packed(),
+            residency: 0,
+            simulation_tier: entity.tier as u16,
+            protection: entity.protection.bits(),
+            entity_revision: entity.entity_revision,
+            record: &entity.record,
+            components: &entity.components,
+        })
+        .chain(
+            entities
+                .cold()
+                .iter()
+                .map(|(id, entity)| RenderEntityExtractionSourceV3 {
+                    entity_id: id.packed(),
+                    residency: 1,
+                    simulation_tier: blockwild_entity::SimulationTier::Dormant as u16,
+                    protection: entity.protection.bits(),
+                    entity_revision: entity.entity_revision,
+                    record: &entity.record,
+                    components: &entity.components,
+                }),
+        );
+    for candidate in candidates {
+        if selected >= MAX_ENTITY_EXTRACTION_RECORDS_V3 {
+            break;
+        }
+        let encoded = encode_render_entity_record(runtime, &candidate);
+        if ENTITY_EXTRACTION_HEADER_BYTES_V3
+            .saturating_add(records.len())
+            .saturating_add(encoded.len())
+            > MAX_ENTITY_EXTRACTION_BYTES_V3
+        {
+            break;
+        }
+        records.extend_from_slice(&encoded);
+        selected += 1;
+    }
+    let mut output = Vec::with_capacity(ENTITY_EXTRACTION_HEADER_BYTES_V3 + records.len());
+    output.extend_from_slice(b"BWR6");
+    output.extend_from_slice(&ENTITY_EXTRACTION_SCHEMA_V3.to_le_bytes());
+    output.extend_from_slice(&runtime_extraction_revision(runtime).to_le_bytes());
+    output.extend_from_slice(&runtime.tick().to_le_bytes());
+    output.extend_from_slice(runtime.content_manifest_hash().as_bytes());
+    output.push(u8::from(runtime.content_ready()));
+    output.extend_from_slice(
+        &u32::try_from(total)
+            .expect("entity authority is extraction-bounded")
+            .to_le_bytes(),
     );
+    output.extend_from_slice(
+        &u32::try_from(selected)
+            .expect("entity extraction record cap fits u32")
+            .to_le_bytes(),
+    );
+    output.extend_from_slice(
+        &u32::try_from(total - selected)
+            .expect("entity authority is extraction-bounded")
+            .to_le_bytes(),
+    );
+    output.extend_from_slice(&records);
+    output
+}
+
+fn encode_render_entity_record(runtime: &IntegratedRuntimeV2, source: &RenderEntityExtractionSourceV3<'_>) -> Vec<u8> {
+    let record = source.record;
+    let components = source.components;
+    let model_key = record
+        .custom
+        .get("modelKey")
+        .or_else(|| record.custom.get("model"))
+        .map_or(record.kind_key.as_str(), String::as_str);
+    let (model_hash, model_revision) = runtime
+        .entity_model_content_identity(model_key, &record.kind_key)
+        .unwrap_or_default();
+    let mut output = Vec::with_capacity(256);
+    output.extend_from_slice(&source.entity_id.to_le_bytes());
+    output.push(source.residency);
+    output.push(record.class as u8);
+    output.extend_from_slice(&source.simulation_tier.to_le_bytes());
+    output.extend_from_slice(&source.protection.to_le_bytes());
+    output.extend_from_slice(&source.entity_revision.to_le_bytes());
+    write_extraction_string(&mut output, &record.external_entity_id);
+    write_extraction_string(&mut output, &record.specimen_id);
+    write_extraction_string(&mut output, &record.kind_key);
+    write_extraction_optional_string(&mut output, record.variant_key.as_deref());
+    write_extraction_optional_string(&mut output, record.name.as_deref());
+    write_extraction_string(&mut output, model_key);
+    output.extend_from_slice(&model_revision.to_le_bytes());
+    output.extend_from_slice(model_hash.as_bytes());
     for value in [
         record.position.x,
         record.position.y,
@@ -1281,6 +1400,20 @@ fn write_render_entity(
         output.extend_from_slice(&value.to_le_bytes());
     }
     output.push(u8::from(record.tamed));
+    output.extend_from_slice(&record.age_ticks.to_le_bytes());
+    output.push(components.locomotion.movement_mode as u8);
+    output.push(u8::from(components.locomotion.grounded));
+    output.push(u8::from(components.locomotion.submerged));
+    output.extend_from_slice(&components.vitals.last_damage_tick.to_le_bytes());
+    write_extraction_string(&mut output, &components.locomotion.action.key);
+    output.extend_from_slice(&components.locomotion.action.phase.to_le_bytes());
+    output.extend_from_slice(&components.locomotion.action.started_tick.to_le_bytes());
+    output.extend_from_slice(&components.locomotion.action.ends_tick.to_le_bytes());
+    write_extraction_optional_entity_id(&mut output, components.locomotion.action.target);
+    write_extraction_equipment(&mut output, &components.equipment);
+    write_extraction_mount(&mut output, &components.mount);
+    write_extraction_research(&mut output, &record.research);
+    output
 }
 
 fn encode_hud_extraction(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
@@ -1356,6 +1489,85 @@ fn write_extraction_optional_string(output: &mut Vec<u8>, value: Option<&str>) {
     output.push(u8::from(value.is_some()));
     if let Some(value) = value {
         write_extraction_string(output, value);
+    }
+}
+
+fn write_extraction_optional_entity_id(output: &mut Vec<u8>, value: Option<blockwild_types::EntityId>) {
+    output.push(u8::from(value.is_some()));
+    if let Some(value) = value {
+        output.extend_from_slice(&value.packed().to_le_bytes());
+    }
+}
+
+fn write_extraction_optional_u8(output: &mut Vec<u8>, value: Option<u8>) {
+    output.push(u8::from(value.is_some()));
+    if let Some(value) = value {
+        output.push(value);
+    }
+}
+
+fn write_extraction_bytes(output: &mut Vec<u8>, value: &[u8]) {
+    let length = u32::try_from(value.len()).expect("validated entity component bytes fit u32");
+    output.extend_from_slice(&length.to_le_bytes());
+    output.extend_from_slice(value);
+}
+
+fn write_extraction_equipment(
+    output: &mut Vec<u8>,
+    equipment: &BTreeMap<String, blockwild_entity::EquipmentSlotState>,
+) {
+    output.extend_from_slice(
+        &u32::try_from(equipment.len())
+            .expect("validated entity equipment count fits u32")
+            .to_le_bytes(),
+    );
+    for (slot_key, slot) in equipment {
+        write_extraction_string(output, slot_key);
+        write_extraction_string(output, &slot.item_key);
+        output.extend_from_slice(&slot.count.to_le_bytes());
+        output.extend_from_slice(&slot.durability.to_le_bytes());
+        output.extend_from_slice(
+            &u32::try_from(slot.custom.len())
+                .expect("validated equipment metadata count fits u32")
+                .to_le_bytes(),
+        );
+        for (key, value) in &slot.custom {
+            write_extraction_string(output, key);
+            write_extraction_bytes(output, value);
+        }
+    }
+}
+
+fn write_extraction_mount(output: &mut Vec<u8>, mount: &blockwild_entity::MountState) {
+    write_extraction_optional_entity_id(output, mount.parent_mount);
+    write_extraction_optional_u8(output, mount.occupied_seat);
+    output.push(u8::from(mount.accepts_riders));
+    write_extraction_optional_string(output, mount.saddle_key.as_deref());
+    output.extend_from_slice(
+        &u32::try_from(mount.seats.len())
+            .expect("validated mount seat count fits u32")
+            .to_le_bytes(),
+    );
+    for seat in &mount.seats {
+        output.push(seat.index);
+        write_extraction_string(output, &seat.role);
+        for value in [seat.offset.x, seat.offset.y, seat.offset.z] {
+            output.extend_from_slice(&value.to_le_bytes());
+        }
+        write_extraction_optional_entity_id(output, seat.occupant);
+        output.extend_from_slice(&seat.control_weight_milli.to_le_bytes());
+    }
+}
+
+fn write_extraction_research(output: &mut Vec<u8>, research: &BTreeMap<String, u32>) {
+    output.extend_from_slice(
+        &u32::try_from(research.len())
+            .expect("validated entity research count fits u32")
+            .to_le_bytes(),
+    );
+    for (key, value) in research {
+        write_extraction_string(output, key);
+        output.extend_from_slice(&value.to_le_bytes());
     }
 }
 
@@ -1489,12 +1701,16 @@ fn encode_bulk_control(
 #[cfg(test)]
 mod tests {
     use blockwild_engine::{
-        RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1, encode_entity_command_batch_v1,
-        encode_runtime_persistence_dispatch_v1, encode_runtime_player_binding_v1,
+        EntityAuthorityExportWireV1, EntityAuthorityImportWireV2, EntityCompatibilityExportWireV1,
+        EntityCompatibilityImportWireV1, RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1,
+        decode_entity_authority_import_receipt_v1, decode_entity_event_batch_v1, encode_entity_authority_export_v1,
+        encode_entity_authority_import_v2, encode_entity_command_batch_v1, encode_entity_compatibility_export_v1,
+        encode_entity_compatibility_import_v1, encode_runtime_persistence_dispatch_v1,
+        encode_runtime_player_binding_v1,
     };
     use blockwild_entity::{
-        ENTITY_COMMAND_SCHEMA, EntityClass, EntityCommand, EntityCommandBatch, EntityCompatibilityRecord,
-        EntityResidency, Vec3 as EntityVec3,
+        ActionState, ENTITY_COMMAND_SCHEMA, EntityClass, EntityCommand, EntityCommandBatch, EntityCompatibilityRecord,
+        EntityComponents, EntityResidency, EquipmentSlotState, MountSeat, Vec3 as EntityVec3,
     };
     use blockwild_runtime_wire::{
         RuntimeBulkRequestV1, RuntimeBulkResponseV1, RuntimeBulkStateV1, RuntimeInputFrameV1, RuntimeRequestV1,
@@ -1503,6 +1719,103 @@ mod tests {
     };
 
     use super::*;
+
+    struct ExtractionReader<'a> {
+        bytes: &'a [u8],
+        offset: usize,
+    }
+
+    impl<'a> ExtractionReader<'a> {
+        const fn new(bytes: &'a [u8]) -> Self {
+            Self { bytes, offset: 0 }
+        }
+
+        fn take(&mut self, length: usize) -> &'a [u8] {
+            let end = self.offset.checked_add(length).expect("extraction offset overflow");
+            let value = self.bytes.get(self.offset..end).expect("complete extraction field");
+            self.offset = end;
+            value
+        }
+
+        fn u8(&mut self) -> u8 {
+            self.take(1)[0]
+        }
+
+        fn u16(&mut self) -> u16 {
+            u16::from_le_bytes(self.take(2).try_into().unwrap())
+        }
+
+        fn u32(&mut self) -> u32 {
+            u32::from_le_bytes(self.take(4).try_into().unwrap())
+        }
+
+        fn u64(&mut self) -> u64 {
+            u64::from_le_bytes(self.take(8).try_into().unwrap())
+        }
+
+        fn f32(&mut self) -> f32 {
+            f32::from_le_bytes(self.take(4).try_into().unwrap())
+        }
+
+        fn string(&mut self) -> String {
+            let length = usize::try_from(self.u32()).unwrap();
+            String::from_utf8(self.take(length).to_vec()).unwrap()
+        }
+
+        fn optional_string(&mut self) -> Option<String> {
+            (self.u8() == 1).then(|| self.string())
+        }
+
+        fn optional_entity_id(&mut self) -> Option<u64> {
+            (self.u8() == 1).then(|| self.u64())
+        }
+
+        fn finish(self) {
+            assert_eq!(self.offset, self.bytes.len());
+        }
+    }
+
+    fn dispatch_single_operation(
+        runtime_handle: u32,
+        request_id: u32,
+        expected: RuntimeIdentityV1,
+        command_id: &str,
+        operation: RuntimeDomainOperationV1,
+    ) -> (RuntimeIdentityV1, RuntimeDomainOperationV1) {
+        let batch = seal_runtime_command_batch_v1(RuntimeCommandBatchV1 {
+            command_id: command_id.into(),
+            idempotency_key: command_id.into(),
+            actor_id: "platform:test".into(),
+            expected,
+            operations: vec![operation],
+            command_hash: WireHash::default(),
+        })
+        .unwrap();
+        let response = decode_response_v1(&blockwild_runtime_command_v2(
+            runtime_handle,
+            &encode_request_v1(&RuntimeRequestV1::Command {
+                request_id,
+                client_epoch: 1,
+                batch,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::CommandReceipt {
+            receipt:
+                RuntimeCommandReceiptV1::Accepted {
+                    after,
+                    mut domain_receipts,
+                    ..
+                },
+            ..
+        } = response
+        else {
+            panic!("expected accepted operation response: {response:?}")
+        };
+        assert_eq!(domain_receipts.len(), 1);
+        (after, domain_receipts.remove(0))
+    }
 
     fn create_request(request_id: u32) -> RuntimeRequestV1 {
         RuntimeRequestV1::Create {
@@ -1540,7 +1853,12 @@ mod tests {
         assert!(has_capability("bounded-extraction-v1-pending-live-domain-views"));
         assert!(!has_capability("fixed-step-input-v1"));
         assert!(!has_capability("bounded-extraction-v1"));
+        assert!(has_capability("bounded-entity-extraction-v1"));
         assert!(has_capability("bulk-platform-v1"));
+        assert!(has_capability("content-bundle-install-v1"));
+        assert!(!has_capability("content-authority-v1"));
+        assert!(has_capability("entity-authority-snapshot-v2"));
+        assert!(has_capability("entity-compatibility-bridge-v1"));
         let extract = RuntimeRequestV1::Extract {
             request_id: 2,
             client_epoch: 1,
@@ -1949,5 +2267,316 @@ mod tests {
             decode_bulk_response_v1(&control, &[0x80, 0xff]).unwrap(),
             RuntimeBulkResponseV1::Data { transfer_token: 44, .. }
         ));
+    }
+
+    #[test]
+    fn authority_snapshot_and_compatibility_operations_round_trip_through_wasm() {
+        let RuntimeResponseV1::Ready {
+            runtime_handle,
+            identity,
+            ..
+        } = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(81)).unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected source runtime")
+        };
+        let mut record = EntityCompatibilityRecord::new("creature:\u{6c34}", "specimen:\u{1f40b}", "tide-whale");
+        record.custom.insert("opaque".into(), "\u{6c34}\u{ff}".into());
+        record.research.insert("ecology".into(), 4);
+        let spawn = encode_entity_command_batch_v1(&EntityCommandBatch {
+            schema: ENTITY_COMMAND_SCHEMA,
+            sequence: 1,
+            expected_revision: 0,
+            tick: 0,
+            commands: vec![EntityCommand::Spawn {
+                record: record.clone(),
+                residency: EntityResidency::Cold,
+            }],
+        })
+        .unwrap();
+        let (identity, spawn_receipt) = dispatch_single_operation(
+            runtime_handle,
+            82,
+            identity,
+            "snapshot-source-spawn",
+            domain_operation(RuntimeDomainV1::Entities, ENTITY_COMMAND_TYPE_V1, spawn),
+        );
+        let events = decode_entity_event_batch_v1(&spawn_receipt.payload).unwrap();
+        let event = events.events.first().unwrap();
+
+        let export = encode_entity_authority_export_v1(EntityAuthorityExportWireV1 {
+            expected_revision: identity.revision.entities,
+        })
+        .unwrap();
+        let (identity, snapshot_receipt) = dispatch_single_operation(
+            runtime_handle,
+            83,
+            identity,
+            "snapshot-export",
+            domain_operation(RuntimeDomainV1::Entities, ENTITY_AUTHORITY_EXPORT_TYPE_V1, export),
+        );
+        assert_eq!(snapshot_receipt.type_id, ENTITY_AUTHORITY_SNAPSHOT_TYPE_V2);
+        assert_eq!(&snapshot_receipt.payload[..4], b"BWEA");
+
+        let compatibility = encode_entity_compatibility_export_v1(EntityCompatibilityExportWireV1 {
+            entity_id: event.entity_id,
+            expected_entity_revision: event.entity_revision,
+        })
+        .unwrap();
+        let (_, compatibility_receipt) = dispatch_single_operation(
+            runtime_handle,
+            84,
+            identity,
+            "compatibility-export",
+            domain_operation(
+                RuntimeDomainV1::Entities,
+                ENTITY_COMPATIBILITY_EXPORT_TYPE_V1,
+                compatibility,
+            ),
+        );
+        assert_eq!(compatibility_receipt.type_id, ENTITY_COMPATIBILITY_RECORD_TYPE_V1);
+        assert_eq!(
+            blockwild_entity::decode_compatibility_record(&compatibility_receipt.payload).unwrap(),
+            record
+        );
+
+        let RuntimeResponseV1::Ready {
+            runtime_handle: restored_handle,
+            identity: restored_identity,
+            ..
+        } = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(85)).unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected restore runtime")
+        };
+        let import = encode_entity_authority_import_v2(&EntityAuthorityImportWireV2 {
+            expected_revision: 0,
+            snapshot: snapshot_receipt.payload,
+        })
+        .unwrap();
+        let (restored_identity, import_receipt) = dispatch_single_operation(
+            restored_handle,
+            86,
+            restored_identity,
+            "snapshot-import",
+            domain_operation(RuntimeDomainV1::Entities, ENTITY_AUTHORITY_IMPORT_TYPE_V2, import),
+        );
+        assert_eq!(import_receipt.type_id, ENTITY_AUTHORITY_IMPORT_RECEIPT_TYPE_V1);
+        let imported = decode_entity_authority_import_receipt_v1(&import_receipt.payload).unwrap();
+        assert_eq!(imported.entity_count, 1);
+        assert_eq!(imported.revision, restored_identity.revision.entities);
+
+        let RuntimeResponseV1::Ready {
+            runtime_handle: compatibility_handle,
+            identity: compatibility_identity,
+            ..
+        } = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(87)).unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected compatibility runtime")
+        };
+        let import = encode_entity_compatibility_import_v1(&EntityCompatibilityImportWireV1 {
+            sequence: 1,
+            expected_revision: 0,
+            tick: 0,
+            desired_id: None,
+            residency: EntityResidency::Hot,
+            record,
+        })
+        .unwrap();
+        let (compatibility_identity, import_receipt) = dispatch_single_operation(
+            compatibility_handle,
+            88,
+            compatibility_identity,
+            "compatibility-import",
+            domain_operation(RuntimeDomainV1::Entities, ENTITY_COMPATIBILITY_IMPORT_TYPE_V1, import),
+        );
+        assert_eq!(import_receipt.type_id, ENTITY_RECEIPT_TYPE_V1);
+        let events = decode_entity_event_batch_v1(&import_receipt.payload).unwrap();
+        assert_eq!(events.events.len(), 1);
+        assert_eq!(events.revision, compatibility_identity.revision.entities);
+    }
+
+    #[test]
+    fn entity_extraction_v3_carries_complete_renderer_authority() {
+        let RuntimeResponseV1::Ready {
+            runtime_handle,
+            identity,
+            ..
+        } = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(91)).unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected extraction runtime")
+        };
+        let mut record = EntityCompatibilityRecord::new("creature:render", "specimen:render", "asterjaw");
+        record.position = EntityVec3::new(1.5, 2.5, 3.5);
+        record.yaw = 0.75;
+        record.velocity = EntityVec3::new(4.5, 5.5, 6.5);
+        record.health = 7.5;
+        record.maximum_health = 8.5;
+        record.age_ticks = 99;
+        record.tamed = true;
+        record.variant_key = Some("glasswake".into());
+        record.name = Some("Mizu \u{6c34}".into());
+        record.custom.insert("modelKey".into(), "model:asterjaw".into());
+        record.research.insert("care".into(), 3);
+        record.equipment.insert("saddle".into(), "item:saddle".into());
+        let mut components = EntityComponents::from_compatibility(
+            &record,
+            blockwild_entity::ProtectionState::from_bits(blockwild_entity::ProtectionState::TAMED),
+        );
+        components.locomotion.movement_mode = blockwild_entity::MovementMode::Swim;
+        components.locomotion.grounded = false;
+        components.locomotion.submerged = true;
+        components.vitals.last_damage_tick = 71;
+        components.locomotion.action = ActionState {
+            key: "breach".into(),
+            phase: 2,
+            started_tick: 70,
+            ends_tick: 110,
+            target: Some(blockwild_types::EntityId::new(9, 1)),
+        };
+        components.equipment.insert(
+            "saddle".into(),
+            EquipmentSlotState {
+                item_key: "item:saddle".into(),
+                count: 1,
+                durability: 42,
+                custom: BTreeMap::from([("dye".into(), vec![0x80, 0xff])]),
+            },
+        );
+        components.mount.parent_mount = Some(blockwild_types::EntityId::new(8, 1));
+        components.mount.occupied_seat = Some(1);
+        components.mount.accepts_riders = true;
+        components.mount.saddle_key = Some("item:saddle".into());
+        components.mount.seats = vec![MountSeat {
+            index: 1,
+            role: "rider".into(),
+            offset: EntityVec3::new(0.0, 1.25, -0.5),
+            occupant: Some(blockwild_types::EntityId::new(7, 1)),
+            control_weight_milli: 1_000,
+        }];
+        let spawn = encode_entity_command_batch_v1(&EntityCommandBatch {
+            schema: ENTITY_COMMAND_SCHEMA,
+            sequence: 1,
+            expected_revision: 0,
+            tick: 0,
+            commands: vec![EntityCommand::SpawnTyped {
+                record,
+                components,
+                residency: EntityResidency::Hot,
+            }],
+        })
+        .unwrap();
+        let (identity, receipt) = dispatch_single_operation(
+            runtime_handle,
+            92,
+            identity,
+            "extraction-spawn",
+            domain_operation(RuntimeDomainV1::Entities, ENTITY_COMMAND_TYPE_V1, spawn),
+        );
+        let entity_event = decode_entity_event_batch_v1(&receipt.payload).unwrap();
+        let event = entity_event.events.first().unwrap();
+        let extracted = decode_response_v1(&blockwild_runtime_extract_v2(
+            runtime_handle,
+            &encode_request_v1(&RuntimeRequestV1::Extract {
+                request_id: 93,
+                client_epoch: 1,
+                expected: identity,
+                after_revision: 0,
+                max_bytes: 1024 * 1024,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Extraction { extraction, .. } = extracted else {
+            panic!("expected extraction response")
+        };
+        assert!(extraction.render.len() <= MAX_ENTITY_EXTRACTION_BYTES_V3);
+        let mut reader = ExtractionReader::new(&extraction.render);
+        assert_eq!(reader.take(4), b"BWR6");
+        assert_eq!(reader.u16(), ENTITY_EXTRACTION_SCHEMA_V3);
+        assert_eq!(reader.u64(), extraction.extraction_revision);
+        assert_eq!(reader.u64(), extraction.identity.tick);
+        assert_eq!(reader.take(16), [1; 16]);
+        assert_eq!(reader.u8(), 0, "configured content is not installed yet");
+        let total = reader.u32();
+        let selected = reader.u32();
+        let omitted = reader.u32();
+        assert_eq!((total, selected, omitted), (1, 1, 0));
+        assert_eq!(selected + omitted, total);
+        assert_eq!(reader.u64(), event.entity_id.packed());
+        assert_eq!(reader.u8(), 0);
+        assert_eq!(reader.u8(), EntityClass::Creature as u8);
+        assert_eq!(reader.u16(), blockwild_entity::SimulationTier::Nearby as u16);
+        assert_eq!(
+            reader.u64(),
+            blockwild_entity::ProtectionState::TAMED | blockwild_entity::ProtectionState::NAMED
+        );
+        assert_eq!(reader.u64(), event.entity_revision);
+        assert_eq!(reader.string(), "creature:render");
+        assert_eq!(reader.string(), "specimen:render");
+        assert_eq!(reader.string(), "asterjaw");
+        assert_eq!(reader.optional_string().as_deref(), Some("glasswake"));
+        assert_eq!(reader.optional_string().as_deref(), Some("Mizu \u{6c34}"));
+        assert_eq!(reader.string(), "model:asterjaw");
+        assert_eq!(reader.u32(), 0);
+        assert_eq!(reader.take(16), [0; 16]);
+        assert_eq!(
+            (0..9).map(|_| reader.f32()).collect::<Vec<_>>(),
+            vec![1.5, 2.5, 3.5, 0.75, 4.5, 5.5, 6.5, 7.5, 8.5]
+        );
+        assert_eq!(reader.u8(), 1);
+        assert_eq!(reader.u64(), 99);
+        assert_eq!(reader.u8(), blockwild_entity::MovementMode::Swim as u8);
+        assert_eq!(reader.u8(), 0);
+        assert_eq!(reader.u8(), 1);
+        assert_eq!(reader.u64(), 71);
+        assert_eq!(reader.string(), "breach");
+        assert_eq!(reader.u16(), 2);
+        assert_eq!(reader.u64(), 70);
+        assert_eq!(reader.u64(), 110);
+        assert_eq!(
+            reader.optional_entity_id(),
+            Some(blockwild_types::EntityId::new(9, 1).packed())
+        );
+        assert_eq!(reader.u32(), 1);
+        assert_eq!(reader.string(), "saddle");
+        assert_eq!(reader.string(), "item:saddle");
+        assert_eq!(reader.u16(), 1);
+        assert_eq!(reader.u32(), 42);
+        assert_eq!(reader.u32(), 1);
+        assert_eq!(reader.string(), "dye");
+        let custom_length = usize::try_from(reader.u32()).unwrap();
+        assert_eq!(reader.take(custom_length), [0x80, 0xff]);
+        assert_eq!(
+            reader.optional_entity_id(),
+            Some(blockwild_types::EntityId::new(8, 1).packed())
+        );
+        assert_eq!(reader.u8(), 1);
+        assert_eq!(reader.u8(), 1);
+        assert_eq!(reader.u8(), 1);
+        assert_eq!(reader.optional_string().as_deref(), Some("item:saddle"));
+        assert_eq!(reader.u32(), 1);
+        assert_eq!(reader.u8(), 1);
+        assert_eq!(reader.string(), "rider");
+        assert_eq!((reader.f32(), reader.f32(), reader.f32()), (0.0, 1.25, -0.5));
+        assert_eq!(
+            reader.optional_entity_id(),
+            Some(blockwild_types::EntityId::new(7, 1).packed())
+        );
+        assert_eq!(reader.u16(), 1_000);
+        assert_eq!(reader.u32(), 1);
+        assert_eq!(reader.string(), "care");
+        assert_eq!(reader.u32(), 3);
+        reader.finish();
     }
 }

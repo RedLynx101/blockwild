@@ -24,6 +24,20 @@ import {
   type RustIntegratedRuntimeBulkTransportDiagnosticsV1,
   type RustIntegratedRuntimeBulkTransportV1,
 } from "./rust-integrated-runtime-bulk-platform";
+import {
+  RUST_CONTENT_AUTHORITY_CAPABILITY_V1,
+  RUST_CONTENT_INSTALL_CAPABILITY_V1,
+  RUST_CONTENT_INSTALL_PAGE_TYPE_V1,
+  RUST_CONTENT_INSTALL_RECEIPT_TYPE_V1,
+  createRustContentInstallPlanV1,
+  decodeRustContentInstallReceiptV1,
+  type RustContentInstallReceiptV1,
+  type RustProductionContentBundle,
+} from "./rust-integrated-runtime-content";
+import {
+  createRustIntegratedRuntimeCommandBatchV1,
+  createRustIntegratedRuntimeDomainOperationV1,
+} from "./rust-integrated-runtime-codec";
 
 export const RUST_INTEGRATED_RUNTIME_COMMAND_P95_BUDGET_MS = 50;
 export const RUST_INTEGRATED_RUNTIME_STEP_P95_BUDGET_MS = 8;
@@ -46,6 +60,7 @@ export class RustIntegratedRuntimeServiceError extends Error {
       | "artifact-mismatch"
       | "bulk-platform"
       | "capacity"
+      | "content-install"
       | "disposed"
       | "idempotency-conflict"
       | "indeterminate-command"
@@ -96,6 +111,8 @@ export type RustIntegratedRuntimeServiceDiagnosticsV1 = Readonly<{
   stepBudgetMet: boolean;
   extractBudgetMet: boolean;
   lastError: Readonly<{ code: string; message: string }> | null;
+  contentReady: boolean;
+  contentManifestHash: string | null;
 }>;
 
 function percentile(values: readonly number[], fraction: number) {
@@ -146,6 +163,10 @@ export class RustIntegratedRuntimeServiceV1 {
   private staleResponses = 0;
   private failures = 0;
   private lastError: RustIntegratedRuntimeServiceDiagnosticsV1["lastError"] = null;
+  private configuredContentHash: string | null = null;
+  private contentRequired = false;
+  private contentAttestation: RustContentInstallReceiptV1 | null = null;
+  private contentInstallPromise: Promise<RustContentInstallReceiptV1> | null = null;
   private readonly mode: "production" | "protocol-test";
   private readonly now: () => number;
 
@@ -165,6 +186,10 @@ export class RustIntegratedRuntimeServiceV1 {
     this.currentIdentity = null;
     this.authoritative = false;
     this.verification = "unverified";
+    this.configuredContentHash = config.contentHash;
+    this.contentRequired = false;
+    this.contentAttestation = null;
+    this.contentInstallPromise = null;
     this.verifiedCapabilities.clear();
     this.transport = this.options.transportFactory();
     try {
@@ -198,7 +223,11 @@ export class RustIntegratedRuntimeServiceV1 {
   }
 
   command(batch: RustIntegratedRuntimeCommandBatchV1) {
-    this.requireReady();
+    return this.dispatchCommand(batch, false);
+  }
+
+  private dispatchCommand(batch: RustIntegratedRuntimeCommandBatchV1, allowContentPending: boolean) {
+    this.requireReady(allowContentPending);
     const key = `${batch.actorId}\u0000${batch.idempotencyKey}`;
     const replay = this.idempotency.get(key);
     if (replay) {
@@ -262,6 +291,70 @@ export class RustIntegratedRuntimeServiceV1 {
     });
     this.idempotency.set(key, Object.freeze({ commandHash: batch.commandHash, state: "pending", promise }));
     return promise;
+  }
+
+  installContent(bundle: RustProductionContentBundle) {
+    this.requireReady(true);
+    if (!this.contentRequired || !this.verifiedCapabilities.has(RUST_CONTENT_INSTALL_CAPABILITY_V1)) {
+      return Promise.reject(new RustIntegratedRuntimeServiceError("content-install", "runtime artifact does not expose the coarse content installer"));
+    }
+    const plan = createRustContentInstallPlanV1(bundle);
+    if (plan.manifestHash !== this.configuredContentHash) {
+      return Promise.reject(new RustIntegratedRuntimeServiceError("content-install", "compiled content manifest does not match runtime configuration"));
+    }
+    if (this.contentAttestation) {
+      return this.contentAttestation.manifestHash === plan.manifestHash
+        ? Promise.resolve(this.contentAttestation)
+        : Promise.reject(new RustIntegratedRuntimeServiceError("content-install", "runtime already attested another immutable content manifest"));
+    }
+    if (this.contentInstallPromise) return this.contentInstallPromise;
+    const operation = async () => {
+      let finalReceipt: RustContentInstallReceiptV1 | null = null;
+      try {
+        for (const { page, payload } of plan.pages) {
+          const batch = createRustIntegratedRuntimeCommandBatchV1({
+            commandId: `content:${page.pageIndex}`,
+            idempotencyKey: `${plan.installId}:${page.pageIndex}`,
+            actorId: "runtime-content-installer",
+            expected: this.requireIdentity(),
+            operations: [createRustIntegratedRuntimeDomainOperationV1({
+              domain: "gameplay",
+              typeId: RUST_CONTENT_INSTALL_PAGE_TYPE_V1,
+              schema: 1,
+              payload,
+            })],
+          });
+          const result = await this.dispatchCommand(batch, true);
+          if (result.status !== "accepted" || result.domainReceipts.length !== 1) {
+            throw new RustIntegratedRuntimeServiceError("content-install", result.status === "rejected" ? `${result.code}: ${result.message}` : "content page returned no native receipt");
+          }
+          const domainReceipt = result.domainReceipts[0];
+          if (domainReceipt.domain !== "gameplay" || domainReceipt.typeId !== RUST_CONTENT_INSTALL_RECEIPT_TYPE_V1 || domainReceipt.schema !== 1) {
+            throw new RustIntegratedRuntimeServiceError("content-install", "content page returned the wrong native receipt type");
+          }
+          const receipt = decodeRustContentInstallReceiptV1(domainReceipt.payload);
+          if (receipt.installId !== plan.installId || receipt.manifestHash !== plan.manifestHash
+            || !contentDomainDigestsEqual(receipt.domains, page.domains)
+            || receipt.pageCount !== plan.pages.length || receipt.acceptedPages !== page.pageIndex + 1
+            || (page.pageIndex + 1 < plan.pages.length && receipt.status !== "staged")
+            || (page.pageIndex + 1 === plan.pages.length && receipt.status !== "installed")) {
+            throw new RustIntegratedRuntimeServiceError("content-install", "content receipt does not attest the dispatched page sequence");
+          }
+          finalReceipt = receipt;
+        }
+        if (!finalReceipt || finalReceipt.status !== "installed") throw new RustIntegratedRuntimeServiceError("content-install", "content installation ended without a final attestation");
+        if (finalReceipt.installedEntries !== bundle.artifacts.length) throw new RustIntegratedRuntimeServiceError("content-install", "final content receipt omitted authored artifacts");
+        this.contentAttestation = finalReceipt;
+        this.verifiedCapabilities.add(RUST_CONTENT_AUTHORITY_CAPABILITY_V1);
+        this.authoritative = this.mode === "production" && this.verification === "content-addressed-wasm";
+        return finalReceipt;
+      } catch (error) {
+        this.failClosed(error);
+        throw error;
+      }
+    };
+    this.contentInstallPromise = operation();
+    return this.contentInstallPromise;
   }
 
   step(monotonicTimeUs: number, budgetUs: number, inputs: readonly RustIntegratedRuntimeInputFrameV1[]) {
@@ -646,6 +739,10 @@ export class RustIntegratedRuntimeServiceV1 {
       this.currentIdentity = null;
       this.authoritative = false;
       this.verifiedCapabilities.clear();
+      this.configuredContentHash = null;
+      this.contentRequired = false;
+      this.contentAttestation = null;
+      this.contentInstallPromise = null;
       this.state = "stopped";
     }
   }
@@ -674,6 +771,8 @@ export class RustIntegratedRuntimeServiceV1 {
       stepBudgetMet: stepP95Ms <= RUST_INTEGRATED_RUNTIME_STEP_P95_BUDGET_MS,
       extractBudgetMet: extractP95Ms <= RUST_INTEGRATED_RUNTIME_EXTRACT_P95_BUDGET_MS,
       lastError: this.lastError,
+      contentReady: this.contentAttestation?.status === "installed",
+      contentManifestHash: this.contentAttestation?.manifestHash ?? null,
     });
   }
 
@@ -687,11 +786,12 @@ export class RustIntegratedRuntimeServiceV1 {
       if (!response.capabilities.includes(capability)) throw new RustIntegratedRuntimeServiceError("invalid-response", `runtime artifact lacks ${capability}`);
     }
     this.verifiedCapabilities = new Set(response.capabilities);
+    this.contentRequired = response.capabilities.includes(RUST_CONTENT_INSTALL_CAPABILITY_V1);
     if (this.mode === "production") {
       if (response.artifactHash !== this.options.expectedArtifactHash) {
         throw new RustIntegratedRuntimeServiceError("artifact-mismatch", "runtime ready hash does not match the content-addressed artifact selected by the loader");
       }
-      this.authoritative = true;
+      this.authoritative = !this.contentRequired;
       this.verification = "content-addressed-wasm";
     } else {
       this.authoritative = false;
@@ -805,6 +905,8 @@ export class RustIntegratedRuntimeServiceV1 {
     this.lastError = Object.freeze({ code: normalized.code, message: normalized.message });
     this.authoritative = false;
     this.verifiedCapabilities.clear();
+    this.contentAttestation = null;
+    this.contentInstallPromise = null;
     this.state = "failed";
     this.transport?.dispose();
     this.transport = null;
@@ -815,9 +917,14 @@ export class RustIntegratedRuntimeServiceV1 {
     return this.currentIdentity;
   }
 
-  private requireReady() {
+  private requireReady(allowContentPending = false) {
     if (this.state !== "ready") throw new RustIntegratedRuntimeServiceError("not-ready", `integrated runtime is ${this.state}`);
-    if (this.mode === "production" && !this.authoritative) throw new RustIntegratedRuntimeServiceError("not-authoritative", "integrated runtime has not verified an exact Wasm artifact");
+    if (this.mode === "production" && !this.authoritative
+      && !(allowContentPending && this.contentRequired && this.verification === "content-addressed-wasm")) {
+      throw new RustIntegratedRuntimeServiceError("not-authoritative", this.contentRequired
+        ? "integrated runtime has not installed and attested its production content bundle"
+        : "integrated runtime has not verified an exact Wasm artifact");
+    }
   }
 
   private requireBulkCapability() {
@@ -840,6 +947,15 @@ export class RustIntegratedRuntimeServiceV1 {
 function isBulkTransport(value: RustIntegratedRuntimeTransportV1): value is RustIntegratedRuntimeTransportV1 & RustIntegratedRuntimeBulkTransportV1 {
   const candidate = value as Partial<RustIntegratedRuntimeBulkTransportV1>;
   return typeof candidate.requestBulk === "function" && typeof candidate.bulkDiagnostics === "function";
+}
+
+function contentDomainDigestsEqual(
+  left: RustContentInstallReceiptV1["domains"],
+  right: RustContentInstallReceiptV1["domains"],
+) {
+  const keys = Object.keys(right) as Array<keyof typeof right>;
+  return keys.length === Object.keys(left).length
+    && keys.every((key) => left[key]?.count === right[key].count && left[key]?.hash === right[key].hash);
 }
 
 function bulkStateEqualsIdentity(state: RustIntegratedRuntimeBulkStateV1, identity: RustIntegratedRuntimeIdentityV1) {

@@ -6,7 +6,7 @@
 //! network-authority boundaries in one coarse-grained handle.
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
@@ -18,11 +18,15 @@ use blockwild_authority::{
     encode_compatibility_save_binary_v1,
 };
 use blockwild_entity::{
-    ENTITY_COMMAND_SCHEMA, EntityAuthority, EntityClass, EntityCommand, EntityCommandBatch, EntityEventBatch,
-    Vec3 as EntityVec3,
+    ENTITY_COMMAND_SCHEMA, EcologyJobQueue, EntityAuthority, EntityClass, EntityCommand, EntityCommandBatch,
+    EntityEventBatch, EntityResidency, EntityScheduler, PathJobQueue, PathJobSubmission, SimulationTier,
+    Vec3 as EntityVec3, decode_compatibility_record, decode_entity_authority_snapshot, ecology_sector_key,
+    encode_compatibility_record, encode_entity_authority_snapshot,
 };
 use blockwild_gameplay::{
-    CombatCommand, GameplayAuthority, GameplayBatch, GameplayReceipt, GameplayState, MachineCommand, WorldKey,
+    CombatCommand, ContentArtifact, ContentDomain, ContentDomainDigest, GameplayAuthority, GameplayBatch,
+    GameplayReceipt, GameplayState, MachineCommand, MetadataBlobStore, WorldKey, compile_content_bundle,
+    install_content_bundle,
 };
 use blockwild_generation::{
     Block as GeneratedBlock, ChunkPayloadV2, GenerateChunkRequestV2, GenerationDiagnostics, GenerationOutcome,
@@ -60,7 +64,11 @@ use blockwild_simulation::{
 };
 use blockwild_types::{CanonicalHash, CanonicalHasher, EntityId, seed_stream};
 
-use crate::{RuntimePersistenceDispatchReceiptWireV1, RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1};
+use crate::{
+    ContentInstallPageWireV1, ContentInstallReceiptStatusV1, ContentInstallReceiptWireV1,
+    EntityAuthorityImportReceiptWireV1, EntityCompatibilityImportWireV1, RuntimePersistenceDispatchReceiptWireV1,
+    RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1,
+};
 
 pub const INTEGRATED_RUNTIME_SCHEMA_V2: u16 = 2;
 pub const INTEGRATED_RUNTIME_FIXED_STEP_US: u64 = 50_000;
@@ -81,6 +89,11 @@ pub const INTEGRATED_RUNTIME_MAX_SAVE_STAGES: usize = 1;
 pub const INTEGRATED_RUNTIME_MAX_RECOVERY_ASSEMBLERS: usize = 2;
 pub const INTEGRATED_RUNTIME_MAX_HYDRATED_EXPORTS: usize = 2;
 pub const INTEGRATED_RUNTIME_NATIVE_WORLD_DOMAIN_V1: u16 = 1;
+pub const INTEGRATED_RUNTIME_CONTENT_MAX_ENTRIES_V1: usize = blockwild_gameplay::MAX_CONTENT_ENTRIES;
+pub const INTEGRATED_RUNTIME_MAX_ENTITY_SCHEDULE_JOBS_V1: usize = 256;
+pub const INTEGRATED_RUNTIME_MAX_ECOLOGY_SCHEDULE_JOBS_V1: usize = 64;
+pub const INTEGRATED_RUNTIME_MAX_PATH_SCHEDULE_JOBS_V1: usize = 64;
+pub const INTEGRATED_RUNTIME_ECOLOGY_CADENCE_TICKS_V1: u64 = 20;
 const NATIVE_WORLD_RECORD_ID_V1: &str = "rust-world-r4-v1";
 const HYDRATION_TRANSFER_TOKEN_BASE_V1: u64 = 4_500_000_000_000_000;
 
@@ -400,6 +413,38 @@ struct IntegratedRuntimeHydratedExportV1 {
     compatibility_hash: CanonicalHash,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IntegratedRuntimeContentAttestationV1 {
+    pub install_id: String,
+    pub source_revision: String,
+    pub manifest_hash: CanonicalHash,
+    pub domains: BTreeMap<ContentDomain, ContentDomainDigest>,
+    pub installed_entries: u32,
+    pub installed_bytes: u64,
+    pub page_hashes: Vec<CanonicalHash>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IntegratedRuntimeEntityScheduleDiagnosticsV1 {
+    pub entity_jobs_completed: u64,
+    pub entity_jobs_rejected_stale: u64,
+    pub ecology_jobs_completed: u64,
+    pub ecology_jobs_rejected_stale: u64,
+    pub path_jobs_completed: u64,
+    pub path_jobs_rejected_stale: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IntegratedRuntimeContentStageV1 {
+    install_id: String,
+    source_revision: String,
+    manifest_hash: CanonicalHash,
+    domains: BTreeMap<ContentDomain, ContentDomainDigest>,
+    page_count: u32,
+    page_hashes: Vec<CanonicalHash>,
+    artifacts: Vec<ContentArtifact>,
+}
+
 #[derive(Clone)]
 pub struct IntegratedRuntimeV2 {
     config: IntegratedRuntimeConfigV2,
@@ -407,6 +452,10 @@ pub struct IntegratedRuntimeV2 {
     generation: Arc<GenerationService>,
     entities: EntityAuthority,
     gameplay: GameplayAuthority,
+    gameplay_content_store: MetadataBlobStore,
+    gameplay_content_index: BTreeMap<(ContentDomain, String), CanonicalHash>,
+    content_stage: Option<IntegratedRuntimeContentStageV1>,
+    content_attestation: Option<IntegratedRuntimeContentAttestationV1>,
     persistence: JournalState,
     persistence_authority: PersistenceAuthorityV1,
     persistence_dispatcher: PersistenceDispatcherV1,
@@ -428,6 +477,13 @@ pub struct IntegratedRuntimeV2 {
     simulation_revision: u64,
     gameplay_authority_revision: u64,
     entity_command_sequence: u64,
+    entity_scheduler: EntityScheduler,
+    entity_ecology_jobs: EcologyJobQueue,
+    entity_ecology_revisions: BTreeMap<[i32; 2], u64>,
+    entity_sectors: BTreeMap<EntityId, [i32; 2]>,
+    entity_sector_counts: BTreeMap<[i32; 2], u32>,
+    entity_path_jobs: PathJobQueue,
+    entity_schedule_diagnostics: IntegratedRuntimeEntityScheduleDiagnosticsV1,
     player: Option<IntegratedRuntimePlayerStateV2>,
     effect_events: VecDeque<IntegratedRuntimeEffectEventV2>,
     next_effect_sequence: u64,
@@ -478,6 +534,10 @@ impl IntegratedRuntimeV2 {
             generation: Arc::new(GenerationService::default()),
             entities: EntityAuthority::default(),
             gameplay,
+            gameplay_content_store: MetadataBlobStore::default(),
+            gameplay_content_index: BTreeMap::new(),
+            content_stage: None,
+            content_attestation: None,
             persistence: JournalState::default(),
             persistence_authority,
             persistence_dispatcher,
@@ -499,6 +559,13 @@ impl IntegratedRuntimeV2 {
             simulation_revision: 0,
             gameplay_authority_revision: 0,
             entity_command_sequence: 0,
+            entity_scheduler: EntityScheduler::default(),
+            entity_ecology_jobs: EcologyJobQueue::default(),
+            entity_ecology_revisions: BTreeMap::new(),
+            entity_sectors: BTreeMap::new(),
+            entity_sector_counts: BTreeMap::new(),
+            entity_path_jobs: PathJobQueue::default(),
+            entity_schedule_diagnostics: IntegratedRuntimeEntityScheduleDiagnosticsV1::default(),
             player: None,
             effect_events: VecDeque::new(),
             next_effect_sequence: 1,
@@ -532,8 +599,370 @@ impl IntegratedRuntimeV2 {
     }
 
     #[must_use]
+    pub const fn entity_schedule_diagnostics(&self) -> IntegratedRuntimeEntityScheduleDiagnosticsV1 {
+        self.entity_schedule_diagnostics
+    }
+
+    pub fn export_entity_authority_snapshot(&self, expected_revision: u64) -> Result<Vec<u8>, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        if expected_revision != self.entities.revision() {
+            return Err(IntegratedRuntimeError::new(
+                "entity-snapshot-stale",
+                "entity authority export references a stale revision",
+            ));
+        }
+        encode_entity_authority_snapshot(&self.entities)
+            .map_err(|error| IntegratedRuntimeError::new("entity-snapshot", error.to_string()))
+    }
+
+    pub fn import_entity_authority_snapshot(
+        &mut self,
+        expected_revision: u64,
+        snapshot: &[u8],
+    ) -> Result<EntityAuthorityImportReceiptWireV1, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        let previous_revision = self.entities.revision();
+        if expected_revision != previous_revision {
+            return Err(IntegratedRuntimeError::new(
+                "entity-snapshot-stale",
+                "entity authority import references a stale revision",
+            ));
+        }
+        let imported = decode_entity_authority_snapshot(snapshot)
+            .map_err(|error| IntegratedRuntimeError::new("entity-snapshot", error.to_string()))?;
+        if !self.entities.is_empty() && imported.revision() < previous_revision {
+            return Err(IntegratedRuntimeError::new(
+                "entity-snapshot-rollback",
+                "a live non-empty authority cannot be replaced by an older snapshot",
+            ));
+        }
+        let last_sequence = entity_snapshot_last_sequence(snapshot)?;
+        let mut candidate = self.clone();
+        candidate.entities = imported;
+        candidate.entity_command_sequence = last_sequence.unwrap_or_default();
+        candidate.rebuild_entity_schedules()?;
+        if candidate
+            .player
+            .as_ref()
+            .is_some_and(|player| !candidate.entities.contains(player.entity_id))
+        {
+            candidate.player = None;
+        }
+        candidate.invalidate_state_hash();
+        let receipt = EntityAuthorityImportReceiptWireV1 {
+            previous_revision,
+            revision: candidate.entities.revision(),
+            entity_count: candidate.entities.len() as u32,
+            state_hash: candidate.entities.canonical_hash(),
+        };
+        *self = candidate;
+        Ok(receipt)
+    }
+
+    pub fn export_entity_compatibility_record(
+        &self,
+        id: EntityId,
+        expected_entity_revision: u64,
+    ) -> Result<Vec<u8>, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        if self.entities.entity_revision(id) != Some(expected_entity_revision) {
+            return Err(IntegratedRuntimeError::new(
+                "entity-compatibility-stale",
+                "entity compatibility export references a stale entity revision",
+            ));
+        }
+        let record = self.entities.compatibility_record(id).ok_or_else(|| {
+            IntegratedRuntimeError::new(
+                "entity-compatibility-missing",
+                "entity compatibility export target is missing",
+            )
+        })?;
+        encode_compatibility_record(record)
+            .map_err(|error| IntegratedRuntimeError::new("entity-compatibility", error.to_string()))
+    }
+
+    pub fn import_entity_compatibility_record(
+        &mut self,
+        import: EntityCompatibilityImportWireV1,
+    ) -> Result<EntityEventBatch, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        let record_bytes = encode_compatibility_record(&import.record)
+            .map_err(|error| IntegratedRuntimeError::new("entity-compatibility", error.to_string()))?;
+        let record = decode_compatibility_record(&record_bytes)
+            .map_err(|error| IntegratedRuntimeError::new("entity-compatibility", error.to_string()))?;
+        let command = match import.desired_id {
+            None => EntityCommand::Spawn {
+                record,
+                residency: import.residency,
+            },
+            Some(id) => EntityCommand::SpawnAt {
+                id,
+                record,
+                residency: import.residency,
+            },
+        };
+        let receipt = self
+            .entities
+            .apply_batch(&EntityCommandBatch {
+                schema: ENTITY_COMMAND_SCHEMA,
+                sequence: import.sequence,
+                expected_revision: import.expected_revision,
+                tick: import.tick,
+                commands: vec![command],
+            })
+            .map_err(|error| IntegratedRuntimeError::new("entity-compatibility", error.to_string()))?;
+        self.entity_command_sequence = self.entity_command_sequence.max(receipt.sequence);
+        self.sync_entity_schedules(std::slice::from_ref(&receipt))?;
+        self.invalidate_state_hash();
+        Ok(receipt)
+    }
+
+    #[must_use]
     pub fn gameplay(&self) -> &GameplayAuthority {
         &self.gameplay
+    }
+
+    #[must_use]
+    pub fn content_attestation(&self) -> Option<&IntegratedRuntimeContentAttestationV1> {
+        self.content_attestation.as_ref()
+    }
+
+    #[must_use]
+    pub const fn content_ready(&self) -> bool {
+        self.content_attestation.is_some()
+    }
+
+    /// Returns the manifest fingerprint the runtime was created to execute.
+    ///
+    /// This remains available before content installation so extraction clients
+    /// can reject assets compiled for a different manifest. `content_ready`
+    /// distinguishes an installed/attested manifest from the configured target.
+    #[must_use]
+    pub const fn content_manifest_hash(&self) -> CanonicalHash {
+        self.config.content_hash
+    }
+
+    /// Resolves the installed creature-profile blob that owns a render model.
+    ///
+    /// Authored content currently keys creature profiles by either the explicit
+    /// model key or the creature kind. Missing content is represented by `None`;
+    /// callers must not fabricate a revision or hash for an unresolved model.
+    #[must_use]
+    pub fn entity_model_content_identity(&self, model_key: &str, kind_key: &str) -> Option<(CanonicalHash, u32)> {
+        [model_key, kind_key].into_iter().find_map(|key| {
+            let hash = self
+                .gameplay_content_index
+                .get(&(ContentDomain::CreatureProfile, key.to_owned()))?;
+            let blob = self.gameplay_content_store.get(*hash)?;
+            Some((blob.hash, blob.content_version))
+        })
+    }
+
+    #[must_use]
+    pub fn gameplay_content_store(&self) -> &MetadataBlobStore {
+        &self.gameplay_content_store
+    }
+
+    #[must_use]
+    pub fn gameplay_content_registry_len(&self) -> usize {
+        self.gameplay_content_index.len()
+    }
+
+    pub fn install_content_page(
+        &mut self,
+        page: ContentInstallPageWireV1,
+        page_hash: CanonicalHash,
+    ) -> Result<ContentInstallReceiptWireV1, IntegratedRuntimeError> {
+        let mut candidate = self.clone();
+        let receipt = candidate.install_content_page_inner(page, page_hash)?;
+        *self = candidate;
+        Ok(receipt)
+    }
+
+    fn install_content_page_inner(
+        &mut self,
+        page: ContentInstallPageWireV1,
+        page_hash: CanonicalHash,
+    ) -> Result<ContentInstallReceiptWireV1, IntegratedRuntimeError> {
+        if self.stopped {
+            return Err(IntegratedRuntimeError::new(
+                "engine-stopped",
+                "integrated runtime is stopped",
+            ));
+        }
+        if page.manifest_hash != self.config.content_hash {
+            return Err(IntegratedRuntimeError::new(
+                "content-manifest-mismatch",
+                "content bundle does not match the runtime's configured content hash",
+            ));
+        }
+        let expected_entries = page
+            .domains
+            .values()
+            .try_fold(0_u64, |total, domain| total.checked_add(u64::from(domain.count)));
+        if expected_entries.is_none_or(|count| count == 0 || count > INTEGRATED_RUNTIME_CONTENT_MAX_ENTRIES_V1 as u64) {
+            return Err(IntegratedRuntimeError::new(
+                "content-capacity",
+                "content manifest entry count is outside the runtime budget",
+            ));
+        }
+
+        if let Some(installed) = &self.content_attestation {
+            if installed.install_id != page.install_id
+                || installed.source_revision != page.source_revision
+                || installed.manifest_hash != page.manifest_hash
+                || installed.domains != page.domains
+                || installed.page_hashes.len() != page.page_count as usize
+            {
+                return Err(IntegratedRuntimeError::new(
+                    "content-install-conflict",
+                    "runtime already owns a different immutable content bundle",
+                ));
+            }
+            let expected_hash = installed.page_hashes.get(page.page_index as usize).ok_or_else(|| {
+                IntegratedRuntimeError::new("content-page-missing", "content retry references an unknown page")
+            })?;
+            if *expected_hash != page_hash {
+                return Err(IntegratedRuntimeError::new(
+                    "content-page-conflict",
+                    "content page retry bytes differ from the installed bundle",
+                ));
+            }
+            return Ok(content_install_receipt(installed, page.page_count));
+        }
+
+        if self.content_stage.is_none() {
+            if page.page_index != 0 {
+                return Err(IntegratedRuntimeError::new(
+                    "content-page-missing",
+                    "content installation must begin with page zero",
+                ));
+            }
+            self.content_stage = Some(IntegratedRuntimeContentStageV1 {
+                install_id: page.install_id.clone(),
+                source_revision: page.source_revision.clone(),
+                manifest_hash: page.manifest_hash,
+                domains: page.domains.clone(),
+                page_count: page.page_count,
+                page_hashes: Vec::with_capacity(page.page_count as usize),
+                artifacts: Vec::with_capacity(expected_entries.unwrap_or_default() as usize),
+            });
+        }
+
+        let stage = self.content_stage.as_ref().expect("content stage initialized");
+        if stage.install_id != page.install_id
+            || stage.source_revision != page.source_revision
+            || stage.manifest_hash != page.manifest_hash
+            || stage.domains != page.domains
+            || stage.page_count != page.page_count
+        {
+            return Err(IntegratedRuntimeError::new(
+                "content-install-conflict",
+                "content page header conflicts with the active installation",
+            ));
+        }
+        let next_page = stage.page_hashes.len() as u32;
+        if page.page_index < next_page {
+            if stage.page_hashes[page.page_index as usize] != page_hash {
+                return Err(IntegratedRuntimeError::new(
+                    "content-page-conflict",
+                    "content page retry bytes differ from the accepted page",
+                ));
+            }
+            return Ok(content_stage_receipt(stage));
+        }
+        if page.page_index > next_page {
+            return Err(IntegratedRuntimeError::new(
+                "content-page-reordered",
+                "content pages must be delivered exactly once in ascending order",
+            ));
+        }
+
+        let previous_key = stage
+            .artifacts
+            .last()
+            .map(|artifact| (artifact.domain, artifact.id.as_str()));
+        let mut last_key = previous_key;
+        for artifact in &page.artifacts {
+            let key = (artifact.domain, artifact.id.as_str());
+            if last_key.is_some_and(|previous| previous >= key) {
+                return Err(IntegratedRuntimeError::new(
+                    "content-artifact-order",
+                    "content artifacts are not globally unique and canonically ordered",
+                ));
+            }
+            last_key = Some(key);
+        }
+        if stage.artifacts.len().saturating_add(page.artifacts.len()) > INTEGRATED_RUNTIME_CONTENT_MAX_ENTRIES_V1 {
+            return Err(IntegratedRuntimeError::new(
+                "content-capacity",
+                "content installation exceeds the runtime entry budget",
+            ));
+        }
+
+        let mut candidate_stage = stage.clone();
+        candidate_stage.page_hashes.push(page_hash);
+        candidate_stage.artifacts.extend(page.artifacts);
+        if candidate_stage.page_hashes.len() < candidate_stage.page_count as usize {
+            self.content_stage = Some(candidate_stage);
+            self.gameplay_authority_revision = self.gameplay_authority_revision.saturating_add(1);
+            self.invalidate_state_hash();
+            return Ok(content_stage_receipt(
+                self.content_stage.as_ref().expect("staged page retained"),
+            ));
+        }
+
+        let compiled = compile_content_bundle(
+            candidate_stage.source_revision.clone(),
+            candidate_stage.artifacts.clone(),
+        )
+        .map_err(|blockers| content_blocker_error(&blockers))?;
+        if compiled.manifest.manifest_hash != candidate_stage.manifest_hash
+            || compiled.manifest.domains != candidate_stage.domains
+            || compiled.manifest.schema_version != page.manifest_schema
+        {
+            return Err(IntegratedRuntimeError::new(
+                "content-attestation-drift",
+                "compiled content does not match the declared manifest hash and domain digests",
+            ));
+        }
+        let mut candidate_store = self.gameplay_content_store.clone();
+        let report = install_content_bundle(&compiled, &mut candidate_store)
+            .map_err(|blockers| content_blocker_error(&blockers))?;
+        let candidate_index = compiled
+            .manifest
+            .entries
+            .iter()
+            .map(|entry| ((entry.domain, entry.id.clone()), entry.blob_hash))
+            .collect::<BTreeMap<_, _>>();
+        if candidate_index.len() != report.installed_entries as usize {
+            return Err(IntegratedRuntimeError::new(
+                "content-registry-drift",
+                "gameplay content registry did not retain every installed artifact",
+            ));
+        }
+        let attestation = IntegratedRuntimeContentAttestationV1 {
+            install_id: candidate_stage.install_id,
+            source_revision: candidate_stage.source_revision,
+            manifest_hash: report.manifest_hash,
+            domains: candidate_stage.domains,
+            installed_entries: report.installed_entries,
+            installed_bytes: report.installed_bytes,
+            page_hashes: candidate_stage.page_hashes,
+        };
+        self.gameplay_content_store = candidate_store;
+        self.gameplay_content_index = candidate_index;
+        self.content_stage = None;
+        self.content_attestation = Some(attestation);
+        self.gameplay_authority_revision = self.gameplay_authority_revision.saturating_add(1);
+        self.network_revision = self.network_revision.saturating_add(1);
+        self.invalidate_state_hash();
+        Ok(content_install_receipt(
+            self.content_attestation
+                .as_ref()
+                .expect("content attestation installed"),
+            page.page_count,
+        ))
     }
 
     #[must_use]
@@ -1210,6 +1639,36 @@ impl IntegratedRuntimeV2 {
         hasher.write_str(&self.config.location_id);
         hasher.write_bytes(self.config.content_hash.as_bytes());
         hasher.write_bytes(self.config.generator_hash.as_bytes());
+        match (&self.content_stage, &self.content_attestation) {
+            (Some(stage), None) => {
+                hasher.write_u16(1);
+                hasher.write_str(&stage.install_id);
+                hasher.write_str(&stage.source_revision);
+                hasher.write_bytes(stage.manifest_hash.as_bytes());
+                write_content_domain_digests(&mut hasher, &stage.domains);
+                hasher.write_u32(stage.page_count);
+                hasher.write_u32(stage.page_hashes.len() as u32);
+                for page_hash in &stage.page_hashes {
+                    hasher.write_bytes(page_hash.as_bytes());
+                }
+                hasher.write_u32(stage.artifacts.len() as u32);
+            }
+            (None, Some(attestation)) => {
+                hasher.write_u16(2);
+                hasher.write_str(&attestation.install_id);
+                hasher.write_str(&attestation.source_revision);
+                hasher.write_bytes(attestation.manifest_hash.as_bytes());
+                write_content_domain_digests(&mut hasher, &attestation.domains);
+                hasher.write_u32(attestation.installed_entries);
+                hasher.write_u64(attestation.installed_bytes);
+                hasher.write_u32(attestation.page_hashes.len() as u32);
+                for page_hash in &attestation.page_hashes {
+                    hasher.write_bytes(page_hash.as_bytes());
+                }
+            }
+            (None, None) => hasher.write_u16(0),
+            (Some(_), Some(_)) => unreachable!("content installation is either staged or installed"),
+        }
         hasher.write_u64(self.tick);
         hasher.write_u64(self.accumulator_us);
         hasher.write_u32(self.rng_state);
@@ -1473,6 +1932,9 @@ impl IntegratedRuntimeV2 {
             .fold(self.entity_command_sequence, |sequence, receipt| {
                 sequence.max(receipt.sequence)
             });
+        if let Err(error) = self.sync_entity_schedules(&entity_receipts) {
+            return reject_batch(&batch.batch_id, error.code, &error.message, before);
+        }
         self.invalidate_state_hash();
         let after = self.identity();
         let receipt_hash = hash_runtime_receipt(&batch.batch_id, &before, &after);
@@ -1671,6 +2133,9 @@ impl IntegratedRuntimeV2 {
                     "bound player entity is no longer resident with the same generational identity",
                 )
             })?;
+        let mut resident_record = resident.record.clone();
+        let out_of_range_seconds = resident.out_of_range_seconds;
+        let last_simulated_tick = resident.last_simulated_tick;
         let mut body = player.body.clone();
         // External entity commands may teleport the player between fixed steps.
         if resident.record.position
@@ -1759,31 +2224,6 @@ impl IntegratedRuntimeV2 {
         }
         .seal();
         let result = self.run_physics(&physics)?;
-        self.entity_command_sequence = self.entity_command_sequence.saturating_add(1).max(1);
-        let entity_event = self
-            .entities
-            .apply_batch(&EntityCommandBatch {
-                schema: ENTITY_COMMAND_SCHEMA,
-                sequence: self.entity_command_sequence,
-                expected_revision: self.entities.revision(),
-                tick: self.tick,
-                commands: vec![EntityCommand::UpdateMotion {
-                    id: player.entity_id,
-                    position: EntityVec3::new(
-                        result.body.position.x as f32,
-                        result.body.position.y as f32,
-                        result.body.position.z as f32,
-                    ),
-                    yaw: yaw as f32,
-                    velocity: EntityVec3::new(
-                        result.body.velocity.x as f32,
-                        result.body.velocity.y as f32,
-                        result.body.velocity.z as f32,
-                    ),
-                }],
-            })
-            .map_err(|error| IntegratedRuntimeError::new("player-motion", error.to_string()))?;
-        self.entity_command_sequence = self.entity_command_sequence.max(entity_event.sequence);
         let damage = result
             .events
             .iter()
@@ -1795,27 +2235,50 @@ impl IntegratedRuntimeV2 {
             })
             .map(|event| event.amount)
             .sum::<f64>() as f32;
-        let entity = self
-            .entities
-            .hot_mut(player.entity_id)
-            .map_err(|error| IntegratedRuntimeError::new("player-motion", error.to_string()))?;
-        entity.record.health = (entity.record.health - damage).max(0.0);
-        entity
-            .record
+        resident_record.position = EntityVec3::new(
+            result.body.position.x as f32,
+            result.body.position.y as f32,
+            result.body.position.z as f32,
+        );
+        resident_record.yaw = yaw as f32;
+        resident_record.velocity = EntityVec3::new(
+            result.body.velocity.x as f32,
+            result.body.velocity.y as f32,
+            result.body.velocity.z as f32,
+        );
+        resident_record.age_ticks = resident_record
+            .age_ticks
+            .saturating_add(self.tick.saturating_sub(last_simulated_tick).max(1));
+        resident_record.health = (resident_record.health - damage).max(0.0);
+        resident_record
             .custom
             .insert("physics.grounded".into(), result.body.grounded.to_string());
-        entity.record.custom.insert(
+        resident_record.custom.insert(
             "physics.inLiquid".into(),
             (result.contact_flags & PHYSICS_CONTACT_IN_LIQUID != 0).to_string(),
         );
-        entity.record.custom.insert(
+        resident_record.custom.insert(
             "physics.headSubmerged".into(),
             (result.contact_flags & PHYSICS_CONTACT_HEAD_SUBMERGED != 0).to_string(),
         );
-        entity.record.custom.insert(
+        resident_record.custom.insert(
             "physics.oxygenSeconds".into(),
             format!("{:.6}", result.body.oxygen_seconds),
         );
+        self.apply_internal_entity_commands(
+            "player-motion",
+            vec![
+                EntityCommand::ReplaceCompatibilityRecord {
+                    id: player.entity_id,
+                    value: resident_record,
+                },
+                EntityCommand::SetRangeState {
+                    id: player.entity_id,
+                    out_of_range_seconds,
+                    last_simulated_tick: self.tick,
+                },
+            ],
+        )?;
         let binding_id = player.binding.external_entity_id.clone();
         for event in &result.events {
             self.push_effect_event(&binding_id, event.kind, event.amount);
@@ -1834,16 +2297,291 @@ impl IntegratedRuntimeV2 {
         Ok(())
     }
 
-    fn advance_entity_and_gameplay_schedules(&mut self) -> Result<(), IntegratedRuntimeError> {
-        let hot_ids = self.entities.hot().keys().copied().collect::<Vec<_>>();
-        for id in hot_ids {
-            let entity = self
-                .entities
-                .hot_mut(id)
-                .map_err(|error| IntegratedRuntimeError::new("entity-schedule", error.to_string()))?;
-            entity.record.age_ticks = entity.record.age_ticks.saturating_add(1);
-            entity.last_simulated_tick = self.tick;
+    fn apply_internal_entity_commands(
+        &mut self,
+        code: &'static str,
+        commands: Vec<EntityCommand>,
+    ) -> Result<EntityEventBatch, IntegratedRuntimeError> {
+        if commands.is_empty() {
+            return Err(IntegratedRuntimeError::new(
+                code,
+                "internal entity command batch is empty",
+            ));
         }
+        let sequence = self.entity_command_sequence.saturating_add(1).max(1);
+        let receipt = self
+            .entities
+            .apply_batch(&EntityCommandBatch {
+                schema: ENTITY_COMMAND_SCHEMA,
+                sequence,
+                expected_revision: self.entities.revision(),
+                tick: self.tick,
+                commands,
+            })
+            .map_err(|error| IntegratedRuntimeError::new(code, error.to_string()))?;
+        self.entity_command_sequence = self.entity_command_sequence.max(receipt.sequence);
+        self.sync_entity_schedules(std::slice::from_ref(&receipt))?;
+        self.invalidate_state_hash();
+        Ok(receipt)
+    }
+
+    fn advance_entity_scheduler(&mut self) -> Result<(), IntegratedRuntimeError> {
+        let due = self
+            .entity_scheduler
+            .due_jobs(self.tick, INTEGRATED_RUNTIME_MAX_ENTITY_SCHEDULE_JOBS_V1);
+        if due.is_empty() {
+            return Ok(());
+        }
+        let mut candidate_scheduler = self.entity_scheduler.clone();
+        let mut commands = Vec::with_capacity(due.len().saturating_mul(2));
+        for token in due {
+            let Some(current_revision) = self.entities.entity_revision(token.id) else {
+                candidate_scheduler.remove(token.id);
+                self.entity_schedule_diagnostics.entity_jobs_rejected_stale = self
+                    .entity_schedule_diagnostics
+                    .entity_jobs_rejected_stale
+                    .saturating_add(1);
+                continue;
+            };
+            if candidate_scheduler
+                .complete(token, current_revision, self.tick)
+                .is_err()
+            {
+                self.entity_schedule_diagnostics.entity_jobs_rejected_stale = self
+                    .entity_schedule_diagnostics
+                    .entity_jobs_rejected_stale
+                    .saturating_add(1);
+                if let Some(entity) = self.entities.hot().get(&token.id) {
+                    candidate_scheduler.upsert(token.id, entity.tier, entity.entity_revision, self.tick);
+                } else {
+                    candidate_scheduler.remove(token.id);
+                }
+                continue;
+            }
+            let Some(entity) = self.entities.hot().get(&token.id) else {
+                candidate_scheduler.remove(token.id);
+                continue;
+            };
+            let mut record = entity.record.clone();
+            record.age_ticks = record
+                .age_ticks
+                .saturating_add(self.tick.saturating_sub(entity.last_simulated_tick).max(1));
+            commands.push(EntityCommand::ReplaceCompatibilityRecord {
+                id: token.id,
+                value: record,
+            });
+            commands.push(EntityCommand::SetRangeState {
+                id: token.id,
+                out_of_range_seconds: entity.out_of_range_seconds,
+                last_simulated_tick: self.tick,
+            });
+            self.entity_schedule_diagnostics.entity_jobs_completed =
+                self.entity_schedule_diagnostics.entity_jobs_completed.saturating_add(1);
+        }
+        if commands.is_empty() {
+            self.entity_scheduler = candidate_scheduler;
+            return Ok(());
+        }
+        let previous_scheduler = std::mem::replace(&mut self.entity_scheduler, candidate_scheduler);
+        if let Err(error) = self.apply_internal_entity_commands("entity-schedule", commands) {
+            self.entity_scheduler = previous_scheduler;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn advance_ecology_scheduler(&mut self) {
+        let due = self
+            .entity_ecology_jobs
+            .due(self.tick, INTEGRATED_RUNTIME_MAX_ECOLOGY_SCHEDULE_JOBS_V1);
+        for token in due {
+            let Some(current_revision) = self.entity_ecology_revisions.get(&token.sector).copied() else {
+                self.entity_ecology_jobs.remove(token.sector);
+                self.entity_schedule_diagnostics.ecology_jobs_rejected_stale = self
+                    .entity_schedule_diagnostics
+                    .ecology_jobs_rejected_stale
+                    .saturating_add(1);
+                continue;
+            };
+            match self.entity_ecology_jobs.complete(
+                token,
+                current_revision,
+                self.tick,
+                self.tick.saturating_add(INTEGRATED_RUNTIME_ECOLOGY_CADENCE_TICKS_V1),
+            ) {
+                Ok(()) => {
+                    self.entity_ecology_revisions
+                        .insert(token.sector, current_revision.wrapping_add(1));
+                    self.entity_schedule_diagnostics.ecology_jobs_completed = self
+                        .entity_schedule_diagnostics
+                        .ecology_jobs_completed
+                        .saturating_add(1);
+                }
+                Err(_) => {
+                    self.entity_schedule_diagnostics.ecology_jobs_rejected_stale = self
+                        .entity_schedule_diagnostics
+                        .ecology_jobs_rejected_stale
+                        .saturating_add(1);
+                    let _ = self
+                        .entity_ecology_jobs
+                        .schedule(token.sector, current_revision, self.tick);
+                }
+            }
+        }
+    }
+
+    fn advance_path_scheduler(&mut self) {
+        let due = self
+            .entity_path_jobs
+            .due(self.tick, INTEGRATED_RUNTIME_MAX_PATH_SCHEDULE_JOBS_V1);
+        for token in due {
+            let current = self.entities.hot().get(&token.id).map(|entity| {
+                (
+                    entity.entity_revision,
+                    entity.components.ai.route_epoch,
+                    entity.components.ai.route.clone(),
+                    entity.record.position,
+                    entity.tier,
+                )
+            });
+            let Some((entity_revision, route_epoch, points, origin, tier)) = current else {
+                self.entity_path_jobs.cancel(token.id);
+                self.entity_schedule_diagnostics.path_jobs_rejected_stale = self
+                    .entity_schedule_diagnostics
+                    .path_jobs_rejected_stale
+                    .saturating_add(1);
+                continue;
+            };
+            match self
+                .entity_path_jobs
+                .accept(token, token.id, entity_revision, route_epoch, points.clone())
+            {
+                Ok(_) => {
+                    self.entity_schedule_diagnostics.path_jobs_completed =
+                        self.entity_schedule_diagnostics.path_jobs_completed.saturating_add(1);
+                }
+                Err(_) => {
+                    self.entity_path_jobs.cancel(token.id);
+                    self.entity_schedule_diagnostics.path_jobs_rejected_stale = self
+                        .entity_schedule_diagnostics
+                        .path_jobs_rejected_stale
+                        .saturating_add(1);
+                    if let Some(goal) = points.last().copied() {
+                        let _ = self.entity_path_jobs.submit(PathJobSubmission {
+                            id: token.id,
+                            entity_revision,
+                            route_epoch,
+                            due_tick: self.tick.saturating_add(tier.cadence_ticks().unwrap_or(10)),
+                            priority: entity_path_priority(tier),
+                            origin,
+                            goal,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn sync_entity_schedules(&mut self, receipts: &[EntityEventBatch]) -> Result<(), IntegratedRuntimeError> {
+        let ids = receipts
+            .iter()
+            .flat_map(|receipt| receipt.events.iter().map(|event| event.entity_id))
+            .collect::<BTreeSet<_>>();
+        for id in ids {
+            self.sync_entity_schedule(id);
+        }
+        Ok(())
+    }
+
+    fn sync_entity_schedule(&mut self, id: EntityId) {
+        let residency = self.entities.residency(id);
+        let new_sector = self
+            .entities
+            .compatibility_record(id)
+            .map(|record| entity_ecology_sector(record.position));
+        let old_sector = self.entity_sectors.get(&id).copied();
+        if old_sector != new_sector {
+            if let Some(sector) = old_sector {
+                let remove_sector = self.entity_sector_counts.get_mut(&sector).is_some_and(|count| {
+                    *count = count.saturating_sub(1);
+                    *count == 0
+                });
+                if remove_sector {
+                    self.entity_sector_counts.remove(&sector);
+                    self.entity_ecology_revisions.remove(&sector);
+                    self.entity_ecology_jobs.remove(sector);
+                }
+            }
+            self.entity_sectors.remove(&id);
+            if let Some(sector) = new_sector {
+                self.entity_sectors.insert(id, sector);
+                let count = self.entity_sector_counts.entry(sector).or_default();
+                let new_sector = *count == 0;
+                *count = count.saturating_add(1);
+                if new_sector {
+                    let revision = *self.entity_ecology_revisions.entry(sector).or_insert(1);
+                    let _ = self.entity_ecology_jobs.schedule(
+                        sector,
+                        revision,
+                        self.tick.saturating_add(INTEGRATED_RUNTIME_ECOLOGY_CADENCE_TICKS_V1),
+                    );
+                }
+            }
+        }
+
+        match residency {
+            Some(EntityResidency::Hot) => {
+                let entity = self.entities.hot().get(&id).expect("hot residency has a hot entity");
+                self.entity_scheduler
+                    .upsert(id, entity.tier, entity.entity_revision, self.tick);
+                self.entity_path_jobs.cancel(id);
+                if let Some(goal) = entity.components.ai.route.last().copied() {
+                    let _ = self.entity_path_jobs.submit(PathJobSubmission {
+                        id,
+                        entity_revision: entity.entity_revision,
+                        route_epoch: entity.components.ai.route_epoch,
+                        due_tick: self.tick.saturating_add(entity.tier.cadence_ticks().unwrap_or(10)),
+                        priority: entity_path_priority(entity.tier),
+                        origin: entity.record.position,
+                        goal,
+                    });
+                }
+            }
+            Some(EntityResidency::Cold) | None => {
+                self.entity_scheduler.remove(id);
+                self.entity_path_jobs.cancel(id);
+            }
+        }
+    }
+
+    fn rebuild_entity_schedules(&mut self) -> Result<(), IntegratedRuntimeError> {
+        self.entity_scheduler = EntityScheduler::default();
+        self.entity_ecology_jobs = EcologyJobQueue::default();
+        self.entity_ecology_revisions.clear();
+        self.entity_sectors.clear();
+        self.entity_sector_counts.clear();
+        self.entity_path_jobs = PathJobQueue::default();
+        let ids = self
+            .entities
+            .hot()
+            .keys()
+            .chain(self.entities.cold().keys())
+            .copied()
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.sync_entity_schedule(id);
+        }
+        Ok(())
+    }
+
+    fn advance_entity_and_gameplay_schedules(&mut self) -> Result<(), IntegratedRuntimeError> {
+        // Complete path tokens against the revision they were submitted for
+        // before routine entity aging advances that revision and schedules the
+        // next token. Reversing this order can starve every continuously active
+        // entity by invalidating its path at exactly the same cadence.
+        self.advance_path_scheduler();
+        self.advance_entity_scheduler()?;
+        self.advance_ecology_scheduler();
 
         self.gameplay.state.tick = self.tick;
         self.gameplay
@@ -2297,11 +3035,18 @@ impl IntegratedRuntimeV2 {
         self.recovery_assemblers.clear();
         self.recovered_save_sets.clear();
         self.hydrated_exports.clear();
+        self.content_stage = None;
         self.queued.clear();
         self.receipts.clear();
         self.idempotency.clear();
         self.idempotency_order.clear();
         self.queued_inputs.clear();
+        self.entity_scheduler = EntityScheduler::default();
+        self.entity_ecology_jobs = EcologyJobQueue::default();
+        self.entity_ecology_revisions.clear();
+        self.entity_sectors.clear();
+        self.entity_sector_counts.clear();
+        self.entity_path_jobs = PathJobQueue::default();
         self.stopped = true;
     }
 
@@ -2342,6 +3087,97 @@ impl IntegratedRuntimeV2 {
 
     fn invalidate_state_hash(&self) {
         self.state_hash_cache.set(None);
+    }
+}
+
+fn entity_snapshot_last_sequence(snapshot: &[u8]) -> Result<Option<u64>, IntegratedRuntimeError> {
+    const LAST_SEQUENCE_FLAG_OFFSET: usize = 4 + 2 + 8;
+    let flag = *snapshot.get(LAST_SEQUENCE_FLAG_OFFSET).ok_or_else(|| {
+        IntegratedRuntimeError::new("entity-snapshot", "entity authority snapshot header is truncated")
+    })?;
+    match flag {
+        0 => Ok(None),
+        1 => {
+            let start = LAST_SEQUENCE_FLAG_OFFSET + 1;
+            let bytes = snapshot.get(start..start + 8).ok_or_else(|| {
+                IntegratedRuntimeError::new("entity-snapshot", "entity authority snapshot sequence is truncated")
+            })?;
+            Ok(Some(u64::from_le_bytes(
+                bytes.try_into().expect("checked entity sequence width"),
+            )))
+        }
+        _ => Err(IntegratedRuntimeError::new(
+            "entity-snapshot",
+            "entity authority snapshot sequence option is invalid",
+        )),
+    }
+}
+
+fn entity_ecology_sector(position: EntityVec3) -> [i32; 2] {
+    ecology_sector_key(position.x.floor() as i32, position.z.floor() as i32)
+}
+
+const fn entity_path_priority(tier: SimulationTier) -> i16 {
+    match tier {
+        SimulationTier::Hero => 300,
+        SimulationTier::Nearby => 200,
+        SimulationTier::Coarse => 100,
+        SimulationTier::Dormant => 0,
+    }
+}
+
+fn content_stage_receipt(stage: &IntegratedRuntimeContentStageV1) -> ContentInstallReceiptWireV1 {
+    ContentInstallReceiptWireV1 {
+        status: ContentInstallReceiptStatusV1::Staged,
+        install_id: stage.install_id.clone(),
+        source_revision: stage.source_revision.clone(),
+        manifest_hash: stage.manifest_hash,
+        domains: stage.domains.clone(),
+        accepted_pages: stage.page_hashes.len() as u32,
+        page_count: stage.page_count,
+        accepted_entries: stage.artifacts.len() as u32,
+        installed_entries: 0,
+        installed_bytes: 0,
+    }
+}
+
+fn content_install_receipt(
+    installed: &IntegratedRuntimeContentAttestationV1,
+    page_count: u32,
+) -> ContentInstallReceiptWireV1 {
+    ContentInstallReceiptWireV1 {
+        status: ContentInstallReceiptStatusV1::Installed,
+        install_id: installed.install_id.clone(),
+        source_revision: installed.source_revision.clone(),
+        manifest_hash: installed.manifest_hash,
+        domains: installed.domains.clone(),
+        accepted_pages: installed.page_hashes.len() as u32,
+        page_count,
+        accepted_entries: installed.installed_entries,
+        installed_entries: installed.installed_entries,
+        installed_bytes: installed.installed_bytes,
+    }
+}
+
+fn content_blocker_error(blockers: &[blockwild_gameplay::ContentBlocker]) -> IntegratedRuntimeError {
+    let message = blockers.first().map_or_else(
+        || "content bundle failed validation without a structured blocker".to_owned(),
+        |blocker| {
+            format!(
+                "content blocker {:?} domain={:?} id={:?} expected={:?} actual={:?}",
+                blocker.code, blocker.domain, blocker.id, blocker.expected, blocker.actual
+            )
+        },
+    );
+    IntegratedRuntimeError::new("content-bundle-rejected", message)
+}
+
+fn write_content_domain_digests(hasher: &mut CanonicalHasher, domains: &BTreeMap<ContentDomain, ContentDomainDigest>) {
+    hasher.write_u32(domains.len() as u32);
+    for (domain, digest) in domains {
+        hasher.write_str(domain.as_id());
+        hasher.write_u32(digest.count);
+        hasher.write_bytes(digest.hash.as_bytes());
     }
 }
 
@@ -2759,6 +3595,18 @@ mod tests {
             panic!("fixture cell must be loaded")
         };
         cell.block_id
+    }
+
+    fn commit_entity_commands(runtime: &mut IntegratedRuntimeV2, batch_id: &str, commands: Vec<EntityCommand>) {
+        let mut batch = IntegratedRuntimeBatchV2::empty(batch_id, runtime.identity());
+        batch.entities.push(EntityCommandBatch {
+            schema: ENTITY_COMMAND_SCHEMA,
+            sequence: runtime.entity_command_sequence.saturating_add(1).max(1),
+            expected_revision: runtime.entities().revision(),
+            tick: runtime.tick(),
+            commands,
+        });
+        assert!(runtime.commit(batch).accepted());
     }
 
     #[test]
@@ -3236,5 +4084,388 @@ mod tests {
         assert_eq!(auxiliary.heightmap.len(), 256);
         assert_eq!(auxiliary.light.len(), 49_152);
         assert_eq!(runtime.generation_diagnostics().completed, 1);
+    }
+
+    #[test]
+    fn content_install_is_paged_transactional_and_idempotent() {
+        let artifacts = vec![
+            ContentArtifact {
+                domain: ContentDomain::CardforgePack,
+                id: "pack:\u{6c34}-wilds".into(),
+                schema_id: "tcg-pack".into(),
+                schema_version: 1,
+                content_version: 7,
+                aliases: vec!["cardforge-pack:\u{6c34}-wilds".into()],
+                canonical_bytes: b"{\"cards\":[1,2]}".to_vec(),
+                unknown_extension_bytes: vec![0x80, 0xff],
+            },
+            ContentArtifact {
+                domain: ContentDomain::Item,
+                id: "603".into(),
+                schema_id: "item-definition".into(),
+                schema_version: 1,
+                content_version: 3,
+                aliases: vec!["item:603".into()],
+                canonical_bytes: "{\"name\":\"Mizu \u{6c34}\"}".as_bytes().to_vec(),
+                unknown_extension_bytes: vec![0, 0x80, 0xff, 7],
+            },
+        ];
+        let bundle = compile_content_bundle("production-\u{6c34}-7", artifacts).expect("fixture content");
+        let mut runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2 {
+            content_hash: bundle.manifest.manifest_hash,
+            ..IntegratedRuntimeConfigV2::default()
+        })
+        .unwrap();
+        let page = |index: u32, artifact: ContentArtifact| ContentInstallPageWireV1 {
+            install_id: format!("install:{}", bundle.manifest.manifest_hash.to_hex()),
+            manifest_schema: bundle.manifest.schema_version,
+            source_revision: bundle.manifest.source_revision.clone(),
+            manifest_hash: bundle.manifest.manifest_hash,
+            domains: bundle.manifest.domains.clone(),
+            page_index: index,
+            page_count: 2,
+            artifacts: vec![artifact],
+        };
+        let first = page(0, bundle.artifacts[0].clone());
+        let second = page(1, bundle.artifacts[1].clone());
+        let first_bytes = crate::encode_content_install_page_v1(&first).unwrap();
+        let second_bytes = crate::encode_content_install_page_v1(&second).unwrap();
+        let first_hash = CanonicalHash(blockwild_runtime_wire::wire_checksum_v1(&first_bytes));
+        let second_hash = CanonicalHash(blockwild_runtime_wire::wire_checksum_v1(&second_bytes));
+
+        assert_eq!(
+            runtime
+                .install_content_page(second.clone(), second_hash)
+                .unwrap_err()
+                .code,
+            "content-page-missing"
+        );
+        let before = runtime.state_hash();
+        let staged = runtime.install_content_page(first.clone(), first_hash).unwrap();
+        assert_eq!(staged.status, ContentInstallReceiptStatusV1::Staged);
+        assert_eq!(staged.accepted_pages, 1);
+        assert_ne!(runtime.state_hash(), before);
+        assert_eq!(runtime.install_content_page(first.clone(), first_hash).unwrap(), staged);
+
+        let mut conflicting = first;
+        conflicting.artifacts[0].unknown_extension_bytes.push(9);
+        let conflicting_bytes = crate::encode_content_install_page_v1(&conflicting).unwrap();
+        let conflicting_hash = CanonicalHash(blockwild_runtime_wire::wire_checksum_v1(&conflicting_bytes));
+        let before_conflict = runtime.identity();
+        assert_eq!(
+            runtime
+                .install_content_page(conflicting, conflicting_hash)
+                .unwrap_err()
+                .code,
+            "content-page-conflict"
+        );
+        assert_eq!(runtime.identity(), before_conflict);
+
+        let installed = runtime.install_content_page(second.clone(), second_hash).unwrap();
+        assert_eq!(installed.status, ContentInstallReceiptStatusV1::Installed);
+        assert_eq!(installed.installed_entries, 2);
+        assert!(runtime.content_ready());
+        assert_eq!(runtime.gameplay_content_registry_len(), 2);
+        assert_eq!(
+            runtime
+                .gameplay_content_store()
+                .get_by_alias("cardforge-pack:\u{6c34}-wilds")
+                .unwrap()
+                .exact_bytes()
+                .1,
+            [0x80, 0xff]
+        );
+        assert_eq!(runtime.install_content_page(second, second_hash).unwrap(), installed);
+
+        let mut reordered_runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2 {
+            content_hash: bundle.manifest.manifest_hash,
+            ..IntegratedRuntimeConfigV2::default()
+        })
+        .unwrap();
+        let mut page_zero = page(0, bundle.artifacts[0].clone());
+        page_zero.page_count = 3;
+        let page_zero_bytes = crate::encode_content_install_page_v1(&page_zero).unwrap();
+        reordered_runtime
+            .install_content_page(
+                page_zero,
+                CanonicalHash(blockwild_runtime_wire::wire_checksum_v1(&page_zero_bytes)),
+            )
+            .unwrap();
+        let mut page_two = page(2, bundle.artifacts[1].clone());
+        page_two.page_count = 3;
+        let page_two_bytes = crate::encode_content_install_page_v1(&page_two).unwrap();
+        assert_eq!(
+            reordered_runtime
+                .install_content_page(
+                    page_two,
+                    CanonicalHash(blockwild_runtime_wire::wire_checksum_v1(&page_two_bytes)),
+                )
+                .unwrap_err()
+                .code,
+            "content-page-reordered"
+        );
+    }
+
+    #[test]
+    fn installed_creature_profile_resolves_renderer_model_identity() {
+        let artifact = ContentArtifact {
+            domain: ContentDomain::CreatureProfile,
+            id: "model:asterjaw".into(),
+            schema_id: "creature-profile".into(),
+            schema_version: 1,
+            content_version: 42,
+            aliases: vec!["creature:asterjaw".into()],
+            canonical_bytes: b"{\"model\":\"asterjaw\"}".to_vec(),
+            unknown_extension_bytes: vec![0x80, 0xff],
+        };
+        let bundle = compile_content_bundle("models-42", vec![artifact.clone()]).unwrap();
+        let expected_hash = bundle.manifest.entries[0].blob_hash;
+        let mut runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2 {
+            content_hash: bundle.manifest.manifest_hash,
+            ..IntegratedRuntimeConfigV2::default()
+        })
+        .unwrap();
+        assert_eq!(
+            runtime.entity_model_content_identity("model:asterjaw", "asterjaw"),
+            None
+        );
+        let page = ContentInstallPageWireV1 {
+            install_id: "models-install".into(),
+            manifest_schema: bundle.manifest.schema_version,
+            source_revision: bundle.manifest.source_revision,
+            manifest_hash: bundle.manifest.manifest_hash,
+            domains: bundle.manifest.domains,
+            page_index: 0,
+            page_count: 1,
+            artifacts: vec![artifact],
+        };
+        let page_bytes = crate::encode_content_install_page_v1(&page).unwrap();
+        runtime
+            .install_content_page(
+                page,
+                CanonicalHash(blockwild_runtime_wire::wire_checksum_v1(&page_bytes)),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.entity_model_content_identity("model:asterjaw", "asterjaw"),
+            Some((expected_hash, 42))
+        );
+        assert_eq!(runtime.content_manifest_hash(), bundle.manifest.manifest_hash);
+        assert!(runtime.content_ready());
+    }
+
+    #[test]
+    fn entity_authority_snapshot_hydrates_exact_slots_extensions_and_sequence() {
+        let mut runtime = runtime_with_section();
+        let mut first = EntityCompatibilityRecord::new("creature:first", "specimen:\u{6c34}", "river-spirit");
+        first.custom.insert("high-byte-label".into(), "\u{80}\u{ff}".into());
+        let second = EntityCompatibilityRecord::new("creature:second", "specimen:second", "ridgeback");
+        commit_entity_commands(
+            &mut runtime,
+            "snapshot-spawn",
+            vec![
+                EntityCommand::Spawn {
+                    record: first,
+                    residency: EntityResidency::Hot,
+                },
+                EntityCommand::Spawn {
+                    record: second,
+                    residency: EntityResidency::Cold,
+                },
+            ],
+        );
+        let old_revision = runtime.entities().revision();
+        let old_snapshot = runtime.export_entity_authority_snapshot(old_revision).unwrap();
+        let first_id = *runtime.entities().hot().keys().next().unwrap();
+        let second_id = *runtime.entities().cold().keys().next().unwrap();
+        let mut components = runtime.entities().components(second_id).unwrap().clone();
+        components
+            .unknown_extensions
+            .insert("future:\u{6c34}".into(), vec![0, 0x80, 0xff, 7]);
+        commit_entity_commands(
+            &mut runtime,
+            "snapshot-mutate",
+            vec![
+                EntityCommand::Despawn {
+                    id: first_id,
+                    reason: blockwild_entity::DespawnReason::Admin,
+                },
+                EntityCommand::ReplaceComponents {
+                    id: second_id,
+                    value: components,
+                },
+            ],
+        );
+
+        let revision = runtime.entities().revision();
+        let snapshot = runtime.export_entity_authority_snapshot(revision).unwrap();
+        let entity_hash = runtime.entities().canonical_hash();
+        let command_sequence = runtime.entity_command_sequence;
+        let mut restored = runtime_with_section();
+        let receipt = restored.import_entity_authority_snapshot(0, &snapshot).unwrap();
+        assert_eq!(receipt.previous_revision, 0);
+        assert_eq!(receipt.revision, revision);
+        assert_eq!(receipt.entity_count, 1);
+        assert_eq!(receipt.state_hash, entity_hash);
+        assert_eq!(restored.entities().canonical_hash(), entity_hash);
+        assert_eq!(restored.entity_command_sequence, command_sequence);
+        assert_eq!(restored.export_entity_authority_snapshot(revision).unwrap(), snapshot);
+        assert_eq!(
+            restored.entities().components(second_id).unwrap().unknown_extensions["future:\u{6c34}"],
+            [0, 0x80, 0xff, 7]
+        );
+
+        let before_rejection = runtime.identity();
+        assert_eq!(
+            runtime
+                .import_entity_authority_snapshot(revision.saturating_sub(1), &snapshot)
+                .unwrap_err()
+                .code,
+            "entity-snapshot-stale"
+        );
+        assert_eq!(runtime.identity(), before_rejection);
+        assert_eq!(
+            runtime
+                .import_entity_authority_snapshot(revision, &old_snapshot)
+                .unwrap_err()
+                .code,
+            "entity-snapshot-rollback"
+        );
+        assert_eq!(runtime.identity(), before_rejection);
+        let mut corrupted = snapshot;
+        corrupted.pop();
+        assert_eq!(
+            runtime
+                .import_entity_authority_snapshot(revision, &corrupted)
+                .unwrap_err()
+                .code,
+            "entity-snapshot"
+        );
+        assert_eq!(runtime.identity(), before_rejection);
+    }
+
+    #[test]
+    fn compatibility_bridge_is_revisioned_and_preserves_legacy_authority() {
+        let mut source = runtime_with_section();
+        let mut record = EntityCompatibilityRecord::new("creature:\u{6c34}", "specimen:\u{1f40b}", "tide-whale");
+        record.research.insert("ecology:\u{6c34}".into(), 9);
+        record.equipment.insert("saddle".into(), "item:\u{ff}".into());
+        record.custom.insert("opaque".into(), "\u{80}\u{ff}".into());
+        commit_entity_commands(
+            &mut source,
+            "compatibility-spawn",
+            vec![EntityCommand::Spawn {
+                record: record.clone(),
+                residency: EntityResidency::Cold,
+            }],
+        );
+        let id = *source.entities().cold().keys().next().unwrap();
+        let entity_revision = source.entities().entity_revision(id).unwrap();
+        let exported = source.export_entity_compatibility_record(id, entity_revision).unwrap();
+        assert_eq!(decode_compatibility_record(&exported).unwrap(), record);
+        assert_eq!(
+            source
+                .export_entity_compatibility_record(id, entity_revision.wrapping_add(1))
+                .unwrap_err()
+                .code,
+            "entity-compatibility-stale"
+        );
+
+        let mut imported = runtime_with_section();
+        let receipt = imported
+            .import_entity_compatibility_record(EntityCompatibilityImportWireV1 {
+                sequence: 1,
+                expected_revision: 0,
+                tick: 0,
+                desired_id: None,
+                residency: EntityResidency::Cold,
+                record: record.clone(),
+            })
+            .unwrap();
+        assert_eq!(receipt.previous_revision, 0);
+        assert_eq!(receipt.revision, 1);
+        assert_eq!(imported.entities().cold().values().next().unwrap().record, record);
+        let before = imported.identity();
+        let error = imported
+            .import_entity_compatibility_record(EntityCompatibilityImportWireV1 {
+                sequence: 2,
+                expected_revision: 0,
+                tick: 0,
+                desired_id: None,
+                residency: EntityResidency::Hot,
+                record: EntityCompatibilityRecord::new("stale", "stale", "stale"),
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "entity-compatibility");
+        assert_eq!(imported.identity(), before);
+    }
+
+    #[test]
+    fn fixed_step_entity_ecology_and_path_jobs_complete_and_reject_stale_tokens() {
+        let mut runtime = runtime_with_section();
+        let mut record = EntityCompatibilityRecord::new("creature:scheduler", "specimen:scheduler", "courser");
+        record.position = EntityVec3::new(8.0, 64.0, 8.0);
+        commit_entity_commands(
+            &mut runtime,
+            "scheduler-spawn",
+            vec![EntityCommand::Spawn {
+                record,
+                residency: EntityResidency::Hot,
+            }],
+        );
+        let id = *runtime.entities().hot().keys().next().unwrap();
+        let mut ai = runtime.entities().components(id).unwrap().ai.clone();
+        ai.route_epoch = 7;
+        ai.route = vec![EntityVec3::new(9.0, 64.0, 9.0)];
+        commit_entity_commands(
+            &mut runtime,
+            "scheduler-route",
+            vec![EntityCommand::SetAiState { id, value: ai }],
+        );
+        runtime.tick = INTEGRATED_RUNTIME_ECOLOGY_CADENCE_TICKS_V1;
+        runtime.advance_entity_and_gameplay_schedules().unwrap();
+        let completed = runtime.entity_schedule_diagnostics();
+        assert!(completed.entity_jobs_completed >= 1);
+        assert!(completed.ecology_jobs_completed >= 1);
+        assert!(completed.path_jobs_completed >= 1);
+
+        let current_revision = runtime.entities().entity_revision(id).unwrap();
+        let stale_revision = current_revision.saturating_sub(1);
+        runtime
+            .entity_scheduler
+            .upsert(id, SimulationTier::Hero, stale_revision, runtime.tick);
+        let sector = runtime.entity_sectors[&id];
+        let ecology_revision = runtime.entity_ecology_revisions[&sector];
+        runtime
+            .entity_ecology_jobs
+            .schedule(sector, ecology_revision.saturating_sub(1), runtime.tick)
+            .unwrap();
+        let (route_epoch, origin, goal) = {
+            let entity = runtime.entities().hot().get(&id).unwrap();
+            (
+                entity.components.ai.route_epoch,
+                entity.record.position,
+                *entity.components.ai.route.last().unwrap(),
+            )
+        };
+        runtime.entity_path_jobs.cancel(id);
+        runtime
+            .entity_path_jobs
+            .submit(PathJobSubmission {
+                id,
+                entity_revision: stale_revision,
+                route_epoch,
+                due_tick: runtime.tick,
+                priority: 0,
+                origin,
+                goal,
+            })
+            .unwrap();
+        runtime.advance_entity_and_gameplay_schedules().unwrap();
+        let rejected = runtime.entity_schedule_diagnostics();
+        assert!(rejected.entity_jobs_rejected_stale > completed.entity_jobs_rejected_stale);
+        assert!(rejected.ecology_jobs_rejected_stale > completed.ecology_jobs_rejected_stale);
+        assert!(rejected.path_jobs_rejected_stale > completed.path_jobs_rejected_stale);
+        assert!(runtime.entities().contains(id));
     }
 }

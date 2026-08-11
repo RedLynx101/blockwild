@@ -20,6 +20,7 @@ import { TCG_CATALOG, TCG_PACKS, TCG_SETS } from "./tcg/catalog";
 import { TCG_CATALOG_REVISION, TCG_SCHEMA } from "./tcg/types";
 import { GOLEM_RECIPES } from "./v1-cultures";
 import { WHEAT_MILL_CYCLE_SECONDS, WHEAT_MILL_PROCESS, WHEAT_MILL_SCHEMA, WHEAT_MILL_STACK_CAP } from "./wheat-mill";
+import { rustIntegratedRuntimeWireChecksumV1 } from "./rust-integrated-runtime-codec";
 
 export const RUST_CONTENT_MANIFEST_SCHEMA = 1 as const;
 export const RUST_METADATA_STORE_SCHEMA = 1 as const;
@@ -441,4 +442,234 @@ export function validateRustContentExpectation(
   }
   if (expected.manifestHash !== bundle.manifest.manifestHash) blockers.push({ code: "manifest-hash-drift", domain: null, id: null, path: "$.manifestHash", expected: expected.manifestHash, actual: bundle.manifest.manifestHash });
   return Object.freeze(blockers);
+}
+
+export const RUST_CONTENT_INSTALL_PAGE_TYPE_V1 = "blockwild.gameplay.content-install-page.v1" as const;
+export const RUST_CONTENT_INSTALL_RECEIPT_TYPE_V1 = "blockwild.gameplay.content-install-receipt.v1" as const;
+export const RUST_CONTENT_INSTALL_CAPABILITY_V1 = "content-bundle-install-v1" as const;
+export const RUST_CONTENT_AUTHORITY_CAPABILITY_V1 = "content-authority-v1" as const;
+export const RUST_CONTENT_INSTALL_MAX_PAGES_V1 = 128;
+export const RUST_CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1 = 1_024;
+export const RUST_CONTENT_INSTALL_PAGE_BUDGET_V1 = 768 * 1024;
+
+export type RustContentInstallPageV1 = Readonly<{
+  installId: string;
+  manifestSchema: number;
+  sourceRevision: string;
+  manifestHash: string;
+  domains: Readonly<Record<RustContentDomain, RustContentDomainDigest>>;
+  pageIndex: number;
+  pageCount: number;
+  artifacts: readonly RustContentArtifact[];
+}>;
+
+export type RustContentInstallReceiptV1 = Readonly<{
+  status: "staged" | "installed";
+  installId: string;
+  sourceRevision: string;
+  manifestHash: string;
+  domains: Readonly<Record<RustContentDomain, RustContentDomainDigest>>;
+  acceptedPages: number;
+  pageCount: number;
+  acceptedEntries: number;
+  installedEntries: number;
+  installedBytes: number;
+}>;
+
+export type RustContentInstallPlanV1 = Readonly<{
+  installId: string;
+  manifestHash: string;
+  pages: readonly Readonly<{ page: RustContentInstallPageV1; payload: Uint8Array }>[];
+}>;
+
+const CONTENT_PAGE_MAGIC = encoder.encode("BWC7");
+const CONTENT_RECEIPT_MAGIC = encoder.encode("BWT7");
+const CONTENT_DOMAIN_HEADER_BYTES = 28;
+
+class ContentWireWriter {
+  private readonly values: number[] = [];
+  u8(value: number) { this.values.push(value & 0xff); }
+  u16(value: number) { this.rawNumber(value, 2); }
+  u32(value: number) { this.rawNumber(value, 4); }
+  u64(value: number) {
+    let remaining = BigInt(value);
+    for (let index = 0; index < 8; index += 1) { this.u8(Number(remaining & BigInt(0xff))); remaining >>= BigInt(8); }
+  }
+  hash(value: string) { this.raw(hexToBytes(value)); }
+  string(value: string) {
+    const bytes = encoder.encode(value);
+    if (!value || bytes.byteLength > 16 * 1024 || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error("content wire string is malformed");
+    this.bytes(bytes);
+  }
+  bytes(value: Uint8Array) { this.u32(value.byteLength); this.raw(value); }
+  raw(value: Uint8Array) { for (const byte of value) this.values.push(byte); }
+  finish() { return Uint8Array.from(this.values); }
+  private rawNumber(value: number, width: number) {
+    let remaining = value >>> 0;
+    for (let index = 0; index < width; index += 1) { this.u8(remaining); remaining >>>= 8; }
+  }
+}
+
+class ContentWireReader {
+  private offset = 0;
+  constructor(private readonly bytesValue: Uint8Array) {}
+  u8() { return this.take(1)[0]; }
+  u16() { const bytes = this.take(2); return bytes[0] | (bytes[1] << 8); }
+  u32() { const bytes = this.take(4); return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true); }
+  u64() {
+    const bytes = this.take(8); let value = BigInt(0);
+    for (let index = 7; index >= 0; index -= 1) value = (value << BigInt(8)) | BigInt(bytes[index]);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("content wire u64 exceeds browser safe integer range");
+    return Number(value);
+  }
+  hash() { return bytesToHex(this.take(16)); }
+  bytes(maximum = Number.MAX_SAFE_INTEGER) { const length = this.u32(); if (length > maximum) throw new Error("content wire bytes exceed budget"); return Uint8Array.from(this.take(length)); }
+  string() {
+    const value = new TextDecoder("utf-8", { fatal: true }).decode(this.bytes(16 * 1024));
+    if (!value || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error("content wire string is malformed");
+    return value;
+  }
+  finish() { if (this.offset !== this.bytesValue.byteLength) throw new Error("content wire packet has trailing bytes"); }
+  private take(length: number) {
+    const result = this.bytesValue.subarray(this.offset, this.offset + length);
+    if (result.byteLength !== length) throw new Error("content wire packet is truncated");
+    this.offset += length; return result;
+  }
+}
+
+function writeContentDomains(writer: ContentWireWriter, domains: Readonly<Record<RustContentDomain, RustContentDomainDigest>>) {
+  writer.u16(RUST_CONTENT_DOMAINS.length);
+  RUST_CONTENT_DOMAINS.forEach((domain, tag) => {
+    const digest = domains[domain];
+    if (!digest) throw new Error(`content manifest is missing ${domain}`);
+    writer.u8(tag); writer.u32(digest.count); writer.hash(digest.hash);
+  });
+}
+
+function readContentDomains(reader: ContentWireReader) {
+  if (reader.u16() !== RUST_CONTENT_DOMAINS.length) throw new Error("content domain count is invalid");
+  const result = {} as Record<RustContentDomain, RustContentDomainDigest>;
+  RUST_CONTENT_DOMAINS.forEach((domain, tag) => {
+    if (reader.u8() !== tag) throw new Error("content domains are not canonically ordered");
+    result[domain] = Object.freeze({ count: reader.u32(), hash: reader.hash() });
+  });
+  return Object.freeze(result);
+}
+
+function writeContentArtifact(writer: ContentWireWriter, artifact: RustContentArtifact) {
+  writer.u8(RUST_CONTENT_DOMAINS.indexOf(artifact.domain));
+  writer.string(artifact.id); writer.string(artifact.schemaId); writer.u16(artifact.schemaVersion); writer.u32(artifact.contentVersion);
+  if (artifact.aliases.length > MAX_RUST_CONTENT_ALIASES) throw new Error("content artifact alias count exceeds budget");
+  writer.u32(artifact.aliases.length);
+  for (const alias of artifact.aliases) writer.string(alias);
+  writer.bytes(artifact.canonicalBytes); writer.bytes(artifact.unknownExtensionBytes);
+}
+
+function readContentArtifact(reader: ContentWireReader): RustContentArtifact {
+  const domain = RUST_CONTENT_DOMAINS[reader.u8()];
+  if (!domain) throw new Error("content artifact domain is invalid");
+  const id = reader.string(); const schemaId = reader.string(); const schemaVersion = reader.u16(); const contentVersion = reader.u32();
+  const aliasCount = reader.u32();
+  if (aliasCount > MAX_RUST_CONTENT_ALIASES) throw new Error("content artifact alias count exceeds budget");
+  const aliases = Object.freeze(Array.from({ length: aliasCount }, () => reader.string()));
+  const canonicalBytes = reader.bytes(MAX_RUST_CONTENT_BYTES);
+  const unknownExtensionBytes = reader.bytes(MAX_RUST_CONTENT_EXTENSION_BYTES);
+  const withoutHash = { domain, id, schemaId, schemaVersion, contentVersion, aliases, canonicalBytes, unknownExtensionBytes };
+  return Object.freeze({ ...withoutHash, blobHash: canonicalRustMetadataHash(withoutHash) });
+}
+
+function contentPageBody(page: RustContentInstallPageV1) {
+  const writer = new ContentWireWriter();
+  writer.string(page.installId); writer.u16(page.manifestSchema); writer.string(page.sourceRevision); writer.hash(page.manifestHash);
+  writeContentDomains(writer, page.domains); writer.u32(page.pageIndex); writer.u32(page.pageCount); writer.u32(page.artifacts.length);
+  for (const artifact of page.artifacts) writeContentArtifact(writer, artifact);
+  return writer.finish();
+}
+
+function wrapContentPacket(magic: Uint8Array, body: Uint8Array) {
+  const writer = new ContentWireWriter();
+  writer.raw(magic); writer.u16(1); writer.u16(1); writer.u32(body.byteLength);
+  writer.hash(rustIntegratedRuntimeWireChecksumV1(body)); writer.raw(body);
+  return writer.finish();
+}
+
+function unwrapContentPacket(packet: Uint8Array, magic: Uint8Array) {
+  if (packet.byteLength < CONTENT_DOMAIN_HEADER_BYTES) throw new Error("content wire packet is truncated");
+  if (!magic.every((byte, index) => packet[index] === byte)) throw new Error("content wire magic mismatch");
+  const header = new DataView(packet.buffer, packet.byteOffset, CONTENT_DOMAIN_HEADER_BYTES);
+  if (header.getUint16(4, true) !== 1 || header.getUint16(6, true) !== 1) throw new Error("content wire version is unsupported");
+  const length = header.getUint32(8, true); const checksum = bytesToHex(packet.subarray(12, 28));
+  const payload = packet.subarray(CONTENT_DOMAIN_HEADER_BYTES);
+  if (length !== payload.byteLength || checksum !== rustIntegratedRuntimeWireChecksumV1(payload)) throw new Error("content wire length or checksum mismatch");
+  return payload;
+}
+
+export function encodeRustContentInstallPageV1(page: RustContentInstallPageV1) {
+  if (page.manifestSchema !== RUST_CONTENT_MANIFEST_SCHEMA || page.pageCount < 1 || page.pageCount > RUST_CONTENT_INSTALL_MAX_PAGES_V1
+    || page.pageIndex < 0 || page.pageIndex >= page.pageCount || page.artifacts.length < 1
+    || page.artifacts.length > RUST_CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1) throw new Error("content install page shape is invalid");
+  return wrapContentPacket(CONTENT_PAGE_MAGIC, contentPageBody(page));
+}
+
+export function decodeRustContentInstallPageV1(packet: Uint8Array): RustContentInstallPageV1 {
+  const reader = new ContentWireReader(unwrapContentPacket(packet, CONTENT_PAGE_MAGIC));
+  const installId = reader.string(); const manifestSchema = reader.u16(); const sourceRevision = reader.string(); const manifestHash = reader.hash();
+  const domains = readContentDomains(reader); const pageIndex = reader.u32(); const pageCount = reader.u32(); const count = reader.u32();
+  if (count < 1 || count > RUST_CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1) throw new Error("content install artifact count is invalid");
+  const artifacts = Object.freeze(Array.from({ length: count }, () => readContentArtifact(reader))); reader.finish();
+  return Object.freeze({ installId, manifestSchema, sourceRevision, manifestHash, domains, pageIndex, pageCount, artifacts });
+}
+
+export function encodeRustContentInstallReceiptV1(receipt: RustContentInstallReceiptV1) {
+  const writer = new ContentWireWriter();
+  writer.u8(receipt.status === "staged" ? 0 : 1); writer.string(receipt.installId); writer.string(receipt.sourceRevision); writer.hash(receipt.manifestHash);
+  writeContentDomains(writer, receipt.domains); writer.u32(receipt.acceptedPages); writer.u32(receipt.pageCount); writer.u32(receipt.acceptedEntries);
+  writer.u32(receipt.installedEntries); writer.u64(receipt.installedBytes);
+  return wrapContentPacket(CONTENT_RECEIPT_MAGIC, writer.finish());
+}
+
+export function decodeRustContentInstallReceiptV1(packet: Uint8Array): RustContentInstallReceiptV1 {
+  const reader = new ContentWireReader(unwrapContentPacket(packet, CONTENT_RECEIPT_MAGIC));
+  const tag = reader.u8(); if (tag > 1) throw new Error("content install receipt status is invalid");
+  const result = Object.freeze({
+    status: tag === 0 ? "staged" as const : "installed" as const,
+    installId: reader.string(), sourceRevision: reader.string(), manifestHash: reader.hash(), domains: readContentDomains(reader),
+    acceptedPages: reader.u32(), pageCount: reader.u32(), acceptedEntries: reader.u32(), installedEntries: reader.u32(), installedBytes: reader.u64(),
+  });
+  reader.finish();
+  if (result.pageCount < 1 || result.acceptedPages > result.pageCount
+    || (result.status === "installed" && (result.acceptedPages !== result.pageCount || result.installedEntries !== result.acceptedEntries))) {
+    throw new Error("content install receipt counters are inconsistent");
+  }
+  return result;
+}
+
+export function createRustContentInstallPlanV1(bundle: RustProductionContentBundle): RustContentInstallPlanV1 {
+  if (!bundle.manifest || bundle.blockers.length || !bundle.artifacts.length) throw new RustContentCompilationError(rustContentAuditReport(bundle, bundle.manifest?.sourceRevision ?? "invalid"));
+  const installId = `install:${bundle.manifest.manifestHash}`;
+  const template = {
+    installId, manifestSchema: bundle.manifest.schemaVersion, sourceRevision: bundle.manifest.sourceRevision,
+    manifestHash: bundle.manifest.manifestHash, domains: bundle.manifest.domains,
+  } as const;
+  const fixedBodyBytes = contentPageBody({ ...template, pageIndex: 0, pageCount: 1, artifacts: [] }).byteLength;
+  const groups: RustContentArtifact[][] = [];
+  let current: RustContentArtifact[] = []; let currentBytes = fixedBodyBytes;
+  for (const artifact of bundle.artifacts) {
+    const writer = new ContentWireWriter(); writeContentArtifact(writer, artifact); const bytes = writer.finish().byteLength;
+    if (bytes + fixedBodyBytes + CONTENT_DOMAIN_HEADER_BYTES > RUST_CONTENT_INSTALL_PAGE_BUDGET_V1) throw new Error(`content artifact ${artifact.domain}:${artifact.id} exceeds the coarse page budget`);
+    if (current.length && (current.length >= RUST_CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1
+      || currentBytes + bytes + CONTENT_DOMAIN_HEADER_BYTES > RUST_CONTENT_INSTALL_PAGE_BUDGET_V1)) {
+      groups.push(current); current = []; currentBytes = fixedBodyBytes;
+    }
+    current.push(artifact); currentBytes += bytes;
+  }
+  if (current.length) groups.push(current);
+  if (!groups.length || groups.length > RUST_CONTENT_INSTALL_MAX_PAGES_V1) throw new Error("content bundle requires too many coarse pages");
+  const pages = groups.map((artifacts, pageIndex) => {
+    const page = Object.freeze({ ...template, pageIndex, pageCount: groups.length, artifacts: Object.freeze(artifacts) });
+    const payload = encodeRustContentInstallPageV1(page);
+    if (payload.byteLength > RUST_CONTENT_INSTALL_PAGE_BUDGET_V1) throw new Error("content page exceeds its declared budget");
+    return Object.freeze({ page, payload });
+  });
+  return Object.freeze({ installId, manifestHash: bundle.manifest.manifestHash, pages: Object.freeze(pages) });
 }

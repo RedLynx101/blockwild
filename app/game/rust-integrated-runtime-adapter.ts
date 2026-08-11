@@ -11,6 +11,7 @@ import {
   RustIntegratedRuntimeWorkerTransportV1,
   type RustIntegratedRuntimeWorkerPortV1,
 } from "./rust-integrated-runtime-worker";
+import type { RustProductionContentBundle } from "./rust-integrated-runtime-content";
 
 export type RustIntegratedRuntimeBrowserAdapterOptionsV1 = Readonly<{
   artifactHash: string;
@@ -49,6 +50,7 @@ export class RustIntegratedRuntimeBrowserAdapterV1 {
   }
 
   start(config: RustIntegratedRuntimeConfigV1) { return this.service.start(config); }
+  installContent(bundle: RustProductionContentBundle) { return this.service.installContent(bundle); }
   command(batch: RustIntegratedRuntimeCommandBatchV1) { return this.service.command(batch); }
   step(monotonicTimeUs: number, budgetUs: number, inputs: readonly RustIntegratedRuntimeInputFrameV1[]) {
     return this.service.step(monotonicTimeUs, budgetUs, inputs);

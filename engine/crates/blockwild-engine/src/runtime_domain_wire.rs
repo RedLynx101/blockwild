@@ -7,16 +7,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use blockwild_entity::{
-    DespawnReason, EntityClass, EntityCommand, EntityCommandBatch, EntityCompatibilityRecord, EntityEventBatch,
-    EntityEventKind, EntityResidency, ProtectionState, SimulationTier, Vec3 as EntityVec3,
+    DespawnReason, DormantEntitySummary, EntityAuthority, EntityClass, EntityCommand, EntityCommandBatch,
+    EntityCompatibilityRecord, EntityComponents, EntityEventBatch, EntityEventKind, EntityResidency, ProtectionState,
+    SimulationTier, Vec3 as EntityVec3, decode_compatibility_record, decode_entity_authority_snapshot,
+    encode_compatibility_record, encode_entity_authority_snapshot,
 };
 use blockwild_gameplay::{
-    AcceptedReceipt, ActivityLease, ActorGrant, ActorRole, AuthorityIdentity, BattleAction, CardforgeCommand,
-    CombatCommand, ContainerKey, ContainerKind, CraftCommand, Domain, ExpectedStack, FixedVec3, FurnaceAdvanceCommand,
-    GameplayActor, GameplayBatch, GameplayCommand, GameplayEvent, GameplayReceipt, GameplayRevision, Ingredient,
-    InventoryCommand, MachineCommand, MachineOperation, OpaquePayload, PacifyMethod, PrintingKey, ProgressionAction,
-    ProgressionCommand, Rejection, RejectionCode, ResourceDelta, ResourceEndpoint, ResourceKey, ResourceKind, Scope,
-    SlotRef, StatDelta, TransferCommand, WorldKey,
+    ALL_CONTENT_DOMAINS, AcceptedReceipt, ActivityLease, ActorGrant, ActorRole, AuthorityIdentity, BattleAction,
+    CardforgeCommand, CombatCommand, ContainerKey, ContainerKind, ContentArtifact, ContentDomain, ContentDomainDigest,
+    CraftCommand, Domain, ExpectedStack, FixedVec3, FurnaceAdvanceCommand, GameplayActor, GameplayBatch,
+    GameplayCommand, GameplayEvent, GameplayReceipt, GameplayRevision, Ingredient, InventoryCommand, MachineCommand,
+    MachineOperation, OpaquePayload, PacifyMethod, PrintingKey, ProgressionAction, ProgressionCommand, Rejection,
+    RejectionCode, ResourceDelta, ResourceEndpoint, ResourceKey, ResourceKind, Scope, SlotRef, StatDelta,
+    TransferCommand, WorldKey,
 };
 use blockwild_network::{
     AgentCapabilityGrantV1, AgentCapabilityV1, AgentLifecycleStatusV1, InterestDeltaBuildSourceV1,
@@ -48,6 +51,92 @@ const NETWORK_COMMAND_RELEASE_MAGIC: [u8; 4] = *b"BWM9";
 const PLAYER_BINDING_MAGIC: [u8; 4] = *b"BWB5";
 const PERSISTENCE_DISPATCH_MAGIC: [u8; 4] = *b"BWD8";
 const PERSISTENCE_DISPATCH_RECEIPT_MAGIC: [u8; 4] = *b"BWA8";
+const CONTENT_INSTALL_PAGE_MAGIC: [u8; 4] = *b"BWC7";
+const CONTENT_INSTALL_RECEIPT_MAGIC: [u8; 4] = *b"BWT7";
+const ENTITY_AUTHORITY_EXPORT_MAGIC: [u8; 4] = *b"BWQ6";
+const ENTITY_AUTHORITY_IMPORT_MAGIC: [u8; 4] = *b"BWI6";
+const ENTITY_AUTHORITY_IMPORT_RECEIPT_MAGIC: [u8; 4] = *b"BWU6";
+const ENTITY_COMPATIBILITY_EXPORT_MAGIC: [u8; 4] = *b"BWQ5";
+const ENTITY_COMPATIBILITY_IMPORT_MAGIC: [u8; 4] = *b"BWI5";
+
+pub const CONTENT_INSTALL_PAGE_TYPE_V1: &str = "blockwild.gameplay.content-install-page.v1";
+pub const CONTENT_INSTALL_RECEIPT_TYPE_V1: &str = "blockwild.gameplay.content-install-receipt.v1";
+pub const CONTENT_INSTALL_MAX_PAGES_V1: usize = 128;
+pub const CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1: usize = 1_024;
+pub const ENTITY_AUTHORITY_EXPORT_TYPE_V1: &str = "blockwild.entities.authority-export.r6.v1";
+pub const ENTITY_AUTHORITY_SNAPSHOT_TYPE_V2: &str = "blockwild.entities.authority-snapshot.r6.v2";
+pub const ENTITY_AUTHORITY_IMPORT_TYPE_V2: &str = "blockwild.entities.authority-import.r6.v2";
+pub const ENTITY_AUTHORITY_IMPORT_RECEIPT_TYPE_V1: &str = "blockwild.entities.authority-import-receipt.r6.v1";
+pub const ENTITY_COMPATIBILITY_EXPORT_TYPE_V1: &str = "blockwild.entities.compatibility-export.r6.v1";
+pub const ENTITY_COMPATIBILITY_RECORD_TYPE_V1: &str = "blockwild.entities.compatibility-record.r6.v1";
+pub const ENTITY_COMPATIBILITY_IMPORT_TYPE_V1: &str = "blockwild.entities.compatibility-import.r6.v1";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EntityAuthorityExportWireV1 {
+    pub expected_revision: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntityAuthorityImportWireV2 {
+    pub expected_revision: u64,
+    pub snapshot: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EntityAuthorityImportReceiptWireV1 {
+    pub previous_revision: u64,
+    pub revision: u64,
+    pub entity_count: u32,
+    pub state_hash: CanonicalHash,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EntityCompatibilityExportWireV1 {
+    pub entity_id: EntityId,
+    pub expected_entity_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntityCompatibilityImportWireV1 {
+    pub sequence: u64,
+    pub expected_revision: u64,
+    pub tick: u64,
+    pub desired_id: Option<EntityId>,
+    pub residency: EntityResidency,
+    pub record: EntityCompatibilityRecord,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentInstallPageWireV1 {
+    pub install_id: String,
+    pub manifest_schema: u16,
+    pub source_revision: String,
+    pub manifest_hash: CanonicalHash,
+    pub domains: BTreeMap<ContentDomain, ContentDomainDigest>,
+    pub page_index: u32,
+    pub page_count: u32,
+    pub artifacts: Vec<ContentArtifact>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContentInstallReceiptStatusV1 {
+    Staged,
+    Installed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentInstallReceiptWireV1 {
+    pub status: ContentInstallReceiptStatusV1,
+    pub install_id: String,
+    pub source_revision: String,
+    pub manifest_hash: CanonicalHash,
+    pub domains: BTreeMap<ContentDomain, ContentDomainDigest>,
+    pub accepted_pages: u32,
+    pub page_count: u32,
+    pub accepted_entries: u32,
+    pub installed_entries: u32,
+    pub installed_bytes: u64,
+}
 
 /// Bounded control-plane requests that ask the Rust persistence dispatcher to
 /// issue one complete BWPR. Large BWPR/BWPA packets themselves leave through
@@ -2098,7 +2187,139 @@ fn read_rejection_code(reader: &mut Reader<'_>) -> Result<RejectionCode, WireErr
     }
 }
 
+pub fn encode_entity_authority_export_v1(value: EntityAuthorityExportWireV1) -> Result<Vec<u8>, WireError> {
+    let mut writer = Writer::default();
+    writer.u64(value.expected_revision);
+    wrap(ENTITY_AUTHORITY_EXPORT_MAGIC, writer.finish())
+}
+
+pub fn decode_entity_authority_export_v1(bytes: &[u8]) -> Result<EntityAuthorityExportWireV1, WireError> {
+    let mut reader = Reader::new(unwrap(ENTITY_AUTHORITY_EXPORT_MAGIC, bytes)?);
+    let value = EntityAuthorityExportWireV1 {
+        expected_revision: reader.u64()?,
+    };
+    reader.finish()?;
+    Ok(value)
+}
+
+pub fn encode_entity_authority_import_v2(value: &EntityAuthorityImportWireV2) -> Result<Vec<u8>, WireError> {
+    decode_entity_authority_snapshot(&value.snapshot)
+        .map_err(|error| WireError::new("entity-authority-snapshot", error.to_string()))?;
+    let mut writer = Writer::default();
+    writer.u64(value.expected_revision);
+    writer.bytes(
+        &value.snapshot,
+        blockwild_entity::MAX_ENTITY_AUTHORITY_SNAPSHOT_BYTES,
+        "entity authority snapshot",
+    )?;
+    wrap(ENTITY_AUTHORITY_IMPORT_MAGIC, writer.finish())
+}
+
+pub fn decode_entity_authority_import_v2(bytes: &[u8]) -> Result<EntityAuthorityImportWireV2, WireError> {
+    let mut reader = Reader::new(unwrap(ENTITY_AUTHORITY_IMPORT_MAGIC, bytes)?);
+    let value = EntityAuthorityImportWireV2 {
+        expected_revision: reader.u64()?,
+        snapshot: reader.bytes(
+            blockwild_entity::MAX_ENTITY_AUTHORITY_SNAPSHOT_BYTES,
+            "entity authority snapshot",
+        )?,
+    };
+    reader.finish()?;
+    decode_entity_authority_snapshot(&value.snapshot)
+        .map_err(|error| WireError::new("entity-authority-snapshot", error.to_string()))?;
+    Ok(value)
+}
+
+pub fn encode_entity_authority_import_receipt_v1(
+    value: EntityAuthorityImportReceiptWireV1,
+) -> Result<Vec<u8>, WireError> {
+    let mut writer = Writer::default();
+    writer.u64(value.previous_revision);
+    writer.u64(value.revision);
+    writer.u32(value.entity_count);
+    writer.hash(value.state_hash);
+    wrap(ENTITY_AUTHORITY_IMPORT_RECEIPT_MAGIC, writer.finish())
+}
+
+pub fn decode_entity_authority_import_receipt_v1(
+    bytes: &[u8],
+) -> Result<EntityAuthorityImportReceiptWireV1, WireError> {
+    let mut reader = Reader::new(unwrap(ENTITY_AUTHORITY_IMPORT_RECEIPT_MAGIC, bytes)?);
+    let value = EntityAuthorityImportReceiptWireV1 {
+        previous_revision: reader.u64()?,
+        revision: reader.u64()?,
+        entity_count: reader.u32()?,
+        state_hash: reader.hash()?,
+    };
+    reader.finish()?;
+    Ok(value)
+}
+
+pub fn encode_entity_compatibility_export_v1(value: EntityCompatibilityExportWireV1) -> Result<Vec<u8>, WireError> {
+    let mut writer = Writer::default();
+    writer.u64(value.entity_id.packed());
+    writer.u64(value.expected_entity_revision);
+    wrap(ENTITY_COMPATIBILITY_EXPORT_MAGIC, writer.finish())
+}
+
+pub fn decode_entity_compatibility_export_v1(bytes: &[u8]) -> Result<EntityCompatibilityExportWireV1, WireError> {
+    let mut reader = Reader::new(unwrap(ENTITY_COMPATIBILITY_EXPORT_MAGIC, bytes)?);
+    let value = EntityCompatibilityExportWireV1 {
+        entity_id: unpack_entity_id(reader.u64()?)?,
+        expected_entity_revision: reader.u64()?,
+    };
+    reader.finish()?;
+    Ok(value)
+}
+
+pub fn encode_entity_compatibility_import_v1(value: &EntityCompatibilityImportWireV1) -> Result<Vec<u8>, WireError> {
+    let record = encode_compatibility_record(&value.record)
+        .map_err(|error| WireError::new("entity-compatibility", error.to_string()))?;
+    let mut writer = Writer::default();
+    writer.u64(value.sequence);
+    writer.u64(value.expected_revision);
+    writer.u64(value.tick);
+    writer.option_entity_id(value.desired_id);
+    writer.u8(value.residency as u8);
+    writer.bytes(
+        &record,
+        blockwild_entity::MAX_ENTITY_AUTHORITY_SNAPSHOT_BYTES,
+        "entity compatibility record",
+    )?;
+    wrap(ENTITY_COMPATIBILITY_IMPORT_MAGIC, writer.finish())
+}
+
+pub fn decode_entity_compatibility_import_v1(bytes: &[u8]) -> Result<EntityCompatibilityImportWireV1, WireError> {
+    let mut reader = Reader::new(unwrap(ENTITY_COMPATIBILITY_IMPORT_MAGIC, bytes)?);
+    let sequence = reader.u64()?;
+    let expected_revision = reader.u64()?;
+    let tick = reader.u64()?;
+    let desired_id = reader.option_entity_id()?;
+    let residency = read_residency(&mut reader)?;
+    let record_bytes = reader.bytes(
+        blockwild_entity::MAX_ENTITY_AUTHORITY_SNAPSHOT_BYTES,
+        "entity compatibility record",
+    )?;
+    reader.finish()?;
+    let record = decode_compatibility_record(&record_bytes)
+        .map_err(|error| WireError::new("entity-compatibility", error.to_string()))?;
+    Ok(EntityCompatibilityImportWireV1 {
+        sequence,
+        expected_revision,
+        tick,
+        desired_id,
+        residency,
+        record,
+    })
+}
+
 pub fn encode_entity_command_batch_v1(value: &EntityCommandBatch) -> Result<Vec<u8>, WireError> {
+    if value.schema != blockwild_entity::ENTITY_COMMAND_SCHEMA {
+        return Err(WireError::new(
+            "entity-command-schema",
+            "entity command batch uses an unsupported schema",
+        ));
+    }
     let mut writer = Writer::default();
     writer.u64(value.sequence);
     writer.u64(value.expected_revision);
@@ -2131,6 +2352,12 @@ pub fn decode_entity_command_batch_v1(bytes: &[u8]) -> Result<EntityCommandBatch
 }
 
 pub fn encode_entity_event_batch_v1(value: &EntityEventBatch) -> Result<Vec<u8>, WireError> {
+    if value.schema != blockwild_entity::ENTITY_COMMAND_SCHEMA {
+        return Err(WireError::new(
+            "entity-event-schema",
+            "entity event batch uses an unsupported schema",
+        ));
+    }
     let mut writer = Writer::default();
     writer.u64(value.sequence);
     writer.u64(value.previous_revision);
@@ -2139,6 +2366,8 @@ pub fn encode_entity_event_batch_v1(value: &EntityEventBatch) -> Result<Vec<u8>,
     for event in &value.events {
         writer.u32(event.command_index);
         writer.u64(event.entity_id.packed());
+        writer.u64(event.previous_entity_revision);
+        writer.u64(event.entity_revision);
         match event.kind {
             EntityEventKind::Spawned { residency } => {
                 writer.u8(0);
@@ -2158,6 +2387,24 @@ pub fn encode_entity_event_batch_v1(value: &EntityEventBatch) -> Result<Vec<u8>,
                 writer.u8(tier as u8);
             }
             EntityEventKind::ProtectionChanged => writer.u8(5),
+            EntityEventKind::VitalsEnvironmentChanged => writer.u8(6),
+            EntityEventKind::LocomotionChanged => writer.u8(7),
+            EntityEventKind::AiChanged => writer.u8(8),
+            EntityEventKind::SocialChanged => writer.u8(9),
+            EntityEventKind::MountChanged => writer.u8(10),
+            EntityEventKind::NetworkAuthorityChanged => writer.u8(11),
+            EntityEventKind::CareChanged => writer.u8(12),
+            EntityEventKind::HusbandryChanged => writer.u8(13),
+            EntityEventKind::WorkChanged => writer.u8(14),
+            EntityEventKind::EquipmentChanged => writer.u8(15),
+            EntityEventKind::DragonChanged => writer.u8(16),
+            EntityEventKind::LegendaryChanged => writer.u8(17),
+            EntityEventKind::SummonChanged => writer.u8(18),
+            EntityEventKind::SentientChanged => writer.u8(19),
+            EntityEventKind::ComponentsReplaced => writer.u8(20),
+            EntityEventKind::CompatibilityRecordChanged => writer.u8(21),
+            EntityEventKind::RangeStateChanged => writer.u8(22),
+            EntityEventKind::DormantSummaryChanged => writer.u8(23),
         }
     }
     wrap(ENTITY_RECEIPT_MAGIC, writer.finish())
@@ -2173,6 +2420,8 @@ pub fn decode_entity_event_batch_v1(bytes: &[u8]) -> Result<EntityEventBatch, Wi
     for _ in 0..count {
         let command_index = reader.u32()?;
         let entity_id = unpack_entity_id(reader.u64()?)?;
+        let previous_entity_revision = reader.u64()?;
+        let entity_revision = reader.u64()?;
         let kind = match reader.u8()? {
             0 => EntityEventKind::Spawned {
                 residency: read_residency(&mut reader)?,
@@ -2184,11 +2433,31 @@ pub fn decode_entity_event_batch_v1(bytes: &[u8]) -> Result<EntityEventBatch, Wi
             3 => EntityEventKind::MotionUpdated,
             4 => EntityEventKind::TierChanged(read_tier(&mut reader)?),
             5 => EntityEventKind::ProtectionChanged,
+            6 => EntityEventKind::VitalsEnvironmentChanged,
+            7 => EntityEventKind::LocomotionChanged,
+            8 => EntityEventKind::AiChanged,
+            9 => EntityEventKind::SocialChanged,
+            10 => EntityEventKind::MountChanged,
+            11 => EntityEventKind::NetworkAuthorityChanged,
+            12 => EntityEventKind::CareChanged,
+            13 => EntityEventKind::HusbandryChanged,
+            14 => EntityEventKind::WorkChanged,
+            15 => EntityEventKind::EquipmentChanged,
+            16 => EntityEventKind::DragonChanged,
+            17 => EntityEventKind::LegendaryChanged,
+            18 => EntityEventKind::SummonChanged,
+            19 => EntityEventKind::SentientChanged,
+            20 => EntityEventKind::ComponentsReplaced,
+            21 => EntityEventKind::CompatibilityRecordChanged,
+            22 => EntityEventKind::RangeStateChanged,
+            23 => EntityEventKind::DormantSummaryChanged,
             _ => return Err(WireError::new("entity-event", "unknown entity event tag")),
         };
         events.push(blockwild_entity::EntityEvent {
             command_index,
             entity_id,
+            previous_entity_revision,
+            entity_revision,
             kind,
         });
     }
@@ -2251,6 +2520,128 @@ fn write_entity_command(writer: &mut Writer, command: &EntityCommand) -> Result<
             writer.u64(id.packed());
             writer.u64(protection.bits());
         }
+        EntityCommand::SpawnTyped {
+            record,
+            components,
+            residency,
+        } => {
+            writer.u8(8);
+            write_entity_record(writer, record)?;
+            write_entity_components(writer, components)?;
+            writer.u8(*residency as u8);
+        }
+        EntityCommand::SpawnTypedAt {
+            id,
+            record,
+            components,
+            residency,
+        } => {
+            writer.u8(9);
+            writer.u64(id.packed());
+            write_entity_record(writer, record)?;
+            write_entity_components(writer, components)?;
+            writer.u8(*residency as u8);
+        }
+        EntityCommand::SetVitalsEnvironment { id, value } => {
+            writer.u8(10);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.vitals = value.clone())?;
+        }
+        EntityCommand::SetLocomotionBody { id, value } => {
+            writer.u8(11);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.locomotion = value.clone())?;
+        }
+        EntityCommand::SetAiState { id, value } => {
+            writer.u8(12);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.ai = value.clone())?;
+        }
+        EntityCommand::SetSocialState { id, value } => {
+            writer.u8(13);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.social = value.clone())?;
+        }
+        EntityCommand::SetMountState { id, value } => {
+            writer.u8(14);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.mount = value.clone())?;
+        }
+        EntityCommand::SetProtectionProvenance { id, value } => {
+            writer.u8(15);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.protection = value.clone())?;
+        }
+        EntityCommand::SetNetworkAuthority { id, value } => {
+            writer.u8(16);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.network = value.clone())?;
+        }
+        EntityCommand::SetCareState { id, value } => {
+            writer.u8(17);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.care = value.clone())?;
+        }
+        EntityCommand::SetHusbandryState { id, value } => {
+            writer.u8(18);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.husbandry = value.clone())?;
+        }
+        EntityCommand::SetWorkState { id, value } => {
+            writer.u8(19);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.work = value.clone())?;
+        }
+        EntityCommand::SetEquipment { id, value } => {
+            writer.u8(20);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.equipment = value.clone())?;
+        }
+        EntityCommand::SetDragonState { id, value } => {
+            writer.u8(21);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.dragon = value.clone())?;
+        }
+        EntityCommand::SetLegendaryState { id, value } => {
+            writer.u8(22);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.legendary = value.clone())?;
+        }
+        EntityCommand::SetSummonState { id, value } => {
+            writer.u8(23);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.summon = value.clone())?;
+        }
+        EntityCommand::SetSentientState { id, value } => {
+            writer.u8(24);
+            writer.u64(id.packed());
+            write_component_projection(writer, |components| components.sentient = value.clone())?;
+        }
+        EntityCommand::ReplaceComponents { id, value } => {
+            writer.u8(25);
+            writer.u64(id.packed());
+            write_entity_components(writer, value)?;
+        }
+        EntityCommand::ReplaceCompatibilityRecord { id, value } => {
+            writer.u8(26);
+            writer.u64(id.packed());
+            write_entity_record(writer, value)?;
+        }
+        EntityCommand::SetRangeState {
+            id,
+            out_of_range_seconds,
+            last_simulated_tick,
+        } => {
+            writer.u8(27);
+            writer.u64(id.packed());
+            writer.f32(*out_of_range_seconds);
+            writer.u64(*last_simulated_tick);
+        }
+        EntityCommand::SetDormantSummary { id, value } => {
+            writer.u8(28);
+            writer.u64(id.packed());
+            write_dormant_summary_projection(writer, value)?;
+        }
     }
     Ok(())
 }
@@ -2291,8 +2682,211 @@ fn read_entity_command(reader: &mut Reader<'_>) -> Result<EntityCommand, WireErr
             id: unpack_entity_id(reader.u64()?)?,
             protection: ProtectionState::from_bits(reader.u64()?),
         }),
+        8 => Ok(EntityCommand::SpawnTyped {
+            record: read_entity_record(reader)?,
+            components: read_entity_components(reader)?,
+            residency: read_residency(reader)?,
+        }),
+        9 => Ok(EntityCommand::SpawnTypedAt {
+            id: unpack_entity_id(reader.u64()?)?,
+            record: read_entity_record(reader)?,
+            components: read_entity_components(reader)?,
+            residency: read_residency(reader)?,
+        }),
+        10 => Ok(EntityCommand::SetVitalsEnvironment {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.vitals,
+        }),
+        11 => Ok(EntityCommand::SetLocomotionBody {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.locomotion,
+        }),
+        12 => Ok(EntityCommand::SetAiState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.ai,
+        }),
+        13 => Ok(EntityCommand::SetSocialState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.social,
+        }),
+        14 => Ok(EntityCommand::SetMountState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.mount,
+        }),
+        15 => Ok(EntityCommand::SetProtectionProvenance {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.protection,
+        }),
+        16 => Ok(EntityCommand::SetNetworkAuthority {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.network,
+        }),
+        17 => Ok(EntityCommand::SetCareState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.care,
+        }),
+        18 => Ok(EntityCommand::SetHusbandryState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.husbandry,
+        }),
+        19 => Ok(EntityCommand::SetWorkState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.work,
+        }),
+        20 => Ok(EntityCommand::SetEquipment {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.equipment,
+        }),
+        21 => Ok(EntityCommand::SetDragonState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.dragon,
+        }),
+        22 => Ok(EntityCommand::SetLegendaryState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.legendary,
+        }),
+        23 => Ok(EntityCommand::SetSummonState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.summon,
+        }),
+        24 => Ok(EntityCommand::SetSentientState {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?.sentient,
+        }),
+        25 => Ok(EntityCommand::ReplaceComponents {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_components(reader)?,
+        }),
+        26 => Ok(EntityCommand::ReplaceCompatibilityRecord {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_entity_record(reader)?,
+        }),
+        27 => Ok(EntityCommand::SetRangeState {
+            id: unpack_entity_id(reader.u64()?)?,
+            out_of_range_seconds: reader.f32()?,
+            last_simulated_tick: reader.u64()?,
+        }),
+        28 => Ok(EntityCommand::SetDormantSummary {
+            id: unpack_entity_id(reader.u64()?)?,
+            value: read_dormant_summary_projection(reader)?,
+        }),
         _ => Err(WireError::new("entity-command", "unknown entity command tag")),
     }
+}
+
+fn write_entity_components(writer: &mut Writer, value: &EntityComponents) -> Result<(), WireError> {
+    value
+        .validate()
+        .map_err(|error| WireError::new("entity-components", error))?;
+    // The BWEA projection validates the compatibility mirrors as well as the
+    // typed component payload. Build a lossless shell from the component values
+    // instead of relying on defaults, otherwise valid non-default vitals,
+    // motion, social, or equipment state could not cross this wire.
+    let mut record = EntityCompatibilityRecord::new("wire-components", "wire-components", "wire-components");
+    record.health = value.vitals.health;
+    record.maximum_health = value.vitals.maximum_health;
+    record.velocity = value.locomotion.velocity;
+    record.social_group_id = value.social.group_id.clone();
+    record.equipment = value
+        .equipment
+        .iter()
+        .map(|(slot, item)| (slot.clone(), item.item_key.clone()))
+        .collect();
+    let mut authority = EntityAuthority::default();
+    authority
+        .apply_batch(&EntityCommandBatch {
+            schema: blockwild_entity::ENTITY_COMMAND_SCHEMA,
+            sequence: 1,
+            expected_revision: 0,
+            tick: 0,
+            commands: vec![EntityCommand::SpawnTypedAt {
+                id: EntityId::new(1, 1),
+                record,
+                components: value.clone(),
+                residency: EntityResidency::Hot,
+            }],
+        })
+        .map_err(|error| WireError::new("entity-components", error.to_string()))?;
+    let snapshot = encode_entity_authority_snapshot(&authority)
+        .map_err(|error| WireError::new("entity-components", error.to_string()))?;
+    writer.bytes(&snapshot, MAX_DOMAIN_PAYLOAD_BYTES, "entity component snapshot")
+}
+
+fn read_entity_components(reader: &mut Reader<'_>) -> Result<EntityComponents, WireError> {
+    let snapshot = reader.bytes(MAX_DOMAIN_PAYLOAD_BYTES, "entity component snapshot")?;
+    let authority = decode_entity_authority_snapshot(&snapshot)
+        .map_err(|error| WireError::new("entity-components", error.to_string()))?;
+    if authority.len() != 1 || !authority.cold().is_empty() {
+        return Err(WireError::new(
+            "entity-components",
+            "entity component projection must contain exactly one hot entity",
+        ));
+    }
+    authority
+        .hot()
+        .values()
+        .next()
+        .map(|entity| entity.components.clone())
+        .ok_or_else(|| WireError::new("entity-components", "entity component projection is empty"))
+}
+
+fn write_component_projection(
+    writer: &mut Writer,
+    update: impl FnOnce(&mut EntityComponents),
+) -> Result<(), WireError> {
+    let record = EntityCompatibilityRecord::new("wire-components", "wire-components", "wire-components");
+    let mut components = EntityComponents::from_compatibility(&record, ProtectionState::default());
+    update(&mut components);
+    write_entity_components(writer, &components)
+}
+
+fn write_dormant_summary_projection(writer: &mut Writer, value: &DormantEntitySummary) -> Result<(), WireError> {
+    let record = EntityCompatibilityRecord::new("wire-dormant", "wire-dormant", "wire-dormant");
+    let mut components = EntityComponents::from_compatibility(&record, ProtectionState::default());
+    components.ai.route_epoch = value.route_epoch;
+    let id = EntityId::new(1, 1);
+    let mut authority = EntityAuthority::default();
+    authority
+        .apply_batch(&EntityCommandBatch {
+            schema: blockwild_entity::ENTITY_COMMAND_SCHEMA,
+            sequence: 1,
+            expected_revision: 0,
+            tick: value.slept_at_tick,
+            commands: vec![
+                EntityCommand::SpawnTypedAt {
+                    id,
+                    record,
+                    components,
+                    residency: EntityResidency::Cold,
+                },
+                EntityCommand::SetDormantSummary {
+                    id,
+                    value: value.clone(),
+                },
+            ],
+        })
+        .map_err(|error| WireError::new("entity-dormant-summary", error.to_string()))?;
+    let snapshot = encode_entity_authority_snapshot(&authority)
+        .map_err(|error| WireError::new("entity-dormant-summary", error.to_string()))?;
+    writer.bytes(&snapshot, MAX_DOMAIN_PAYLOAD_BYTES, "entity dormant summary snapshot")
+}
+
+fn read_dormant_summary_projection(reader: &mut Reader<'_>) -> Result<DormantEntitySummary, WireError> {
+    let snapshot = reader.bytes(MAX_DOMAIN_PAYLOAD_BYTES, "entity dormant summary snapshot")?;
+    let authority = decode_entity_authority_snapshot(&snapshot)
+        .map_err(|error| WireError::new("entity-dormant-summary", error.to_string()))?;
+    if authority.len() != 1 || !authority.hot().is_empty() {
+        return Err(WireError::new(
+            "entity-dormant-summary",
+            "entity dormant summary projection must contain exactly one cold entity",
+        ));
+    }
+    authority
+        .cold()
+        .values()
+        .next()
+        .map(|entity| entity.summary.clone())
+        .ok_or_else(|| WireError::new("entity-dormant-summary", "entity dormant summary projection is empty"))
 }
 
 fn write_entity_record(writer: &mut Writer, value: &EntityCompatibilityRecord) -> Result<(), WireError> {
@@ -2784,6 +3378,260 @@ fn entity_id_from_packed(value: u64) -> EntityId {
     EntityId::new(value as u32, (value >> 32) as u32)
 }
 
+pub fn encode_content_install_page_v1(value: &ContentInstallPageWireV1) -> Result<Vec<u8>, WireError> {
+    validate_content_page_shape(value)?;
+    let mut writer = Writer::default();
+    writer.string(&value.install_id)?;
+    writer.u16(value.manifest_schema);
+    writer.string(&value.source_revision)?;
+    writer.hash(value.manifest_hash);
+    write_content_domains(&mut writer, &value.domains)?;
+    writer.u32(value.page_index);
+    writer.u32(value.page_count);
+    writer.count(
+        value.artifacts.len(),
+        CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1,
+        "content artifact count",
+    )?;
+    for artifact in &value.artifacts {
+        writer.u8(content_domain_tag(artifact.domain));
+        writer.string(&artifact.id)?;
+        writer.string(&artifact.schema_id)?;
+        writer.u16(artifact.schema_version);
+        writer.u32(artifact.content_version);
+        writer.count(
+            artifact.aliases.len(),
+            blockwild_gameplay::MAX_METADATA_ALIASES,
+            "content alias count",
+        )?;
+        for alias in &artifact.aliases {
+            writer.string(alias)?;
+        }
+        writer.bytes(
+            &artifact.canonical_bytes,
+            blockwild_gameplay::MAX_METADATA_BLOB_BYTES,
+            "content canonical bytes",
+        )?;
+        writer.bytes(
+            &artifact.unknown_extension_bytes,
+            blockwild_gameplay::MAX_METADATA_EXTENSION_BYTES,
+            "content extension bytes",
+        )?;
+    }
+    wrap(CONTENT_INSTALL_PAGE_MAGIC, writer.finish())
+}
+
+pub fn decode_content_install_page_v1(bytes: &[u8]) -> Result<ContentInstallPageWireV1, WireError> {
+    let mut reader = Reader::new(unwrap(CONTENT_INSTALL_PAGE_MAGIC, bytes)?);
+    let install_id = reader.string()?;
+    let manifest_schema = reader.u16()?;
+    let source_revision = reader.string()?;
+    let manifest_hash = reader.hash()?;
+    let domains = read_content_domains(&mut reader)?;
+    let page_index = reader.u32()?;
+    let page_count = reader.u32()?;
+    let count = reader.count(CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1, "content artifact count")?;
+    let mut artifacts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let domain = read_content_domain(reader.u8()?)?;
+        let id = reader.string()?;
+        let schema_id = reader.string()?;
+        let schema_version = reader.u16()?;
+        let content_version = reader.u32()?;
+        let alias_count = reader.count(blockwild_gameplay::MAX_METADATA_ALIASES, "content alias count")?;
+        let mut aliases = Vec::with_capacity(alias_count);
+        for _ in 0..alias_count {
+            aliases.push(reader.string()?);
+        }
+        artifacts.push(ContentArtifact {
+            domain,
+            id,
+            schema_id,
+            schema_version,
+            content_version,
+            aliases,
+            canonical_bytes: reader.bytes(blockwild_gameplay::MAX_METADATA_BLOB_BYTES, "content canonical bytes")?,
+            unknown_extension_bytes: reader.bytes(
+                blockwild_gameplay::MAX_METADATA_EXTENSION_BYTES,
+                "content extension bytes",
+            )?,
+        });
+    }
+    reader.finish()?;
+    let value = ContentInstallPageWireV1 {
+        install_id,
+        manifest_schema,
+        source_revision,
+        manifest_hash,
+        domains,
+        page_index,
+        page_count,
+        artifacts,
+    };
+    validate_content_page_shape(&value)?;
+    Ok(value)
+}
+
+pub fn encode_content_install_receipt_v1(value: &ContentInstallReceiptWireV1) -> Result<Vec<u8>, WireError> {
+    let mut writer = Writer::default();
+    writer.u8(match value.status {
+        ContentInstallReceiptStatusV1::Staged => 0,
+        ContentInstallReceiptStatusV1::Installed => 1,
+    });
+    writer.string(&value.install_id)?;
+    writer.string(&value.source_revision)?;
+    writer.hash(value.manifest_hash);
+    write_content_domains(&mut writer, &value.domains)?;
+    writer.u32(value.accepted_pages);
+    writer.u32(value.page_count);
+    writer.u32(value.accepted_entries);
+    writer.u32(value.installed_entries);
+    writer.u64(value.installed_bytes);
+    wrap(CONTENT_INSTALL_RECEIPT_MAGIC, writer.finish())
+}
+
+pub fn decode_content_install_receipt_v1(bytes: &[u8]) -> Result<ContentInstallReceiptWireV1, WireError> {
+    let mut reader = Reader::new(unwrap(CONTENT_INSTALL_RECEIPT_MAGIC, bytes)?);
+    let status = match reader.u8()? {
+        0 => ContentInstallReceiptStatusV1::Staged,
+        1 => ContentInstallReceiptStatusV1::Installed,
+        _ => {
+            return Err(WireError::new(
+                "content-status",
+                "unknown content install receipt status",
+            ));
+        }
+    };
+    let value = ContentInstallReceiptWireV1 {
+        status,
+        install_id: reader.string()?,
+        source_revision: reader.string()?,
+        manifest_hash: reader.hash()?,
+        domains: read_content_domains(&mut reader)?,
+        accepted_pages: reader.u32()?,
+        page_count: reader.u32()?,
+        accepted_entries: reader.u32()?,
+        installed_entries: reader.u32()?,
+        installed_bytes: reader.u64()?,
+    };
+    reader.finish()?;
+    if value.page_count == 0
+        || value.page_count as usize > CONTENT_INSTALL_MAX_PAGES_V1
+        || value.accepted_pages > value.page_count
+        || (value.status == ContentInstallReceiptStatusV1::Installed
+            && (value.accepted_pages != value.page_count || value.installed_entries != value.accepted_entries))
+    {
+        return Err(WireError::new(
+            "content-receipt",
+            "content install receipt counters are inconsistent",
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_content_page_shape(value: &ContentInstallPageWireV1) -> Result<(), WireError> {
+    if value.manifest_schema != blockwild_gameplay::CONTENT_MANIFEST_SCHEMA_VERSION {
+        return Err(WireError::new(
+            "content-schema",
+            "content manifest schema is unsupported",
+        ));
+    }
+    if value.page_count == 0
+        || value.page_count as usize > CONTENT_INSTALL_MAX_PAGES_V1
+        || value.page_index >= value.page_count
+        || value.artifacts.is_empty()
+        || value.artifacts.len() > CONTENT_INSTALL_MAX_ARTIFACTS_PER_PAGE_V1
+    {
+        return Err(WireError::new(
+            "content-page",
+            "content install page is outside its bounds",
+        ));
+    }
+    if value.domains.len() != ALL_CONTENT_DOMAINS.len()
+        || ALL_CONTENT_DOMAINS
+            .iter()
+            .any(|domain| !value.domains.contains_key(domain))
+    {
+        return Err(WireError::new(
+            "content-domains",
+            "content install expectation is incomplete",
+        ));
+    }
+    Ok(())
+}
+
+fn write_content_domains(
+    writer: &mut Writer,
+    values: &BTreeMap<ContentDomain, ContentDomainDigest>,
+) -> Result<(), WireError> {
+    if values.len() != ALL_CONTENT_DOMAINS.len() {
+        return Err(WireError::new(
+            "content-domains",
+            "content domain expectation is incomplete",
+        ));
+    }
+    writer.u16(ALL_CONTENT_DOMAINS.len() as u16);
+    for domain in ALL_CONTENT_DOMAINS {
+        let value = values
+            .get(&domain)
+            .ok_or_else(|| WireError::new("content-domains", "content domain expectation is incomplete"))?;
+        writer.u8(content_domain_tag(domain));
+        writer.u32(value.count);
+        writer.hash(value.hash);
+    }
+    Ok(())
+}
+
+fn read_content_domains(reader: &mut Reader<'_>) -> Result<BTreeMap<ContentDomain, ContentDomainDigest>, WireError> {
+    if reader.u16()? as usize != ALL_CONTENT_DOMAINS.len() {
+        return Err(WireError::new(
+            "content-domains",
+            "content domain expectation count is invalid",
+        ));
+    }
+    let mut values = BTreeMap::new();
+    for expected in ALL_CONTENT_DOMAINS {
+        let domain = read_content_domain(reader.u8()?)?;
+        if domain != expected || values.contains_key(&domain) {
+            return Err(WireError::new(
+                "content-domain-order",
+                "content domains are not in canonical order",
+            ));
+        }
+        values.insert(
+            domain,
+            ContentDomainDigest {
+                count: reader.u32()?,
+                hash: reader.hash()?,
+            },
+        );
+    }
+    Ok(values)
+}
+
+const fn content_domain_tag(value: ContentDomain) -> u8 {
+    match value {
+        ContentDomain::Item => 0,
+        ContentDomain::CraftingRecipe => 1,
+        ContentDomain::MachineRecipe => 2,
+        ContentDomain::MachineProfile => 3,
+        ContentDomain::AbilitySpell => 4,
+        ContentDomain::CreatureProfile => 5,
+        ContentDomain::CreatureTypeChart => 6,
+        ContentDomain::QuestGuild => 7,
+        ContentDomain::Economy => 8,
+        ContentDomain::CardforgeCard => 9,
+        ContentDomain::CardforgePack => 10,
+    }
+}
+
+fn read_content_domain(value: u8) -> Result<ContentDomain, WireError> {
+    ALL_CONTENT_DOMAINS
+        .get(value as usize)
+        .copied()
+        .ok_or_else(|| WireError::new("content-domain", "unknown content domain tag"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2816,6 +3664,277 @@ mod tests {
     }
 
     #[test]
+    fn every_r6_entity_command_and_event_round_trips_with_revisions() {
+        let id = EntityId::new(7, 3);
+        let mut record = EntityCompatibilityRecord::new("mob:\u{6c34}", "specimen:\u{03b4}", "wyrm");
+        record.location_id = LocationId::new(2, 1);
+        record.custom.insert("opaque".into(), "\u{00ff}\u{6c34}".into());
+        let mut components = EntityComponents::from_compatibility(&record, ProtectionState::from_bits(0x12));
+        components
+            .unknown_extensions
+            .insert("future:\u{96ea}".into(), vec![0, 0x80, 0xff]);
+        components.care = Some(blockwild_entity::CareState {
+            stabilized: true,
+            nourishment_milli: 9_000,
+            trust_milli: 3_000,
+            care_stage: 2,
+            last_care_tick: 44,
+        });
+        components.dragon = Some(blockwild_entity::DragonState {
+            lineage_key: "golden".into(),
+            element_key: "sun".into(),
+            life_stage: 3,
+            flight_stamina_milli: 8_000,
+            breath_charge_milli: 7_000,
+            egg_or_hatchling: false,
+        });
+        let dormant = DormantEntitySummary {
+            slept_at_tick: 10,
+            last_advanced_tick: 20,
+            care_cycles: 1,
+            breeding_cycles: 2,
+            work_cycles: 3,
+            next_care_tick: 30,
+            next_breeding_tick: 40,
+            next_work_tick: 50,
+            next_ecology_tick: 60,
+            route_epoch: components.ai.route_epoch,
+            population_cost_quarters: 4,
+        };
+        let commands = vec![
+            EntityCommand::Spawn {
+                record: record.clone(),
+                residency: EntityResidency::Hot,
+            },
+            EntityCommand::SpawnAt {
+                id,
+                record: record.clone(),
+                residency: EntityResidency::Cold,
+            },
+            EntityCommand::Despawn {
+                id,
+                reason: DespawnReason::Captured,
+            },
+            EntityCommand::Hibernate { id },
+            EntityCommand::Wake {
+                id,
+                tier: SimulationTier::Hero,
+            },
+            EntityCommand::UpdateMotion {
+                id,
+                position: EntityVec3::new(1.0, 2.0, 3.0),
+                yaw: 0.5,
+                velocity: EntityVec3::new(4.0, 5.0, 6.0),
+            },
+            EntityCommand::SetSimulationTier {
+                id,
+                tier: SimulationTier::Coarse,
+            },
+            EntityCommand::SetProtection {
+                id,
+                protection: ProtectionState::from_bits(0x55),
+            },
+            EntityCommand::SpawnTyped {
+                record: record.clone(),
+                components: components.clone(),
+                residency: EntityResidency::Hot,
+            },
+            EntityCommand::SpawnTypedAt {
+                id,
+                record: record.clone(),
+                components: components.clone(),
+                residency: EntityResidency::Cold,
+            },
+            EntityCommand::SetVitalsEnvironment {
+                id,
+                value: components.vitals.clone(),
+            },
+            EntityCommand::SetLocomotionBody {
+                id,
+                value: components.locomotion.clone(),
+            },
+            EntityCommand::SetAiState {
+                id,
+                value: components.ai.clone(),
+            },
+            EntityCommand::SetSocialState {
+                id,
+                value: components.social.clone(),
+            },
+            EntityCommand::SetMountState {
+                id,
+                value: components.mount.clone(),
+            },
+            EntityCommand::SetProtectionProvenance {
+                id,
+                value: components.protection.clone(),
+            },
+            EntityCommand::SetNetworkAuthority {
+                id,
+                value: components.network.clone(),
+            },
+            EntityCommand::SetCareState {
+                id,
+                value: components.care.clone(),
+            },
+            EntityCommand::SetHusbandryState {
+                id,
+                value: components.husbandry.clone(),
+            },
+            EntityCommand::SetWorkState {
+                id,
+                value: components.work.clone(),
+            },
+            EntityCommand::SetEquipment {
+                id,
+                value: components.equipment.clone(),
+            },
+            EntityCommand::SetDragonState {
+                id,
+                value: components.dragon.clone(),
+            },
+            EntityCommand::SetLegendaryState {
+                id,
+                value: components.legendary.clone(),
+            },
+            EntityCommand::SetSummonState {
+                id,
+                value: components.summon.clone(),
+            },
+            EntityCommand::SetSentientState {
+                id,
+                value: components.sentient.clone(),
+            },
+            EntityCommand::ReplaceComponents { id, value: components },
+            EntityCommand::ReplaceCompatibilityRecord { id, value: record },
+            EntityCommand::SetRangeState {
+                id,
+                out_of_range_seconds: 12.5,
+                last_simulated_tick: 99,
+            },
+            EntityCommand::SetDormantSummary { id, value: dormant },
+        ];
+        let batch = EntityCommandBatch {
+            schema: blockwild_entity::ENTITY_COMMAND_SCHEMA,
+            sequence: 8,
+            expected_revision: 7,
+            tick: 100,
+            commands,
+        };
+        let encoded = encode_entity_command_batch_v1(&batch).unwrap();
+        assert_eq!(decode_entity_command_batch_v1(&encoded).unwrap(), batch);
+        assert!(encoded.windows(3).any(|bytes| bytes == [0, 0x80, 0xff]));
+
+        let kinds = vec![
+            EntityEventKind::Spawned {
+                residency: EntityResidency::Hot,
+            },
+            EntityEventKind::Despawned {
+                reason: DespawnReason::Defeated,
+            },
+            EntityEventKind::ResidencyChanged(EntityResidency::Cold),
+            EntityEventKind::MotionUpdated,
+            EntityEventKind::TierChanged(SimulationTier::Nearby),
+            EntityEventKind::ProtectionChanged,
+            EntityEventKind::VitalsEnvironmentChanged,
+            EntityEventKind::LocomotionChanged,
+            EntityEventKind::AiChanged,
+            EntityEventKind::SocialChanged,
+            EntityEventKind::MountChanged,
+            EntityEventKind::NetworkAuthorityChanged,
+            EntityEventKind::CareChanged,
+            EntityEventKind::HusbandryChanged,
+            EntityEventKind::WorkChanged,
+            EntityEventKind::EquipmentChanged,
+            EntityEventKind::DragonChanged,
+            EntityEventKind::LegendaryChanged,
+            EntityEventKind::SummonChanged,
+            EntityEventKind::SentientChanged,
+            EntityEventKind::ComponentsReplaced,
+            EntityEventKind::CompatibilityRecordChanged,
+            EntityEventKind::RangeStateChanged,
+            EntityEventKind::DormantSummaryChanged,
+        ];
+        let events = EntityEventBatch {
+            schema: blockwild_entity::ENTITY_COMMAND_SCHEMA,
+            sequence: 9,
+            previous_revision: 11,
+            revision: 12,
+            events: kinds
+                .into_iter()
+                .enumerate()
+                .map(|(index, kind)| blockwild_entity::EntityEvent {
+                    command_index: index as u32,
+                    entity_id: EntityId::new(index as u32 + 1, 2),
+                    previous_entity_revision: index as u64 + 20,
+                    entity_revision: index as u64 + 21,
+                    kind,
+                })
+                .collect(),
+        };
+        let encoded = encode_entity_event_batch_v1(&events).unwrap();
+        assert_eq!(decode_entity_event_batch_v1(&encoded).unwrap(), events);
+    }
+
+    #[test]
+    fn r6_snapshot_and_compatibility_operation_wires_are_exact_and_fail_closed() {
+        let mut authority = EntityAuthority::default();
+        let record = EntityCompatibilityRecord::new("entity:\u{96ea}", "specimen:\u{6c34}", "wyrm");
+        authority
+            .apply_batch(&EntityCommandBatch {
+                schema: blockwild_entity::ENTITY_COMMAND_SCHEMA,
+                sequence: 4,
+                expected_revision: 0,
+                tick: 9,
+                commands: vec![EntityCommand::SpawnAt {
+                    id: EntityId::new(3, 2),
+                    record: record.clone(),
+                    residency: EntityResidency::Hot,
+                }],
+            })
+            .unwrap();
+        let snapshot = encode_entity_authority_snapshot(&authority).unwrap();
+        let import = EntityAuthorityImportWireV2 {
+            expected_revision: 0,
+            snapshot: snapshot.clone(),
+        };
+        let encoded = encode_entity_authority_import_v2(&import).unwrap();
+        assert_eq!(decode_entity_authority_import_v2(&encoded).unwrap(), import);
+        let export = EntityAuthorityExportWireV1 { expected_revision: 1 };
+        assert_eq!(
+            decode_entity_authority_export_v1(&encode_entity_authority_export_v1(export).unwrap()).unwrap(),
+            export
+        );
+        let compatibility = EntityCompatibilityImportWireV1 {
+            sequence: 5,
+            expected_revision: 1,
+            tick: 10,
+            desired_id: Some(EntityId::new(4, 2)),
+            residency: EntityResidency::Cold,
+            record,
+        };
+        let encoded = encode_entity_compatibility_import_v1(&compatibility).unwrap();
+        assert_eq!(decode_entity_compatibility_import_v1(&encoded).unwrap(), compatibility);
+        let mut corrupt = encoded;
+        *corrupt.last_mut().unwrap() ^= 0x80;
+        assert_eq!(
+            decode_entity_compatibility_import_v1(&corrupt).unwrap_err().code,
+            "domain-checksum"
+        );
+        let receipt = EntityAuthorityImportReceiptWireV1 {
+            previous_revision: 0,
+            revision: authority.revision(),
+            entity_count: authority.len() as u32,
+            state_hash: authority.canonical_hash(),
+        };
+        assert_eq!(
+            decode_entity_authority_import_receipt_v1(&encode_entity_authority_import_receipt_v1(receipt).unwrap())
+                .unwrap(),
+            receipt
+        );
+    }
+
+    #[test]
     fn persistence_dispatch_wire_round_trips_high_utf8_and_rejects_corruption() {
         let command = RuntimePersistenceDispatchWireV1::Estimate {
             world_id: "wørld".into(),
@@ -2831,6 +3950,51 @@ mod tests {
         *corrupt.last_mut().unwrap() ^= 0x80;
         assert_eq!(
             decode_runtime_persistence_dispatch_v1(&corrupt).unwrap_err().code,
+            "domain-checksum"
+        );
+    }
+
+    #[test]
+    fn content_page_wire_preserves_unicode_high_bytes_and_domains() {
+        let bundle = blockwild_gameplay::compile_content_bundle(
+            "content-\u{6c34}-1",
+            vec![ContentArtifact {
+                domain: ContentDomain::Item,
+                id: "orb:\u{6c34}".into(),
+                schema_id: "item-definition".into(),
+                schema_version: 1,
+                content_version: 9,
+                aliases: vec!["item:orb-\u{6c34}".into()],
+                canonical_bytes: "{\"name\":\"Mizu \u{6c34}\"}".as_bytes().to_vec(),
+                unknown_extension_bytes: vec![0, 0x80, 0xff],
+            }],
+        )
+        .unwrap();
+        let page = ContentInstallPageWireV1 {
+            install_id: format!("install:{}", bundle.manifest.manifest_hash.to_hex()),
+            manifest_schema: bundle.manifest.schema_version,
+            source_revision: bundle.manifest.source_revision.clone(),
+            manifest_hash: bundle.manifest.manifest_hash,
+            domains: bundle.manifest.domains.clone(),
+            page_index: 0,
+            page_count: 1,
+            artifacts: bundle.artifacts,
+        };
+        let encoded = encode_content_install_page_v1(&page).unwrap();
+        assert_eq!(
+            bundle.manifest.manifest_hash.to_hex(),
+            "d7ebbffbc6730af930252027558e948f"
+        );
+        assert_eq!(
+            encoded.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+            "42574337010001009b0100004b75543dd8edf6a838b55f7d5a2a31e528000000696e7374616c6c3a643765626266666263363733306166393330323532303237353538653934386601000d000000636f6e74656e742de6b0b42d31d7ebbffbc6730af930252027558e948f0b000001000000eb1512b3b15918c9c87a01591f93f5580100000000adf4e63002272ee2c83a57a61812458f0200000000a10cf256ba7281bac83a57a61812417b0300000000efe23061189c39a0c83a57a67211d5ea040000000045af961395cd5b99c83a5716c2882d30050000000078e14c613113a899c83a57a67211d5c006000000002fe966db6f45b565c83a57969fa148f607000000007a00de9183d68586c83a5796090d490a0800000000462f9f6d667aac6ac83a5766dfaead27090000000091e7b6db86082917c83a579650a7b4dd0a00000000a21d2c4d687bc6c2c83a5786670accc300000000010000000100000000070000006f72623ae6b0b40f0000006974656d2d646566696e6974696f6e010009000000010000000c0000006974656d3a6f72622de6b0b4130000007b226e616d65223a224d697a7520e6b0b4227d030000000080ff"
+        );
+        assert_eq!(decode_content_install_page_v1(&encoded).unwrap(), page);
+        assert!(encoded.iter().any(|byte| *byte >= 0x80));
+        let mut corrupt = encoded;
+        *corrupt.last_mut().unwrap() ^= 0x80;
+        assert_eq!(
+            decode_content_install_page_v1(&corrupt).unwrap_err().code,
             "domain-checksum"
         );
     }
