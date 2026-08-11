@@ -1,0 +1,14 @@
+{"schemaVersion":2,"fixture":"r5-completion-golden"}
+{"scenario":"flight-replay","hz":30,"position":[-17.827448849439,51.733333333334,-14.465007555493],"velocity":[-1.624840016392,11.999999999986,-15.414600055293]}
+{"scenario":"flight-replay","hz":60,"position":[-17.800368183107,51.533333333570,-14.208097560339],"velocity":[-1.624840003128,11.999999993904,-15.414599929456]}
+{"scenario":"flight-replay","hz":120,"position":[-17.786827852086,51.433333335255,-14.079642583114],"velocity":[-1.624839959951,11.999999959313,-15.414599519847]}
+{"scenario":"hit-hop","speed":4.700000000000,"velocity":[4.900000000000,3.800000000000,0.100000000000],"grounded":false}
+{"scenario":"shore-exit","velocityY":8.150000000000,"shoreBoosted":true,"oxygen":12.000000000000}
+{"scenario":"boat","position":[-16.273809613483,32.500000000000,-0.088421458879],"yaw":0.263035183246,"velocity":1.831420441560}
+{"scenario":"negative-chunk-ray","cell":[-15,1,0],"distance":1.900000000000,"normal":[-1.0,0.0,0.0]}
+{"scenario":"doors-and-unloaded","closed":true,"open":false,"unloadedSolid":true}
+{"scenario":"stairs","stepped":true,"blocked":false,"position":[-11.000000000000,1.021666666667,0.000000000000]}
+{"scenario":"liquid-order","operations":1,"changes":[[2,1,3],[3,1,2]],"remaining":12}
+{"scenario":"path-tie","code":0,"cells":[[2,1,1],[3,1,1],[4,1,1],[5,1,1],[6,1,1]],"visited":35}
+{"scenario":"atmosphere-unknown","sealed":false,"leakFaces":65,"budgetExhausted":false}
+{"scenario":"fixed-gas","zone1Pressure":900000000000,"zone2Pressure":100000000000,"transferred":100000000}

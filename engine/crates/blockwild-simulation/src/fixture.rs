@@ -19,6 +19,9 @@ pub struct NativeBenchmarkReport {
     pub liquid_micros: u128,
     pub path_micros: u128,
     pub air_micros: u128,
+    pub query_micros: u128,
+    pub kinematics_micros: u128,
+    pub gas_micros: u128,
     pub digest: u64,
 }
 
@@ -227,12 +230,125 @@ pub fn run_native_benchmark(iterations: u32) -> NativeBenchmarkReport {
             ^ u64::from_le_bytes(result.result_hash.0[..8].try_into().expect("eight hash bytes"))
             ^ u64::from(index);
     }
+    let air_micros = started.elapsed().as_micros();
+
+    let ray_query = VoxelRaycastQueryV1 {
+        query_id: 1,
+        origin: Vec3::new(0.0, 1.0, 1.0),
+        direction: Vec3::new(1.0, 0.0, 0.0),
+        maximum_distance: 16.0,
+        maximum_visited_cells: 64,
+        hit_liquids: false,
+    };
+    let entities = [
+        BroadphaseEntityV1 {
+            entity_id: 1,
+            bounds: AabbV1::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 2.0, 1.0)),
+            layer_mask: 1,
+        },
+        BroadphaseEntityV1 {
+            entity_id: 2,
+            bounds: AabbV1::new(Vec3::new(1.0, 0.0, 1.0), Vec3::new(2.0, 2.0, 2.0)),
+            layer_mask: 1,
+        },
+    ];
+    let queries = [BroadphaseQueryV1 {
+        query_id: 1,
+        bounds: AabbV1::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(3.0, 3.0, 3.0)),
+        layer_mask: 1,
+        maximum_results: 8,
+    }];
+    let started = Instant::now();
+    for index in 0..iterations {
+        let ray = black_box(raycast_voxels(black_box(&fixture.physics.window), ray_query).expect("ray fixture"));
+        let broadphase = black_box(run_broadphase_batch(4.0, &entities, &queries).expect("broadphase fixture"));
+        digest = digest.rotate_left(17)
+            ^ u64::from(ray.visited_cells as u32)
+            ^ u64::from(broadphase[0].entity_ids.len() as u32)
+            ^ u64::from(index);
+    }
+    let query_micros = started.elapsed().as_micros();
+
+    let started = Instant::now();
+    for index in 0..iterations {
+        let flight = black_box(step_creative_flight_velocity(
+            Vec3::default(),
+            CreativeFlightControlV1 {
+                forward: 1.0,
+                strafe: 0.25,
+                yaw: 0.35,
+                ascend: true,
+                descend: false,
+                sprinting: true,
+                movement_multiplier: 1.0,
+            },
+            1.0 / 60.0,
+        ));
+        let boat = black_box(sailboat_candidate(
+            SailboatKinematicsV1 {
+                position: Vec3::default(),
+                yaw: 0.25,
+                velocity: 1.2,
+            },
+            SailboatControlV1 {
+                forward: 1.0,
+                turn: -0.4,
+            },
+            0.05,
+        ));
+        digest = digest.rotate_left(19) ^ flight.x.to_bits() ^ boat.state.velocity.to_bits() ^ u64::from(index);
+    }
+    let kinematics_micros = started.elapsed().as_micros();
+
+    let gas_job = GasEqualizationJobV1 {
+        identity: fixture.air.identity.clone(),
+        topology_revision: 5,
+        fixed_delta_micros: 100_000,
+        maximum_connections: 1,
+        zones: vec![
+            AirZoneGasStateV1 {
+                zone_id: 1,
+                volume_units: 1_000,
+                mixture: GasMixtureV1 {
+                    oxygen: 210_000_000,
+                    nitrogen: 780_000_000,
+                    carbon_dioxide: 10_000_000,
+                    toxic: 0,
+                },
+            },
+            AirZoneGasStateV1 {
+                zone_id: 2,
+                volume_units: 1_000,
+                mixture: GasMixtureV1::default(),
+            },
+        ],
+        connections: vec![AirConnectionV1 {
+            connection_id: 1,
+            from_zone: 1,
+            to_zone: Some(2),
+            kind: AirConnectionKindV1::Vent,
+            conductance_ppm: 1_000_000,
+            enabled: true,
+        }],
+        input_hash: CanonicalHash::default(),
+    }
+    .seal();
+    let started = Instant::now();
+    for index in 0..iterations {
+        let result = black_box(equalize_gas_fixed(black_box(&gas_job)).expect("gas fixture"));
+        digest = digest.rotate_left(23)
+            ^ u64::from_le_bytes(result.result_hash.0[..8].try_into().expect("eight hash bytes"))
+            ^ u64::from(index);
+    }
     NativeBenchmarkReport {
         iterations,
         physics_micros,
         liquid_micros,
         path_micros,
-        air_micros: started.elapsed().as_micros(),
+        air_micros,
+        query_micros,
+        kinematics_micros,
+        gas_micros: started.elapsed().as_micros(),
         digest,
     }
 }

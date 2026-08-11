@@ -23,6 +23,11 @@ pub const PHYSICS_CONTACT_HEAD_SUBMERGED: u16 = 1 << 7;
 pub const PHYSICS_CONTACT_SHORE_BOOSTED: u16 = 1 << 8;
 pub const PHYSICS_CONTACT_UNKNOWN_BOUNDARY: u16 = 1 << 9;
 
+pub const PHYSICS_MAX_ABS_POSITION_V1: f64 = 33_554_432.0;
+pub const PHYSICS_MAX_ABS_VELOCITY_V1: f64 = 4_096.0;
+pub const PHYSICS_MAX_DESIRED_SPEED_V1: f64 = 1_024.0;
+pub const PHYSICS_MAX_ACCELERATION_V1: f64 = 4_096.0;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PhysicsBodyV1 {
     pub handle: String,
@@ -206,31 +211,60 @@ impl PhysicsStepInputV1 {
             self.swimming.shore_exit_velocity,
         ];
         if finite.iter().any(|value| !value.is_finite())
+            || [self.body.position.x, self.body.position.y, self.body.position.z]
+                .iter()
+                .any(|value| value.abs() > PHYSICS_MAX_ABS_POSITION_V1)
+            || [self.body.velocity.x, self.body.velocity.y, self.body.velocity.z]
+                .iter()
+                .any(|value| value.abs() > PHYSICS_MAX_ABS_VELOCITY_V1)
             || self.body.radius <= 0.0
+            || self.body.radius > 64.0
             || self.body.height <= 0.0
+            || self.body.height > 128.0
             || self.body.mass <= 0.0
+            || self.body.mass > 1_000_000.0
             || self.body.fall_distance < 0.0
             || self.body.oxygen_seconds < 0.0
             || self.body.drowning_accumulator < 0.0
             || self.controls.forward.abs() > 1.0
             || self.controls.strafe.abs() > 1.0
             || self.controls.desired_speed < 0.0
+            || self.controls.desired_speed > PHYSICS_MAX_DESIRED_SPEED_V1
+            || self.gravity.gravity < 0.0
+            || self.gravity.gravity > PHYSICS_MAX_ACCELERATION_V1
             || self.gravity.terminal_velocity < 0.0
+            || self.gravity.terminal_velocity > PHYSICS_MAX_ABS_VELOCITY_V1
             || self.gravity.air_drag < 0.0
+            || self.gravity.air_drag > PHYSICS_MAX_ACCELERATION_V1
             || self.gravity.ground_acceleration < 0.0
+            || self.gravity.ground_acceleration > PHYSICS_MAX_ACCELERATION_V1
             || self.gravity.air_acceleration < 0.0
+            || self.gravity.air_acceleration > PHYSICS_MAX_ACCELERATION_V1
             || self.gravity.jump_velocity < 0.0
+            || self.gravity.jump_velocity > PHYSICS_MAX_ABS_VELOCITY_V1
             || !(0.01..=1.0).contains(&self.gravity.maximum_sweep_step)
             || self.swimming.max_oxygen_seconds < 0.0
+            || self.swimming.max_oxygen_seconds > 86_400.0
             || self.swimming.oxygen_drain_per_second < 0.0
+            || self.swimming.oxygen_drain_per_second > PHYSICS_MAX_ACCELERATION_V1
             || self.swimming.oxygen_recovery_per_second < 0.0
+            || self.swimming.oxygen_recovery_per_second > PHYSICS_MAX_ACCELERATION_V1
             || self.swimming.drowning_interval_seconds <= 0.0
+            || self.swimming.drowning_interval_seconds > 86_400.0
             || self.swimming.drowning_damage < 0.0
+            || self.swimming.drowning_damage > 1_000_000.0
+            || self.swimming.buoyancy_acceleration < 0.0
+            || self.swimming.buoyancy_acceleration > PHYSICS_MAX_ACCELERATION_V1
             || self.swimming.passive_sink_acceleration < 0.0
+            || self.swimming.passive_sink_acceleration > PHYSICS_MAX_ACCELERATION_V1
             || self.swimming.maximum_sink_speed < 0.0
+            || self.swimming.maximum_sink_speed > PHYSICS_MAX_ABS_VELOCITY_V1
             || self.swimming.swim_acceleration < 0.0
+            || self.swimming.swim_acceleration > PHYSICS_MAX_ACCELERATION_V1
             || self.swimming.water_drag < 0.0
+            || self.swimming.water_drag > PHYSICS_MAX_ACCELERATION_V1
             || self.swimming.shore_exit_velocity < 0.0
+            || self.swimming.shore_exit_velocity > PHYSICS_MAX_ABS_VELOCITY_V1
         {
             return Err(ContractError::InvalidNumber);
         }
@@ -244,7 +278,7 @@ impl PhysicsStepInputV1 {
                     || impulse.source_handle.len() > 160
                     || [impulse.impulse.x, impulse.impulse.y, impulse.impulse.z]
                         .iter()
-                        .any(|value| !value.is_finite())
+                        .any(|value| !value.is_finite() || value.abs() > PHYSICS_MAX_ABS_VELOCITY_V1)
             })
         {
             return Err(ContractError::InvalidNumber);

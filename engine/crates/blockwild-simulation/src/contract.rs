@@ -174,6 +174,13 @@ pub struct CellSampleV1 {
 }
 
 impl WorldReadWindowV1 {
+    /// Seals a complete immutable world page after all streams are populated.
+    #[must_use]
+    pub fn seal(mut self) -> Self {
+        self.snapshot_hash = hash_world_window(&self);
+        self
+    }
+
     #[must_use]
     pub fn cell_count(&self) -> Option<usize> {
         usize::try_from(self.size[0])
@@ -225,6 +232,9 @@ impl WorldReadWindowV1 {
     }
 
     pub fn validate(&self) -> Result<(), ContractError> {
+        if self.address != self.identity.address {
+            return Err(ContractError::IdentityMismatch);
+        }
         if self.size.iter().any(|size| *size == 0 || *size > 512) {
             return Err(ContractError::WindowTooLarge);
         }
@@ -258,6 +268,9 @@ impl WorldReadWindowV1 {
         if self.flags.iter().any(|flags| flags & !0x0f != 0) {
             return Err(ContractError::InvalidFlags);
         }
+        if hash_world_window(self) != self.snapshot_hash {
+            return Err(ContractError::IdentityMismatch);
+        }
         Ok(())
     }
 }
@@ -286,6 +299,43 @@ impl std::error::Error for ContractError {}
 #[must_use]
 pub fn identity_is_current(result: &SimulationJobIdentityV1, current: &WorldIdentityV1) -> bool {
     result.world == *current
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SimulationFreshnessV1 {
+    Current,
+    WrongLocation,
+    StaleEpoch,
+    StaleMutation,
+    StaleResidency,
+    StaleWorldHash,
+    StaleSnapshot,
+}
+
+/// Exact load-boundary acceptance rule used by every R5 result consumer.
+/// Residency changes are stale even if no block mutation occurred: unloading
+/// or reloading a halo changes the safety meaning of unknown cells.
+#[must_use]
+pub fn classify_simulation_freshness(
+    result: &SimulationJobIdentityV1,
+    current: &WorldIdentityV1,
+    current_snapshot_hash: CanonicalHash,
+) -> SimulationFreshnessV1 {
+    if result.world.address != current.address {
+        SimulationFreshnessV1::WrongLocation
+    } else if result.world.revision.epoch != current.revision.epoch {
+        SimulationFreshnessV1::StaleEpoch
+    } else if result.world.revision.mutation != current.revision.mutation {
+        SimulationFreshnessV1::StaleMutation
+    } else if result.world.revision.residency != current.revision.residency {
+        SimulationFreshnessV1::StaleResidency
+    } else if result.world.state_hash != current.state_hash {
+        SimulationFreshnessV1::StaleWorldHash
+    } else if result.source_snapshot_hash != current_snapshot_hash {
+        SimulationFreshnessV1::StaleSnapshot
+    } else {
+        SimulationFreshnessV1::Current
+    }
 }
 
 pub(crate) fn write_identity(hasher: &mut CanonicalHasher, identity: &SimulationJobIdentityV1) {

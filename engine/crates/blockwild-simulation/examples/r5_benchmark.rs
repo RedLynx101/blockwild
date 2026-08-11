@@ -12,12 +12,15 @@ fn main() {
     );
     let report = run_native_benchmark(2_000);
     println!(
-        "iterations={} physics_us={} liquid_us={} path_us={} air_us={} digest={:016x}",
+        "iterations={} physics_us={} liquid_us={} path_us={} air_us={} query_us={} kinematics_us={} gas_us={} digest={:016x}",
         report.iterations,
         report.physics_micros,
         report.liquid_micros,
         report.path_micros,
         report.air_micros,
+        report.query_micros,
+        report.kinematics_micros,
+        report.gas_micros,
         report.digest,
     );
 }
