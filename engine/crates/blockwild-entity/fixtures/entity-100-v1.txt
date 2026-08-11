@@ -1,1 +1,1 @@
-entities=100 hot=88 cold=12 hits=53 due=88 admitted=8 hero=18 articulated=73 silhouette=0 hidden=9 fixture_hash=2734bfbd4314646ac87a81ed8e298424
+entities=100 hot=88 cold=12 hits=53 due=88 admitted=8 hero=18 articulated=73 silhouette=0 hidden=9 fixture_hash=aa59c0ca3c52d785c87a81ed8e298424

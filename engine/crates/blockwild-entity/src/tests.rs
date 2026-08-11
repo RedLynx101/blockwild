@@ -17,6 +17,51 @@ fn assert_close(left: f32, right: f32) {
     assert!((left - right).abs() <= 1.0e-5, "{left} != {right}");
 }
 
+fn command(authority: &mut EntityAuthority, tick: u64, value: EntityCommand) -> EntityEvent {
+    let revision = authority.revision();
+    authority
+        .apply_batch(&EntityCommandBatch {
+            schema: ENTITY_COMMAND_SCHEMA,
+            sequence: revision + 1,
+            expected_revision: revision,
+            tick,
+            commands: vec![value],
+        })
+        .expect("entity command")
+        .events
+        .into_iter()
+        .next()
+        .expect("entity event")
+}
+
+fn spawn(
+    authority: &mut EntityAuthority,
+    source: EntityCompatibilityRecord,
+    residency: EntityResidency,
+    tick: u64,
+) -> EntityId {
+    command(
+        authority,
+        tick,
+        EntityCommand::Spawn {
+            record: source,
+            residency,
+        },
+    )
+    .entity_id
+}
+
+fn despawn(authority: &mut EntityAuthority, id: EntityId, tick: u64) {
+    command(
+        authority,
+        tick,
+        EntityCommand::Despawn {
+            id,
+            reason: DespawnReason::Admin,
+        },
+    );
+}
+
 #[test]
 fn compatibility_hash_is_map_order_independent_and_field_sensitive() {
     let mut first = record(1);
@@ -35,9 +80,9 @@ fn compatibility_hash_is_map_order_independent_and_field_sensitive() {
 #[test]
 fn generation_reuse_invalidates_old_handles() {
     let mut authority = EntityAuthority::default();
-    let old = authority.spawn(record(1), EntityResidency::Hot, 0).expect("spawn");
-    authority.remove(old).expect("remove");
-    let new = authority.spawn(record(2), EntityResidency::Hot, 1).expect("reuse");
+    let old = spawn(&mut authority, record(1), EntityResidency::Hot, 0);
+    despawn(&mut authority, old, 1);
+    let new = spawn(&mut authority, record(2), EntityResidency::Hot, 2);
     assert_eq!(old.0.index(), new.0.index());
     assert_ne!(old.0.generation(), new.0.generation());
     assert!(!authority.contains(old));
@@ -50,13 +95,16 @@ fn allocator_survives_repeated_sparse_reuse() {
     for round in 0..20 {
         let ids: Vec<_> = (0..80)
             .map(|index| {
-                authority
-                    .spawn(record(round * 100 + index), EntityResidency::Hot, round as u64)
-                    .expect("spawn")
+                spawn(
+                    &mut authority,
+                    record(round * 100 + index),
+                    EntityResidency::Hot,
+                    round as u64,
+                )
             })
             .collect();
         for id in ids.into_iter().step_by(2) {
-            authority.remove(id).expect("remove");
+            despawn(&mut authority, id, round as u64);
         }
     }
     let mut packed: Vec<_> = authority.hot().keys().map(|id| id.packed()).collect();
@@ -78,9 +126,15 @@ fn import_preserves_generational_identity_and_compatibility_fields() {
         .equipment
         .insert("saddle".to_owned(), "dragon-saddle".to_owned());
     imported.research.insert("ecology".to_owned(), 4);
-    authority
-        .insert_with_id(id, imported.clone(), EntityResidency::Cold, 800)
-        .expect("import");
+    command(
+        &mut authority,
+        800,
+        EntityCommand::SpawnAt {
+            id,
+            record: imported.clone(),
+            residency: EntityResidency::Cold,
+        },
+    );
     assert_eq!(authority.cold()[&id].record, imported);
     assert_eq!(id.packed(), EntityId::new(42, 9).packed());
 }
@@ -150,18 +204,381 @@ fn stale_revision_and_sequence_are_rejected() {
     ));
 }
 
+fn rich_components(source: &EntityCompatibilityRecord) -> EntityComponents {
+    let mut components = EntityComponents::from_compatibility(
+        source,
+        ProtectionState::from_bits(ProtectionState::EVER_LED | ProtectionState::OWNED),
+    );
+    components.vitals.oxygen_milli = 7_500;
+    components.vitals.temperature_milli = -125;
+    components.locomotion.shape = BodyShape::Flying;
+    components.locomotion.movement_mode = MovementMode::Fly;
+    components.locomotion.action = ActionState {
+        key: "spiral-strike".to_owned(),
+        phase: 2,
+        started_tick: 900,
+        ends_tick: 960,
+        target: Some(EntityId::new(77, 2)),
+    };
+    components.locomotion.cooldowns.insert("breath".to_owned(), 1_200);
+    components.ai.intent = AiIntentKind::Pursue;
+    components.ai.intent_key = "defend-nest".to_owned();
+    components.ai.blackboard.insert(
+        "rune-note".to_owned(),
+        BlackboardValue::Text("Hrafn — 雪原 🐉".to_owned()),
+    );
+    components.ai.route_epoch = 12;
+    components.ai.route_cursor = 1;
+    components.ai.route = vec![Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0)];
+    components.ai.threats = vec![ThreatMemory {
+        entity: EntityId::new(88, 4),
+        score_milli: 4_200,
+        last_seen_tick: 940,
+        last_known_cell: [-12, 4, 99],
+    }];
+    components.social.group_id = Some("群れ-α".to_owned());
+    components.mount.seats = vec![
+        MountSeat {
+            index: 0,
+            role: "rider".to_owned(),
+            offset: Vec3::new(0.0, 1.1, 0.0),
+            occupant: None,
+            control_weight_milli: 1_000,
+        },
+        MountSeat {
+            index: 1,
+            role: "passenger".to_owned(),
+            offset: Vec3::new(0.0, 1.1, 0.8),
+            occupant: None,
+            control_weight_milli: 0,
+        },
+    ];
+    components.mount.accepts_riders = true;
+    components.protection = ProtectionProvenance {
+        flags: ProtectionState::from_bits(ProtectionState::EVER_LED | ProtectionState::OWNED),
+        first_owned_tick: Some(10),
+        first_led_tick: Some(20),
+        enclosure_verified_tick: None,
+        named_tick: Some(30),
+        provenance_key: Some("legacy-import".to_owned()),
+    };
+    components.care = Some(CareState {
+        stabilized: true,
+        nourishment_milli: 8_000,
+        trust_milli: 6_500,
+        care_stage: 3,
+        last_care_tick: 800,
+    });
+    components.husbandry = Some(HusbandryState {
+        sex: 2,
+        maturity_milli: 10_000,
+        breed_cooldown_until_tick: 2_000,
+        gestation_until_tick: 0,
+        parent_specimen_ids: vec!["dam-β".to_owned(), "sire-γ".to_owned()],
+    });
+    components.work = Some(WorkState {
+        task_key: "carry".to_owned(),
+        progress_milli: 250,
+        target_entity: None,
+        target_cell: Some([-2, 7, 19]),
+        carrying_item_key: Some("iron-ingot".to_owned()),
+        due_tick: 980,
+    });
+    components.equipment.insert(
+        "crest".to_owned(),
+        EquipmentSlotState {
+            item_key: "sky-龍-crest".to_owned(),
+            count: 1,
+            durability: 777,
+            custom: BTreeMap::from([("patina".to_owned(), vec![0, 0x80, 0xff, 7])]),
+        },
+    );
+    components.dragon = Some(DragonState {
+        lineage_key: "golden".to_owned(),
+        element_key: "solar".to_owned(),
+        life_stage: 4,
+        flight_stamina_milli: 9_000,
+        breath_charge_milli: 8_500,
+        egg_or_hatchling: false,
+    });
+    components.legendary = Some(LegendaryState {
+        encounter_key: "sun-vault".to_owned(),
+        phase: 2,
+        defeated: false,
+        capture_lock_until_tick: 4_000,
+        world_flags: BTreeMap::from([("awakened".to_owned(), 1)]),
+    });
+    components.summon = Some(SummonState {
+        origin_realm_key: "vellum-between".to_owned(),
+        summoner_id: Some("mage-É".to_owned()),
+        expires_tick: 8_000,
+        grounded: true,
+        grounding_item_key: Some("world-anchor".to_owned()),
+    });
+    components.sentient = Some(SentientState {
+        faction_id: Some("high-elves".to_owned()),
+        settlement_id: Some("ad-astra".to_owned()),
+        occupation_key: "wayfinder".to_owned(),
+        dialogue_state: BTreeMap::from([("greeting".to_owned(), 3)]),
+        reputation_milli: 1_250,
+    });
+    components
+        .unknown_extensions
+        .insert("future:雪".to_owned(), vec![0, 1, 0x7f, 0x80, 0xfe, 0xff]);
+    components
+}
+
+#[test]
+fn authority_snapshot_is_exact_complete_and_forward_compatible() {
+    let mut authority = EntityAuthority::default();
+    let mut source = record(90);
+    source.external_entity_id = "mob-雪-🐉".to_owned();
+    source.name = Some("Aurélia".to_owned());
+    source.owner_id = Some("keeper-δ".to_owned());
+    source.ever_led = true;
+    source.social_group_id = Some("群れ-α".to_owned());
+    source.equipment.insert("crest".to_owned(), "sky-龍-crest".to_owned());
+    let components = rich_components(&source);
+    let id = command(
+        &mut authority,
+        1_000,
+        EntityCommand::SpawnTypedAt {
+            id: EntityId::new(42, 9),
+            record: source.clone(),
+            components: components.clone(),
+            residency: EntityResidency::Hot,
+        },
+    )
+    .entity_id;
+    command(&mut authority, 1_100, EntityCommand::Hibernate { id });
+    let bytes = encode_entity_authority_snapshot(&authority).expect("snapshot encode");
+    let restored = decode_entity_authority_snapshot(&bytes).expect("snapshot decode");
+    assert_eq!(encode_entity_authority_snapshot(&restored).expect("re-encode"), bytes);
+    assert_eq!(restored.cold()[&id].record, source);
+    assert_eq!(restored.cold()[&id].components, components);
+    assert_eq!(
+        restored.cold()[&id].components.unknown_extensions["future:雪"],
+        vec![0, 1, 0x7f, 0x80, 0xfe, 0xff]
+    );
+    assert_eq!(restored.canonical_hash(), authority.canonical_hash());
+}
+
+#[test]
+fn compatibility_codec_is_byte_exact_for_legacy_high_bytes() {
+    let mut source = record(4);
+    source.name = Some("Þorn — 雪".to_owned());
+    source.custom.insert("opaque".to_owned(), "\u{0000}ÿ".to_owned());
+    let bytes = encode_compatibility_record(&source).expect("compatibility encode");
+    let restored = decode_compatibility_record(&bytes).expect("compatibility decode");
+    assert_eq!(restored, source);
+    assert_eq!(
+        encode_compatibility_record(&restored).expect("compatibility re-encode"),
+        bytes
+    );
+
+    let mut invalid_utf8 = bytes.clone();
+    // BWEC magic + compatibility schema + first string length.
+    invalid_utf8[10] = 0xff;
+    assert!(matches!(
+        decode_compatibility_record(&invalid_utf8),
+        Err(SnapshotError::InvalidUtf8)
+    ));
+    let mut oversized = bytes;
+    oversized[6..10].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        decode_compatibility_record(&oversized),
+        Err(SnapshotError::LimitExceeded("string"))
+    ));
+}
+
+#[test]
+fn snapshot_rejects_truncation_trailing_bytes_and_tombstone_corruption() {
+    let mut authority = EntityAuthority::default();
+    spawn(&mut authority, record(1), EntityResidency::Hot, 1);
+    let bytes = encode_entity_authority_snapshot(&authority).expect("snapshot");
+    for length in 0..bytes.len() {
+        assert!(
+            decode_entity_authority_snapshot(&bytes[..length]).is_err(),
+            "accepted prefix {length}"
+        );
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(matches!(
+        decode_entity_authority_snapshot(&trailing),
+        Err(SnapshotError::TrailingBytes)
+    ));
+    let mut bad_magic = bytes.clone();
+    bad_magic[0] ^= 0xff;
+    assert!(matches!(
+        decode_entity_authority_snapshot(&bad_magic),
+        Err(SnapshotError::InvalidMagic)
+    ));
+    let mut bad_reserved = bytes;
+    // Header is magic(4), schema(2), revision(8), optional-sequence flag/value(9), slot count(4).
+    bad_reserved[27] = 1;
+    assert!(matches!(
+        decode_entity_authority_snapshot(&bad_reserved),
+        Err(SnapshotError::InvalidData("reserved slot is not canonical"))
+    ));
+
+    let mut oversized_slots = encode_entity_authority_snapshot(&authority).expect("snapshot");
+    oversized_slots[23..27].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        decode_entity_authority_snapshot(&oversized_slots),
+        Err(SnapshotError::LimitExceeded("slot count"))
+    ));
+}
+
+#[test]
+fn stale_scheduler_ecology_and_path_results_are_rejected() {
+    let id = EntityId::new(5, 3);
+    let mut scheduler = EntityScheduler::default();
+    scheduler.upsert(id, SimulationTier::Nearby, 7, 100);
+    let token = scheduler.due_jobs(102, 1)[0];
+    assert_eq!(
+        scheduler.complete(token, 8, 102),
+        Err(ScheduleCompletionError::StaleEntityRevision)
+    );
+    scheduler.upsert(id, SimulationTier::Nearby, 8, 102);
+    assert_eq!(
+        scheduler.complete(token, 7, 102),
+        Err(ScheduleCompletionError::StaleEntityRevision)
+    );
+
+    let mut ecology = EcologyJobQueue::default();
+    let ecology_token = ecology.schedule([-1, 4], 12, 200).expect("ecology schedule");
+    ecology.schedule([-1, 4], 13, 200).expect("ecology reschedule");
+    assert_eq!(
+        ecology.complete(ecology_token, 12, 200, 400),
+        Err(WorkTokenError::StaleRevision)
+    );
+
+    let mut paths = PathJobQueue::default();
+    let path_token = paths
+        .submit(PathJobSubmission {
+            id,
+            entity_revision: 9,
+            route_epoch: 2,
+            due_tick: 300,
+            priority: 7,
+            origin: Vec3::ZERO,
+            goal: Vec3::new(8.0, 0.0, 2.0),
+        })
+        .expect("path schedule");
+    assert_eq!(
+        paths.accept(path_token, EntityId::new(5, 4), 9, 2, vec![Vec3::ZERO]),
+        Err(WorkTokenError::StaleGenerationOrIdentity)
+    );
+    assert_eq!(
+        paths.accept(path_token, id, 10, 2, vec![Vec3::ZERO]),
+        Err(WorkTokenError::StaleRevision)
+    );
+    let accepted = paths
+        .accept(path_token, id, 9, 2, vec![Vec3::ZERO, Vec3::new(8.0, 0.0, 2.0)])
+        .expect("fresh path result");
+    assert_eq!(accepted.points.len(), 2);
+}
+
+#[test]
+fn typed_component_command_failure_is_atomic() {
+    let mut authority = EntityAuthority::default();
+    let id = spawn(&mut authority, record(1), EntityResidency::Hot, 0);
+    let before = encode_entity_authority_snapshot(&authority).expect("before");
+    let mut invalid = authority.components(id).expect("components").clone();
+    invalid.locomotion.radius = f32::NAN;
+    let batch = EntityCommandBatch {
+        schema: ENTITY_COMMAND_SCHEMA,
+        sequence: authority.revision() + 1,
+        expected_revision: authority.revision(),
+        tick: 10,
+        commands: vec![
+            EntityCommand::SetCareState {
+                id,
+                value: Some(CareState {
+                    stabilized: true,
+                    nourishment_milli: 1,
+                    trust_milli: 2,
+                    care_stage: 1,
+                    last_care_tick: 10,
+                }),
+            },
+            EntityCommand::ReplaceComponents { id, value: invalid },
+        ],
+    };
+    assert!(authority.apply_batch(&batch).is_err());
+    assert_eq!(encode_entity_authority_snapshot(&authority).expect("after"), before);
+}
+
+#[test]
+fn one_hundred_legacy_records_round_trip_without_remap_or_reroll() {
+    let mut authority = EntityAuthority::default();
+    let records: Vec<_> = (1..=100)
+        .map(|index| {
+            let mut value = record(index);
+            value.external_entity_id = format!("legacy-雪-{index}");
+            value.specimen_id = format!("specimen-α-{index}");
+            value.variant_key = (index % 3 == 0).then(|| "silver".to_owned());
+            value.owner_id = (index % 7 == 0).then(|| format!("keeper-{index}"));
+            value.custom.insert("opaque".to_owned(), format!("v\u{0000}{index}"));
+            value
+        })
+        .collect();
+    let commands: Vec<_> = records
+        .iter()
+        .enumerate()
+        .map(|(offset, record)| EntityCommand::SpawnAt {
+            id: EntityId::new(offset as u32 + 11, (offset % 5) as u32 + 1),
+            record: record.clone(),
+            residency: if offset % 9 == 0 {
+                EntityResidency::Cold
+            } else {
+                EntityResidency::Hot
+            },
+        })
+        .collect();
+    authority
+        .apply_batch(&EntityCommandBatch {
+            schema: ENTITY_COMMAND_SCHEMA,
+            sequence: 1,
+            expected_revision: 0,
+            tick: 1_200,
+            commands,
+        })
+        .expect("100-record import");
+    let first = encode_entity_authority_snapshot(&authority).expect("first snapshot");
+    let second = encode_entity_authority_snapshot(&authority).expect("second snapshot");
+    assert_eq!(first, second);
+    let restored = decode_entity_authority_snapshot(&first).expect("100-record restore");
+    assert_eq!(
+        encode_entity_authority_snapshot(&restored).expect("100-record re-encode"),
+        first
+    );
+    for (offset, expected) in records.iter().enumerate() {
+        let id = EntityId::new(offset as u32 + 11, (offset % 5) as u32 + 1);
+        assert_eq!(restored.compatibility_record(id), Some(expected));
+        let legacy = encode_compatibility_record(expected).expect("legacy export");
+        assert_eq!(decode_compatibility_record(&legacy).expect("legacy import"), *expected);
+    }
+}
+
 #[test]
 fn hibernate_and_wake_preserve_exact_record() {
     let mut authority = EntityAuthority::default();
     let mut source = record(1);
     source.custom.insert("dragon-stage".to_owned(), "3".to_owned());
-    let id = authority
-        .spawn(source.clone(), EntityResidency::Hot, 10)
-        .expect("spawn");
-    authority.hibernate(id, 20).expect("hibernate");
+    let id = spawn(&mut authority, source.clone(), EntityResidency::Hot, 10);
+    command(&mut authority, 20, EntityCommand::Hibernate { id });
     assert_eq!(authority.cold()[&id].record, source);
     assert_eq!(authority.cold()[&id].summary.slept_at_tick, 20);
-    authority.wake(id, SimulationTier::Hero, 30).expect("wake");
+    command(
+        &mut authority,
+        30,
+        EntityCommand::Wake {
+            id,
+            tier: SimulationTier::Hero,
+        },
+    );
     assert_eq!(authority.hot()[&id].record, source);
     assert_eq!(authority.hot()[&id].tier, SimulationTier::Hero);
 }
@@ -244,14 +661,17 @@ fn broadphase_matches_brute_force_for_deterministic_corpus() {
 fn scheduler_staggers_and_orders_due_work() {
     let mut scheduler = EntityScheduler::default();
     for raw in [9, 2, 7, 1] {
-        scheduler.upsert(EntityId::new(raw, 1), SimulationTier::Nearby, 100);
+        scheduler.upsert(EntityId::new(raw, 1), SimulationTier::Nearby, 1, 100);
     }
-    scheduler.upsert(EntityId::new(3, 1), SimulationTier::Dormant, 100);
-    let due = scheduler.due(101, 3);
-    assert_eq!(due, vec![EntityId::new(2, 1), EntityId::new(1, 1), EntityId::new(7, 1)]);
-    for id in due {
-        assert!(scheduler.complete(id, 101));
-        assert_eq!(scheduler.state(id).expect("state").next_due_tick, 103);
+    scheduler.upsert(EntityId::new(3, 1), SimulationTier::Dormant, 1, 100);
+    let due = scheduler.due_jobs(101, 3);
+    assert_eq!(
+        due.iter().map(|job| job.id).collect::<Vec<_>>(),
+        vec![EntityId::new(2, 1), EntityId::new(1, 1), EntityId::new(7, 1)]
+    );
+    for job in due {
+        scheduler.complete(job, 1, 101).expect("fresh schedule token");
+        assert_eq!(scheduler.state(job.id).expect("state").next_due_tick, 103);
     }
 }
 

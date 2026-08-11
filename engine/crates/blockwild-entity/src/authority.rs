@@ -4,10 +4,18 @@ use std::fmt;
 
 use blockwild_types::{CanonicalHash, CanonicalHasher, EntityId, LocationId};
 
-use crate::{ProtectionState, SimulationTier, Vec3};
+use crate::{
+    AiState, CareState, DragonState, EntityComponents, EquipmentSlotState, HusbandryState, LegendaryState,
+    LocomotionBody, MountState, NetworkAuthorityState, ProtectionProvenance, ProtectionState, SentientState,
+    SimulationTier, SocialFollowerState, SummonState, Vec3, VitalsEnvironment, WorkState,
+};
 
 pub const ENTITY_COMPATIBILITY_SCHEMA: u16 = 1;
 pub const ENTITY_COMMAND_SCHEMA: u16 = 1;
+pub const MAX_ENTITY_COUNT: usize = 65_535;
+pub const MAX_ENTITY_COMMANDS_PER_BATCH: usize = 4_096;
+pub const MAX_ENTITY_COMPATIBILITY_MAP_ENTRIES: usize = 256;
+pub const MAX_ENTITY_COMPATIBILITY_STRING_BYTES: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -101,6 +109,9 @@ impl EntityCompatibilityRecord {
         if self.external_entity_id.is_empty() || self.specimen_id.is_empty() || self.kind_key.is_empty() {
             return Err(EntityError::InvalidRecord("identity fields cannot be empty"));
         }
+        if self.location_id.0.index() == 0 || self.location_id.0.generation() == 0 {
+            return Err(EntityError::InvalidRecord("location identity is reserved"));
+        }
         if !self.position.is_finite() || !self.velocity.is_finite() || !self.yaw.is_finite() {
             return Err(EntityError::InvalidRecord("transform must be finite"));
         }
@@ -111,6 +122,42 @@ impl EntityCompatibilityRecord {
             || self.health > self.maximum_health
         {
             return Err(EntityError::InvalidRecord("health is outside its valid range"));
+        }
+        for value in [
+            self.external_entity_id.as_str(),
+            self.specimen_id.as_str(),
+            self.kind_key.as_str(),
+            self.bond_tier.as_str(),
+        ]
+        .into_iter()
+        .chain(self.variant_key.iter().map(String::as_str))
+        .chain(self.name.iter().map(String::as_str))
+        .chain(self.owner_id.iter().map(String::as_str))
+        .chain(self.social_group_id.iter().map(String::as_str))
+        .chain(self.faction_id.iter().map(String::as_str))
+        .chain(self.settlement_id.iter().map(String::as_str))
+        {
+            if value.len() > MAX_ENTITY_COMPATIBILITY_STRING_BYTES {
+                return Err(EntityError::LimitExceeded("compatibility string"));
+            }
+        }
+        for map_len in [self.equipment.len(), self.research.len(), self.custom.len()] {
+            if map_len > MAX_ENTITY_COMPATIBILITY_MAP_ENTRIES {
+                return Err(EntityError::LimitExceeded("compatibility map"));
+            }
+        }
+        for (key, value) in self.equipment.iter().chain(&self.custom) {
+            if key.is_empty()
+                || key.len() > MAX_ENTITY_COMPATIBILITY_STRING_BYTES
+                || value.len() > MAX_ENTITY_COMPATIBILITY_STRING_BYTES
+            {
+                return Err(EntityError::LimitExceeded("compatibility map entry"));
+            }
+        }
+        for key in self.research.keys() {
+            if key.is_empty() || key.len() > MAX_ENTITY_COMPATIBILITY_STRING_BYTES {
+                return Err(EntityError::LimitExceeded("compatibility research key"));
+            }
         }
         Ok(())
     }
@@ -173,6 +220,8 @@ fn hash_u32_map(hasher: &mut CanonicalHasher, values: &BTreeMap<String, u32>) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct HotEntity {
     pub record: EntityCompatibilityRecord,
+    pub components: EntityComponents,
+    pub entity_revision: u64,
     pub tier: SimulationTier,
     pub protection: ProtectionState,
     pub out_of_range_seconds: f32,
@@ -186,11 +235,19 @@ pub struct DormantEntitySummary {
     pub care_cycles: u32,
     pub breeding_cycles: u32,
     pub work_cycles: u32,
+    pub next_care_tick: u64,
+    pub next_breeding_tick: u64,
+    pub next_work_tick: u64,
+    pub next_ecology_tick: u64,
+    pub route_epoch: u64,
+    pub population_cost_quarters: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColdEntity {
     pub record: EntityCompatibilityRecord,
+    pub components: EntityComponents,
+    pub entity_revision: u64,
     pub protection: ProtectionState,
     pub summary: DormantEntitySummary,
 }
@@ -202,9 +259,9 @@ pub enum EntityResidency {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct EntitySlot {
-    generation: u32,
-    residency: Option<EntityResidency>,
+pub(crate) struct EntitySlot {
+    pub(crate) generation: u32,
+    pub(crate) residency: Option<EntityResidency>,
 }
 
 impl EntitySlot {
@@ -218,12 +275,12 @@ impl EntitySlot {
 
 #[derive(Clone, Debug)]
 pub struct EntityAuthority {
-    revision: u64,
-    last_sequence: Option<u64>,
-    slots: Vec<EntitySlot>,
-    free: BTreeSet<u32>,
-    hot: BTreeMap<EntityId, HotEntity>,
-    cold: BTreeMap<EntityId, ColdEntity>,
+    pub(crate) revision: u64,
+    pub(crate) last_sequence: Option<u64>,
+    pub(crate) slots: Vec<EntitySlot>,
+    pub(crate) free: BTreeSet<u32>,
+    pub(crate) hot: BTreeMap<EntityId, HotEntity>,
+    pub(crate) cold: BTreeMap<EntityId, ColdEntity>,
 }
 
 impl Default for EntityAuthority {
@@ -265,13 +322,17 @@ impl EntityAuthority {
         self.hot.is_empty() && self.cold.is_empty()
     }
 
-    pub fn spawn(
+    fn spawn(
         &mut self,
         record: EntityCompatibilityRecord,
+        components: Option<EntityComponents>,
         residency: EntityResidency,
         tick: u64,
     ) -> Result<EntityId, EntityError> {
         record.validate()?;
+        if self.len() >= MAX_ENTITY_COUNT {
+            return Err(EntityError::LimitExceeded("entity count"));
+        }
         if self
             .hot
             .values()
@@ -294,15 +355,16 @@ impl EntityAuthority {
         let slot = &mut self.slots[index as usize];
         slot.residency = Some(residency);
         let id = EntityId::new(index, slot.generation);
-        self.insert_storage(id, record, residency, tick, ProtectionState::default());
+        self.insert_storage(id, record, components, residency, tick, ProtectionState::default())?;
         Ok(id)
     }
 
     /// Import a known generational identity without remapping old save records.
-    pub fn insert_with_id(
+    fn insert_with_id(
         &mut self,
         id: EntityId,
         record: EntityCompatibilityRecord,
+        components: Option<EntityComponents>,
         residency: EntityResidency,
         tick: u64,
     ) -> Result<(), EntityError> {
@@ -323,6 +385,9 @@ impl EntityAuthority {
             return Err(EntityError::DuplicateExternalId(record.external_entity_id));
         }
         let required = index as usize + 1;
+        if required > MAX_ENTITY_COUNT + 1 {
+            return Err(EntityError::LimitExceeded("entity slot index"));
+        }
         if self.slots.len() < required {
             for new_index in self.slots.len()..required {
                 self.slots.push(EntitySlot {
@@ -341,7 +406,7 @@ impl EntityAuthority {
         self.free.remove(&index);
         slot.generation = id.0.generation().max(1);
         slot.residency = Some(residency);
-        self.insert_storage(id, record, residency, tick, ProtectionState::default());
+        self.insert_storage(id, record, components, residency, tick, ProtectionState::default())?;
         Ok(())
     }
 
@@ -349,16 +414,23 @@ impl EntityAuthority {
         &mut self,
         id: EntityId,
         record: EntityCompatibilityRecord,
+        components: Option<EntityComponents>,
         residency: EntityResidency,
         tick: u64,
         protection: ProtectionState,
-    ) {
+    ) -> Result<(), EntityError> {
+        let components = components.unwrap_or_else(|| EntityComponents::from_compatibility(&record, protection));
+        components.validate().map_err(EntityError::InvalidRecord)?;
+        let protection = components.protection.flags;
+        let route_epoch = components.ai.route_epoch;
         match residency {
             EntityResidency::Hot => {
                 self.hot.insert(
                     id,
                     HotEntity {
                         record,
+                        components,
+                        entity_revision: 1,
                         tier: SimulationTier::Nearby,
                         protection,
                         out_of_range_seconds: 0.0,
@@ -371,15 +443,43 @@ impl EntityAuthority {
                     id,
                     ColdEntity {
                         record,
+                        components,
+                        entity_revision: 1,
                         protection,
                         summary: DormantEntitySummary {
                             slept_at_tick: tick,
                             last_advanced_tick: tick,
+                            route_epoch,
                             ..DormantEntitySummary::default()
                         },
                     },
                 );
             }
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn entity_revision(&self, id: EntityId) -> Option<u64> {
+        match self.residency(id)? {
+            EntityResidency::Hot => self.hot.get(&id).map(|entity| entity.entity_revision),
+            EntityResidency::Cold => self.cold.get(&id).map(|entity| entity.entity_revision),
+        }
+    }
+
+    #[must_use]
+    pub fn compatibility_record(&self, id: EntityId) -> Option<&EntityCompatibilityRecord> {
+        match self.residency(id)? {
+            EntityResidency::Hot => self.hot.get(&id).map(|entity| &entity.record),
+            EntityResidency::Cold => self.cold.get(&id).map(|entity| &entity.record),
+        }
+    }
+
+    #[must_use]
+    pub fn components(&self, id: EntityId) -> Option<&EntityComponents> {
+        match self.residency(id)? {
+            EntityResidency::Hot => self.hot.get(&id).map(|entity| &entity.components),
+            EntityResidency::Cold => self.cold.get(&id).map(|entity| &entity.components),
         }
     }
 
@@ -393,19 +493,23 @@ impl EntityAuthority {
         self.validate_live_id(id).ok()
     }
 
-    pub fn hibernate(&mut self, id: EntityId, tick: u64) -> Result<(), EntityError> {
+    fn hibernate(&mut self, id: EntityId, tick: u64) -> Result<(), EntityError> {
         match self.validate_live_id(id)? {
             EntityResidency::Cold => Ok(()),
             EntityResidency::Hot => {
                 let hot = self.hot.remove(&id).ok_or(EntityError::MissingEntity(id))?;
+                let route_epoch = hot.components.ai.route_epoch;
                 self.cold.insert(
                     id,
                     ColdEntity {
                         record: hot.record,
+                        components: hot.components,
+                        entity_revision: hot.entity_revision.wrapping_add(1),
                         protection: hot.protection,
                         summary: DormantEntitySummary {
                             slept_at_tick: tick,
                             last_advanced_tick: tick,
+                            route_epoch,
                             ..DormantEntitySummary::default()
                         },
                     },
@@ -416,10 +520,15 @@ impl EntityAuthority {
         }
     }
 
-    pub fn wake(&mut self, id: EntityId, tier: SimulationTier, tick: u64) -> Result<(), EntityError> {
+    fn wake(&mut self, id: EntityId, tier: SimulationTier, tick: u64) -> Result<(), EntityError> {
+        if tier == SimulationTier::Dormant {
+            return Err(EntityError::InvalidRecord("a hot entity cannot use the dormant tier"));
+        }
         match self.validate_live_id(id)? {
             EntityResidency::Hot => {
-                self.hot.get_mut(&id).ok_or(EntityError::MissingEntity(id))?.tier = tier;
+                let entity = self.hot.get_mut(&id).ok_or(EntityError::MissingEntity(id))?;
+                entity.tier = tier;
+                entity.entity_revision = entity.entity_revision.wrapping_add(1);
                 Ok(())
             }
             EntityResidency::Cold => {
@@ -428,6 +537,8 @@ impl EntityAuthority {
                     id,
                     HotEntity {
                         record: cold.record,
+                        components: cold.components,
+                        entity_revision: cold.entity_revision.wrapping_add(1),
                         tier,
                         protection: cold.protection,
                         out_of_range_seconds: 0.0,
@@ -440,7 +551,7 @@ impl EntityAuthority {
         }
     }
 
-    pub fn remove(&mut self, id: EntityId) -> Result<EntityCompatibilityRecord, EntityError> {
+    fn remove(&mut self, id: EntityId) -> Result<EntityCompatibilityRecord, EntityError> {
         let residency = self.validate_live_id(id)?;
         let record = match residency {
             EntityResidency::Hot => self.hot.remove(&id).ok_or(EntityError::MissingEntity(id))?.record,
@@ -454,11 +565,27 @@ impl EntityAuthority {
         Ok(record)
     }
 
-    pub fn hot_mut(&mut self, id: EntityId) -> Result<&mut HotEntity, EntityError> {
+    fn hot_mut(&mut self, id: EntityId) -> Result<&mut HotEntity, EntityError> {
         if self.validate_live_id(id)? != EntityResidency::Hot {
             return Err(EntityError::WrongResidency(id));
         }
         self.hot.get_mut(&id).ok_or(EntityError::MissingEntity(id))
+    }
+
+    fn components_mut(
+        &mut self,
+        id: EntityId,
+    ) -> Result<(&mut EntityCompatibilityRecord, &mut EntityComponents, &mut u64), EntityError> {
+        match self.validate_live_id(id)? {
+            EntityResidency::Hot => {
+                let entity = self.hot.get_mut(&id).ok_or(EntityError::MissingEntity(id))?;
+                Ok((&mut entity.record, &mut entity.components, &mut entity.entity_revision))
+            }
+            EntityResidency::Cold => {
+                let entity = self.cold.get_mut(&id).ok_or(EntityError::MissingEntity(id))?;
+                Ok((&mut entity.record, &mut entity.components, &mut entity.entity_revision))
+            }
+        }
     }
 
     fn validate_live_id(&self, id: EntityId) -> Result<EntityResidency, EntityError> {
@@ -489,6 +616,9 @@ impl EntityAuthority {
                 supplied: batch.sequence,
             });
         }
+        if batch.commands.len() > MAX_ENTITY_COMMANDS_PER_BATCH {
+            return Err(EntityError::LimitExceeded("command batch"));
+        }
         let mut staged = self.clone();
         let mut events = Vec::with_capacity(batch.commands.len());
         for (command_index, command) in batch.commands.iter().enumerate() {
@@ -514,13 +644,61 @@ impl EntityAuthority {
         command_index: u32,
         events: &mut Vec<EntityEvent>,
     ) -> Result<(), EntityError> {
+        let commanded_id = match command {
+            EntityCommand::Spawn { .. } | EntityCommand::SpawnTyped { .. } => None,
+            EntityCommand::SpawnAt { id, .. }
+            | EntityCommand::SpawnTypedAt { id, .. }
+            | EntityCommand::Despawn { id, .. }
+            | EntityCommand::Hibernate { id }
+            | EntityCommand::Wake { id, .. }
+            | EntityCommand::UpdateMotion { id, .. }
+            | EntityCommand::SetSimulationTier { id, .. }
+            | EntityCommand::SetProtection { id, .. }
+            | EntityCommand::SetVitalsEnvironment { id, .. }
+            | EntityCommand::SetLocomotionBody { id, .. }
+            | EntityCommand::SetAiState { id, .. }
+            | EntityCommand::SetSocialState { id, .. }
+            | EntityCommand::SetMountState { id, .. }
+            | EntityCommand::SetProtectionProvenance { id, .. }
+            | EntityCommand::SetNetworkAuthority { id, .. }
+            | EntityCommand::SetCareState { id, .. }
+            | EntityCommand::SetHusbandryState { id, .. }
+            | EntityCommand::SetWorkState { id, .. }
+            | EntityCommand::SetEquipment { id, .. }
+            | EntityCommand::SetDragonState { id, .. }
+            | EntityCommand::SetLegendaryState { id, .. }
+            | EntityCommand::SetSummonState { id, .. }
+            | EntityCommand::SetSentientState { id, .. }
+            | EntityCommand::ReplaceComponents { id, .. }
+            | EntityCommand::ReplaceCompatibilityRecord { id, .. }
+            | EntityCommand::SetRangeState { id, .. }
+            | EntityCommand::SetDormantSummary { id, .. } => Some(*id),
+        };
+        let previous_entity_revision = commanded_id.and_then(|id| self.entity_revision(id)).unwrap_or(0);
         let (id, kind) = match command {
             EntityCommand::Spawn { record, residency } => {
-                let id = self.spawn(record.clone(), *residency, tick)?;
+                let id = self.spawn(record.clone(), None, *residency, tick)?;
+                (id, EntityEventKind::Spawned { residency: *residency })
+            }
+            EntityCommand::SpawnTyped {
+                record,
+                components,
+                residency,
+            } => {
+                let id = self.spawn(record.clone(), Some(components.clone()), *residency, tick)?;
                 (id, EntityEventKind::Spawned { residency: *residency })
             }
             EntityCommand::SpawnAt { id, record, residency } => {
-                self.insert_with_id(*id, record.clone(), *residency, tick)?;
+                self.insert_with_id(*id, record.clone(), None, *residency, tick)?;
+                (*id, EntityEventKind::Spawned { residency: *residency })
+            }
+            EntityCommand::SpawnTypedAt {
+                id,
+                record,
+                components,
+                residency,
+            } => {
+                self.insert_with_id(*id, record.clone(), Some(components.clone()), *residency, tick)?;
                 (*id, EntityEventKind::Spawned { residency: *residency })
             }
             EntityCommand::Despawn { id, reason } => {
@@ -548,14 +726,26 @@ impl EntityAuthority {
                 entity.record.position = *position;
                 entity.record.yaw = *yaw;
                 entity.record.velocity = *velocity;
+                entity.components.locomotion.velocity = *velocity;
                 entity.last_simulated_tick = tick;
+                entity.entity_revision = entity.entity_revision.wrapping_add(1);
                 (*id, EntityEventKind::MotionUpdated)
             }
             EntityCommand::SetSimulationTier { id, tier } => {
-                self.hot_mut(*id)?.tier = *tier;
+                if *tier == SimulationTier::Dormant {
+                    return Err(EntityError::InvalidRecord(
+                        "hibernate instead of assigning the dormant tier",
+                    ));
+                }
+                let entity = self.hot_mut(*id)?;
+                entity.tier = *tier;
+                entity.entity_revision = entity.entity_revision.wrapping_add(1);
                 (*id, EntityEventKind::TierChanged(*tier))
             }
             EntityCommand::SetProtection { id, protection } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.protection.flags = *protection;
+                *revision = revision.wrapping_add(1);
                 match self.validate_live_id(*id)? {
                     EntityResidency::Hot => {
                         self.hot.get_mut(id).ok_or(EntityError::MissingEntity(*id))?.protection = *protection
@@ -566,10 +756,279 @@ impl EntityAuthority {
                 }
                 (*id, EntityEventKind::ProtectionChanged)
             }
+            EntityCommand::SetVitalsEnvironment { id, value } => {
+                let (record, components, revision) = self.components_mut(*id)?;
+                components.vitals = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                record.health = value.health;
+                record.maximum_health = value.maximum_health;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::VitalsEnvironmentChanged)
+            }
+            EntityCommand::SetLocomotionBody { id, value } => {
+                let (record, components, revision) = self.components_mut(*id)?;
+                components.locomotion = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                record.velocity = value.velocity;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::LocomotionChanged)
+            }
+            EntityCommand::SetAiState { id, value } => {
+                let residency = self.validate_live_id(*id)?;
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.ai = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                if residency == EntityResidency::Cold {
+                    self.cold
+                        .get_mut(id)
+                        .ok_or(EntityError::MissingEntity(*id))?
+                        .summary
+                        .route_epoch = value.route_epoch;
+                }
+                (*id, EntityEventKind::AiChanged)
+            }
+            EntityCommand::SetSocialState { id, value } => {
+                let (record, components, revision) = self.components_mut(*id)?;
+                components.social = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                record.social_group_id = value.group_id.clone();
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::SocialChanged)
+            }
+            EntityCommand::SetMountState { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.mount = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::MountChanged)
+            }
+            EntityCommand::SetProtectionProvenance { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.protection = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                match self.validate_live_id(*id)? {
+                    EntityResidency::Hot => {
+                        self.hot.get_mut(id).ok_or(EntityError::MissingEntity(*id))?.protection = value.flags
+                    }
+                    EntityResidency::Cold => {
+                        self.cold.get_mut(id).ok_or(EntityError::MissingEntity(*id))?.protection = value.flags
+                    }
+                }
+                (*id, EntityEventKind::ProtectionChanged)
+            }
+            EntityCommand::SetNetworkAuthority { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.network = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::NetworkAuthorityChanged)
+            }
+            EntityCommand::SetCareState { id, value } => {
+                let (record, components, revision) = self.components_mut(*id)?;
+                components.care = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                if let Some(care) = value {
+                    record.bond_points = u32::from(care.trust_milli);
+                    record.tamed = care.stabilized;
+                }
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::CareChanged)
+            }
+            EntityCommand::SetHusbandryState { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.husbandry = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::HusbandryChanged)
+            }
+            EntityCommand::SetWorkState { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.work = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::WorkChanged)
+            }
+            EntityCommand::SetEquipment { id, value } => {
+                let (record, components, revision) = self.components_mut(*id)?;
+                components.equipment = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                record.equipment = value
+                    .iter()
+                    .map(|(slot, item)| (slot.clone(), item.item_key.clone()))
+                    .collect();
+                components.mount.saddle_key = record.equipment.get("saddle").cloned();
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::EquipmentChanged)
+            }
+            EntityCommand::SetDragonState { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.dragon = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::DragonChanged)
+            }
+            EntityCommand::SetLegendaryState { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.legendary = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::LegendaryChanged)
+            }
+            EntityCommand::SetSummonState { id, value } => {
+                let (_, components, revision) = self.components_mut(*id)?;
+                components.summon = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::SummonChanged)
+            }
+            EntityCommand::SetSentientState { id, value } => {
+                let (record, components, revision) = self.components_mut(*id)?;
+                components.sentient = value.clone();
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                record.faction_id = value.as_ref().and_then(|sentient| sentient.faction_id.clone());
+                record.settlement_id = value.as_ref().and_then(|sentient| sentient.settlement_id.clone());
+                *revision = revision.wrapping_add(1);
+                (*id, EntityEventKind::SentientChanged)
+            }
+            EntityCommand::ReplaceComponents { id, value } => {
+                value.validate().map_err(EntityError::InvalidRecord)?;
+                let residency = self.validate_live_id(*id)?;
+                let (record, components, revision) = self.components_mut(*id)?;
+                *components = value.clone();
+                record.health = value.vitals.health;
+                record.maximum_health = value.vitals.maximum_health;
+                record.velocity = value.locomotion.velocity;
+                record.social_group_id = value.social.group_id.clone();
+                record.equipment = value
+                    .equipment
+                    .iter()
+                    .map(|(slot, item)| (slot.clone(), item.item_key.clone()))
+                    .collect();
+                *revision = revision.wrapping_add(1);
+                if residency == EntityResidency::Cold {
+                    self.cold
+                        .get_mut(id)
+                        .ok_or(EntityError::MissingEntity(*id))?
+                        .summary
+                        .route_epoch = value.ai.route_epoch;
+                }
+                (*id, EntityEventKind::ComponentsReplaced)
+            }
+            EntityCommand::ReplaceCompatibilityRecord { id, value } => {
+                value.validate()?;
+                let duplicate = self.hot.iter().any(|(candidate_id, entity)| {
+                    *candidate_id != *id && entity.record.external_entity_id == value.external_entity_id
+                }) || self.cold.iter().any(|(candidate_id, entity)| {
+                    *candidate_id != *id && entity.record.external_entity_id == value.external_entity_id
+                });
+                if duplicate {
+                    return Err(EntityError::DuplicateExternalId(value.external_entity_id.clone()));
+                }
+                let (record, components, revision) = self.components_mut(*id)?;
+                *record = value.clone();
+                components.vitals.health = value.health;
+                components.vitals.maximum_health = value.maximum_health;
+                components.locomotion.velocity = value.velocity;
+                components.social.group_id = value.social_group_id.clone();
+                components.equipment = value
+                    .equipment
+                    .iter()
+                    .map(|(slot, item_key)| {
+                        (
+                            slot.clone(),
+                            EquipmentSlotState {
+                                item_key: item_key.clone(),
+                                count: 1,
+                                durability: 0,
+                                custom: BTreeMap::new(),
+                            },
+                        )
+                    })
+                    .collect();
+                components.mount.saddle_key = value.equipment.get("saddle").cloned();
+                components.mount.accepts_riders = components.mount.saddle_key.is_some();
+                components.care = (value.tamed || value.bond_points > 0).then(|| {
+                    let mut care = components.care.clone().unwrap_or(CareState {
+                        stabilized: false,
+                        nourishment_milli: 10_000,
+                        trust_milli: 0,
+                        care_stage: 0,
+                        last_care_tick: 0,
+                    });
+                    care.stabilized = value.tamed;
+                    care.trust_milli = u16::try_from(value.bond_points.min(10_000)).unwrap_or(10_000);
+                    care
+                });
+                if let Some(sentient) = &mut components.sentient {
+                    sentient.faction_id = value.faction_id.clone();
+                    sentient.settlement_id = value.settlement_id.clone();
+                }
+                for (enabled, flag) in [
+                    (value.tamed, ProtectionState::TAMED),
+                    (value.owner_id.is_some(), ProtectionState::OWNED),
+                    (value.ever_led, ProtectionState::EVER_LED),
+                    (value.name.is_some(), ProtectionState::NAMED),
+                ] {
+                    if enabled {
+                        components.protection.flags.insert(flag);
+                    } else {
+                        components.protection.flags.remove(flag);
+                    }
+                }
+                components.validate().map_err(EntityError::InvalidRecord)?;
+                let flags = components.protection.flags;
+                *revision = revision.wrapping_add(1);
+                match self.validate_live_id(*id)? {
+                    EntityResidency::Hot => {
+                        self.hot.get_mut(id).ok_or(EntityError::MissingEntity(*id))?.protection = flags
+                    }
+                    EntityResidency::Cold => {
+                        self.cold.get_mut(id).ok_or(EntityError::MissingEntity(*id))?.protection = flags
+                    }
+                }
+                (*id, EntityEventKind::CompatibilityRecordChanged)
+            }
+            EntityCommand::SetRangeState {
+                id,
+                out_of_range_seconds,
+                last_simulated_tick,
+            } => {
+                if !out_of_range_seconds.is_finite() || *out_of_range_seconds < 0.0 {
+                    return Err(EntityError::InvalidRecord(
+                        "range state must be finite and non-negative",
+                    ));
+                }
+                let entity = self.hot_mut(*id)?;
+                entity.out_of_range_seconds = *out_of_range_seconds;
+                entity.last_simulated_tick = *last_simulated_tick;
+                entity.entity_revision = entity.entity_revision.wrapping_add(1);
+                (*id, EntityEventKind::RangeStateChanged)
+            }
+            EntityCommand::SetDormantSummary { id, value } => {
+                if self.validate_live_id(*id)? != EntityResidency::Cold {
+                    return Err(EntityError::WrongResidency(*id));
+                }
+                let entity = self.cold.get_mut(id).ok_or(EntityError::MissingEntity(*id))?;
+                if value.route_epoch != entity.components.ai.route_epoch {
+                    return Err(EntityError::InvalidRecord(
+                        "dormant route epoch must match AI route epoch",
+                    ));
+                }
+                entity.summary = value.clone();
+                entity.entity_revision = entity.entity_revision.wrapping_add(1);
+                (*id, EntityEventKind::DormantSummaryChanged)
+            }
         };
+        let entity_revision = self
+            .entity_revision(id)
+            .unwrap_or_else(|| previous_entity_revision.wrapping_add(1));
         events.push(EntityEvent {
             command_index,
             entity_id: id,
+            previous_entity_revision,
+            entity_revision,
             kind,
         });
         Ok(())
@@ -577,27 +1036,10 @@ impl EntityAuthority {
 
     #[must_use]
     pub fn canonical_hash(&self) -> CanonicalHash {
-        let mut hasher = CanonicalHasher::new("blockwild.entity.authority.v1");
-        hasher.write_u64(self.revision);
-        hasher.write_u64(self.last_sequence.unwrap_or_default());
-        for (id, entity) in &self.hot {
-            hasher.write_u64(id.packed());
-            hasher.write_bytes(entity.record.canonical_hash().as_bytes());
-            hasher.write_u16(entity.tier as u16);
-            hasher.write_u64(entity.protection.bits());
-            hasher.write_u32(entity.out_of_range_seconds.to_bits());
-            hasher.write_u64(entity.last_simulated_tick);
-        }
-        for (id, entity) in &self.cold {
-            hasher.write_u64(id.packed());
-            hasher.write_bytes(entity.record.canonical_hash().as_bytes());
-            hasher.write_u64(entity.protection.bits());
-            hasher.write_u64(entity.summary.slept_at_tick);
-            hasher.write_u64(entity.summary.last_advanced_tick);
-            hasher.write_u32(entity.summary.care_cycles);
-            hasher.write_u32(entity.summary.breeding_cycles);
-            hasher.write_u32(entity.summary.work_cycles);
-        }
+        let mut hasher = CanonicalHasher::new("blockwild.entity.authority.v2");
+        let snapshot = crate::encode_entity_authority_snapshot(self)
+            .expect("an authority accepted only validated records and components");
+        hasher.write_bytes(&snapshot);
         hasher.finish()
     }
 }
@@ -617,9 +1059,20 @@ pub enum EntityCommand {
         record: EntityCompatibilityRecord,
         residency: EntityResidency,
     },
+    SpawnTyped {
+        record: EntityCompatibilityRecord,
+        components: EntityComponents,
+        residency: EntityResidency,
+    },
     SpawnAt {
         id: EntityId,
         record: EntityCompatibilityRecord,
+        residency: EntityResidency,
+    },
+    SpawnTypedAt {
+        id: EntityId,
+        record: EntityCompatibilityRecord,
+        components: EntityComponents,
         residency: EntityResidency,
     },
     Despawn {
@@ -647,6 +1100,83 @@ pub enum EntityCommand {
         id: EntityId,
         protection: ProtectionState,
     },
+    SetVitalsEnvironment {
+        id: EntityId,
+        value: VitalsEnvironment,
+    },
+    SetLocomotionBody {
+        id: EntityId,
+        value: LocomotionBody,
+    },
+    SetAiState {
+        id: EntityId,
+        value: AiState,
+    },
+    SetSocialState {
+        id: EntityId,
+        value: SocialFollowerState,
+    },
+    SetMountState {
+        id: EntityId,
+        value: MountState,
+    },
+    SetProtectionProvenance {
+        id: EntityId,
+        value: ProtectionProvenance,
+    },
+    SetNetworkAuthority {
+        id: EntityId,
+        value: NetworkAuthorityState,
+    },
+    SetCareState {
+        id: EntityId,
+        value: Option<CareState>,
+    },
+    SetHusbandryState {
+        id: EntityId,
+        value: Option<HusbandryState>,
+    },
+    SetWorkState {
+        id: EntityId,
+        value: Option<WorkState>,
+    },
+    SetEquipment {
+        id: EntityId,
+        value: BTreeMap<String, EquipmentSlotState>,
+    },
+    SetDragonState {
+        id: EntityId,
+        value: Option<DragonState>,
+    },
+    SetLegendaryState {
+        id: EntityId,
+        value: Option<LegendaryState>,
+    },
+    SetSummonState {
+        id: EntityId,
+        value: Option<SummonState>,
+    },
+    SetSentientState {
+        id: EntityId,
+        value: Option<SentientState>,
+    },
+    ReplaceComponents {
+        id: EntityId,
+        value: EntityComponents,
+    },
+    ReplaceCompatibilityRecord {
+        id: EntityId,
+        value: EntityCompatibilityRecord,
+    },
+    SetRangeState {
+        id: EntityId,
+        out_of_range_seconds: f32,
+        last_simulated_tick: u64,
+    },
+    SetDormantSummary {
+        id: EntityId,
+        value: DormantEntitySummary,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -671,6 +1201,8 @@ pub struct EntityEventBatch {
 pub struct EntityEvent {
     pub command_index: u32,
     pub entity_id: EntityId,
+    pub previous_entity_revision: u64,
+    pub entity_revision: u64,
     pub kind: EntityEventKind,
 }
 
@@ -682,6 +1214,24 @@ pub enum EntityEventKind {
     MotionUpdated,
     TierChanged(SimulationTier),
     ProtectionChanged,
+    VitalsEnvironmentChanged,
+    LocomotionChanged,
+    AiChanged,
+    SocialChanged,
+    MountChanged,
+    NetworkAuthorityChanged,
+    CareChanged,
+    HusbandryChanged,
+    WorkChanged,
+    EquipmentChanged,
+    DragonChanged,
+    LegendaryChanged,
+    SummonChanged,
+    SentientChanged,
+    ComponentsReplaced,
+    CompatibilityRecordChanged,
+    RangeStateChanged,
+    DormantSummaryChanged,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -696,6 +1246,7 @@ pub enum EntityError {
     DuplicateExternalId(String),
     StaleRevision { expected: u64, supplied: u64 },
     StaleSequence { last: u64, supplied: u64 },
+    LimitExceeded(&'static str),
 }
 
 impl fmt::Display for EntityError {
@@ -715,6 +1266,7 @@ impl fmt::Display for EntityError {
             Self::StaleSequence { last, supplied } => {
                 write!(formatter, "stale sequence {supplied}; last accepted {last}")
             }
+            Self::LimitExceeded(what) => write!(formatter, "entity {what} exceeds its bound"),
         }
     }
 }

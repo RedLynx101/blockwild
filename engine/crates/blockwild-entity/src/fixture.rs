@@ -4,11 +4,11 @@ use blockwild_types::{CanonicalHash, CanonicalHasher, EntityId};
 
 use crate::{
     AdmissionDiagnostics, AnimationChannel, AnimationClip, AnimationKeyframe, AnimationProperty, AuthoredLodPolicy,
-    ColorRgba8, EntityAuthority, EntityBroadphase, EntityBroadphaseEntry, EntityCompatibilityRecord, EntityResidency,
-    EntityScheduler, JointSemantic, ModelGraph, ModelMaterial, ModelNode, ModelPrimitive, ModelRegistry, NaturalPool,
-    PopulationSnapshot, PoseParameters, RenderAdmissionController, RenderCandidate, RenderEntityInput, RenderPressure,
-    SimulationTier, SpawnCandidate, Transform, Vec3, admit_spawns, extract_render_frame, global_natural_cost_ceiling,
-    natural_pool_budgets,
+    ColorRgba8, ENTITY_COMMAND_SCHEMA, EntityAuthority, EntityBroadphase, EntityBroadphaseEntry, EntityCommand,
+    EntityCommandBatch, EntityCompatibilityRecord, EntityResidency, EntityScheduler, JointSemantic, ModelGraph,
+    ModelMaterial, ModelNode, ModelPrimitive, ModelRegistry, NaturalPool, PopulationSnapshot, PoseParameters,
+    RenderAdmissionController, RenderCandidate, RenderEntityInput, RenderPressure, SimulationTier, SpawnCandidate,
+    Transform, Vec3, admit_spawns, extract_render_frame, global_natural_cost_ceiling, natural_pool_budgets,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -232,9 +232,21 @@ pub fn run_entity_fixture(entity_count: u32) -> Result<EntityFixtureReport, Stri
         } else {
             EntityResidency::Hot
         };
+        let revision = authority.revision();
         let id = authority
-            .spawn(record.clone(), residency, 1_200)
-            .map_err(|error| error.to_string())?;
+            .apply_batch(&EntityCommandBatch {
+                schema: ENTITY_COMMAND_SCHEMA,
+                sequence: revision + 1,
+                expected_revision: revision,
+                tick: 1_200,
+                commands: vec![EntityCommand::Spawn {
+                    record: record.clone(),
+                    residency,
+                }],
+            })
+            .map_err(|error| error.to_string())?
+            .events[0]
+            .entity_id;
         if residency == EntityResidency::Hot {
             broadphase
                 .upsert(EntityBroadphaseEntry {
@@ -251,7 +263,7 @@ pub fn run_entity_fixture(entity_count: u32) -> Result<EntityFixtureReport, Stri
             } else {
                 SimulationTier::Coarse
             };
-            scheduler.upsert(id, tier, 1_200);
+            scheduler.upsert(id, tier, authority.entity_revision(id).unwrap_or(1), 1_200);
         }
         let distance = record.position.x.hypot(record.position.z);
         render_candidates.push(RenderCandidate {
