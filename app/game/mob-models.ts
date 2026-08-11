@@ -3510,19 +3510,101 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     tail.rotation.x = -0.28;
     add(tail, [0.44, 0.28, 0.4], leaf, [0, 0.04, 0.54], undefined, "glimmerhart-tail-leaf");
   } else if (kind === "runeowl") {
+    // Rebuilt from two boxes and a pair of planks into a layered owl: a real
+    // facial disc, a shoulder-to-primary wing chain, a fanned tail, and
+    // articulated legs that end in gripping talons instead of floating pegs.
+    visual.userData.wildlifeRig = "runeowl";
+    const plumeMid = material(0x6f7099);
+    const breastMaterial = material(0x8f8fc0);
+    const discPale = material(0xd9d4ff);
+    const beakMaterial = material(0xf3cc73);
+    const beakDark = material(0xc79a4c);
+    const talonMaterial = material(0xf2d17a);
+    const talonDark = material(0xbe9142);
+    const pupilMaterial = material(0x1e1b30);
     const glow = material(0xb5adff, true, 0.9);
-    add(visual, [0.62, 0.72, 0.54], bodyMaterial, [0, 0.42, 0], "body", "runeowl-body");
-    add(visual, [0.68, 0.58, 0.52], accentMaterial, [0, 0.88, -0.16], "head", "runeowl-head");
-    eyePair(0.19, 0.98, -0.44, 0.12, "runeowl");
-    add(visual, [0.2, 0.14, 0.22], material(0xf3cc73), [0, 0.8, -0.55], undefined, "runeowl-beak");
+
+    add(visual, [0.58, 0.56, 0.48], bodyMaterial, [0, 0.46, 0.02], "body", "runeowl-body");
+    add(visual, [0.48, 0.32, 0.4], breastMaterial, [0, 0.28, -0.09], "body", "runeowl-breast");
+    add(visual, [0.54, 0.32, 0.44], plumeMid, [0, 0.67, 0.06], "body", "runeowl-mantle");
+    add(visual, [0.36, 0.3, 0.09], accentMaterial, [0, 0.42, -0.25], undefined, "runeowl-breast-plate");
+    add(visual, [0.44, 0.24, 0.32], darkMaterial, [0, 0.34, 0.2], "body", "runeowl-rump");
+
+    const head = childPivot(visual, "runeowl-head-pivot", [0, 0.8, -0.02]);
+    add(head, [0.5, 0.4, 0.44], bodyMaterial, [0, 0.08, -0.02], "head", "runeowl-skull");
+    add(head, [0.44, 0.12, 0.38], plumeMid, [0, 0.28, -0.02], "head", "runeowl-crown");
+    add(head, [0.54, 0.48, 0.14], accentMaterial, [0, 0.05, -0.24], "head", "runeowl-face-disc");
+    add(head, [0.09, 0.44, 0.08], discPale, [0, 0.05, -0.31], undefined, "runeowl-face-keel");
+    add(head, [0.5, 0.09, 0.13], plumeMid, [0, 0.26, -0.25], undefined, "runeowl-brow");
     for (const side of [-1, 1]) {
-      const wing = pivotBox([0.54, 0.12, 0.95], glow, [side * 0.36, 0.57, 0.05], [side * 0.25, 0, 0], "wings", `runeowl-${side < 0 ? "left" : "right"}-wing`);
-      wing.rotation.z = side * 0.18;
+      const sideName = side < 0 ? "left" : "right";
+      add(head, [0.22, 0.34, 0.09], discPale, [side * 0.17, 0.05, -0.3], undefined, `runeowl-${sideName}-face-ring`);
+      add(head, [0.15, 0.15, 0.07], eyeMaterial, [side * 0.16, 0.07, -0.34], undefined, `runeowl-${sideName}-eye`);
+      add(head, [0.07, 0.085, 0.03], pupilMaterial, [side * 0.16, 0.07, -0.38], undefined, `runeowl-${sideName}-pupil`);
+      add(head, [0.1, 0.2, 0.13], plumeMid, [side * 0.26, -0.05, -0.18], undefined, `runeowl-${sideName}-cheek`);
+      const tuft = childPivot(head, `runeowl-${sideName}-ear-pivot`, [side * 0.17, 0.26, -0.04]);
+      add(tuft, [0.1, 0.17, 0.11], plumeMid, [0, 0.1, 0], undefined, `runeowl-${sideName}-ear-tuft`);
+      add(tuft, [0.065, 0.15, 0.075], bodyMaterial, [side * 0.035, 0.24, 0.01], undefined, `runeowl-${sideName}-ear-tip`).rotation.z = side * 0.3;
+    }
+    add(head, [0.13, 0.12, 0.16], beakMaterial, [0, -0.06, -0.34], undefined, "runeowl-beak-upper").rotation.x = 0.34;
+    add(head, [0.075, 0.09, 0.09], beakDark, [0, -0.13, -0.39], undefined, "runeowl-beak-tip").rotation.x = 0.5;
+    add(head, [0.16, 0.06, 0.11], beakDark, [0, -0.14, -0.28], undefined, "runeowl-jaw");
+
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.17, 0.26, 0.32], plumeMid, [side * 0.29, 0.63, 0.02], undefined, `runeowl-${sideName}-shoulder`);
+      const wing = pivotBox([0.22, 0.16, 0.42], bodyMaterial, [side * 0.3, 0.6, 0.0], [side * 0.12, -0.01, 0], "wings", `runeowl-${sideName}-wing`);
+      wing.rotation.z = side * 0.16;
       wing.userData.side = side;
       wing.userData.phase = 0;
-      add(visual, [0.08, 0.22, 0.08], material(0xf2d17a), [side * 0.15, 0.02, -0.02], "legs", `runeowl-${side < 0 ? "left" : "right"}-talon`);
+      add(wing, [0.3, 0.12, 0.46], plumeMid, [side * 0.34, -0.03, 0.02], undefined, `runeowl-${sideName}-wing-covert`);
+      add(wing, [0.26, 0.09, 0.36], bodyMaterial, [side * 0.6, -0.06, -0.03], undefined, `runeowl-${sideName}-wing-forearm`);
+      add(wing, [0.12, 0.07, 0.16], discPale, [side * 0.43, 0.0, -0.19], undefined, `runeowl-${sideName}-alula`);
+      for (let feather = 0; feather < 3; feather += 1) {
+        const primary = add(
+          wing,
+          [0.34, 0.05, 0.13 - feather * 0.014],
+          feather % 2 === 0 ? plumeMid : bodyMaterial,
+          [side * (0.82 + feather * 0.015), -0.07 - feather * 0.012, -0.11 + feather * 0.13],
+          undefined,
+          `runeowl-${sideName}-primary-${feather + 1}`,
+        );
+        primary.rotation.y = side * (0.12 - feather * 0.11);
+        primary.rotation.z = side * -0.06;
+      }
     }
-    for (let rune = 0; rune < 3; rune += 1) add(visual, [0.12, 0.05, 0.16], glow, [-0.18 + rune * 0.18, 0.53, -0.49], undefined, `runeowl-rune-${rune + 1}`).rotation.z = rune * 0.4;
+
+    const tail = childPivot(visual, "runeowl-tail-root-pivot", [0, 0.36, 0.26]);
+    tail.rotation.x = 0.34;
+    add(tail, [0.3, 0.13, 0.22], plumeMid, [0, -0.02, 0.08], undefined, "runeowl-tail-base");
+    for (let feather = -1; feather <= 1; feather += 1) {
+      const quill = add(tail, [0.15, 0.055, 0.42], feather === 0 ? bodyMaterial : plumeMid, [feather * 0.13, -0.03, 0.33], undefined, `runeowl-tail-feather-${feather + 2}`);
+      quill.rotation.y = feather * 0.2;
+      quill.rotation.x = -0.06;
+    }
+
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const leg = pivotBox([0.16, 0.19, 0.17], bodyMaterial, [side * 0.11, 0.26, -0.02], [0, -0.07, 0], "legs", `runeowl-${sideName}-leg`);
+      leg.userData.side = side;
+      leg.userData.phase = side < 0 ? 0 : Math.PI;
+      add(leg, [0.115, 0.1, 0.115], plumeMid, [0, -0.18, 0], undefined, `runeowl-${sideName}-knee`);
+      add(leg, [0.095, 0.14, 0.095], talonDark, [0, -0.27, -0.01], undefined, `runeowl-${sideName}-shank`);
+      add(leg, [0.09, 0.07, 0.09], talonMaterial, [0, -0.355, -0.02], undefined, `runeowl-${sideName}-ankle`);
+      add(leg, [0.12, 0.055, 0.14], talonMaterial, [0, -0.4, -0.05], undefined, `runeowl-${sideName}-foot`);
+      for (const [toe, toeX] of [[1, -0.04], [2, 0], [3, 0.04]] as const) {
+        const claw = add(leg, [0.035, 0.04, 0.13], talonDark, [toeX, -0.415, -0.15], undefined, `runeowl-${sideName}-talon-${toe}`);
+        claw.rotation.y = toeX * 4.2;
+        claw.rotation.x = 0.16;
+      }
+      add(leg, [0.033, 0.038, 0.1], talonDark, [0, -0.415, 0.06], undefined, `runeowl-${sideName}-hind-talon`).rotation.x = -0.2;
+    }
+
+    for (let rune = 0; rune < 4; rune += 1) {
+      const glyph = add(visual, [0.11, 0.05, 0.05], glow, [-0.18 + rune * 0.12, 0.5 + (rune % 2) * 0.12, -0.31], undefined, `runeowl-rune-${rune + 1}`);
+      glyph.rotation.z = rune * 0.42;
+    }
+    add(visual, [0.2, 0.06, 0.2], glow, [0, 0.8, 0.16], undefined, "runeowl-mantle-sigil").rotation.y = 0.5;
   } else if (kind === "copper-mole") {
     const copper = material(0xd28a54);
     const copperDark = material(0x71452f);
@@ -4166,26 +4248,99 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
   } else if (["thimbledeer", "frostlace-hart", "reedcrown-deer"].includes(kind)) {
     buildDeer(kind as DeerKind);
   } else if (kind === "lanternshell") {
+    // Rebuilt from a slab and a cube into an actual gastropod: a rippling
+    // muscular foot, a mantle collar, a jointed eyestalk chain, and a turreted
+    // spiral shell whose glass whorls carry the lantern glow.
     visual.userData.wildlifeRig = "lanternshell";
     visual.userData.authoredScale = 0.62;
-    add(visual, [0.9, 0.2, 1.2], darkMaterial, [0, -0.18, 0.08], "body", "lanternshell-foot");
-    add(visual, [0.6, 0.3, 0.62], bodyMaterial, [0, -0.03, -0.54], "head", "lanternshell-head");
-    add(visual, [1.0, 0.88, 0.52], accentMaterial, [0, 0.27, 0.2], "body", "lanternshell-shell");
-    add(visual, [1.08, 0.1, 0.6], material(0x4f6d62), [0, 0.25, 0.2], undefined, "lanternshell-shell-rim");
+    const flesh = bodyMaterial;
+    const fleshPale = material(0x8ba272);
+    const sole = darkMaterial;
+    const shellMaterial = accentMaterial;
+    const shellDeep = material(0x4f6d62);
+    const shellPale = material(0xa6e8c6);
     const glowMaterial = material(eyeColor, true, 0.9);
-    for (const [index, size, y, z] of [
-      [1, 0.56, 0.28, -0.055], [2, 0.38, 0.29, -0.315], [3, 0.2, 0.3, -0.5],
-    ] as Array<[number, number, number, number]>) {
-      add(visual, [size, size, 0.055], glowMaterial, [0, y, z], undefined, `lanternshell-spiral-${index}`);
+    const pupilMaterial = material(0x21301f);
+
+    add(visual, [0.78, 0.1, 1.26], sole, [0, -0.23, 0.04], "body", "lanternshell-foot-sole");
+    for (const [wave, z] of [[1, -0.44], [2, -0.12], [3, 0.2], [4, 0.5]] as const) {
+      const ripple = childPivot(visual, `lanternshell-foot-wave-${wave}-pivot`, [0, -0.15, z]);
+      ripple.userData.baseY = -0.15;
+      add(ripple, [0.82 - Math.abs(z) * 0.12, 0.11, 0.26], fleshPale, [0, 0, 0], undefined, `lanternshell-foot-ripple-${wave}`);
     }
     for (const side of [-1, 1]) {
-      const stalk = add(visual, [0.045, 0.36, 0.045], bodyMaterial, [side * 0.17, 0.15, -0.78], undefined, `lanternshell-${side < 0 ? "left" : "right"}-stalk`);
-      stalk.rotation.x = -0.42;
-      stalk.rotation.z = side * -0.12;
-      add(visual, [0.085, 0.085, 0.085], eyeMaterial, [side * 0.18, 0.29, -0.91], undefined, `lanternshell-${side < 0 ? "left" : "right"}-eye`);
-      const feeler = add(visual, [0.035, 0.035, 0.32], bodyMaterial, [side * 0.27, 0.02, -0.78], undefined, `lanternshell-${side < 0 ? "left" : "right"}-feeler`);
-      feeler.rotation.x = 0.45;
-      feeler.rotation.y = side * 0.28;
+      add(visual, [0.07, 0.1, 1.18], fleshPale, [side * 0.42, -0.19, 0.06], undefined, `lanternshell-${side < 0 ? "left" : "right"}-foot-fringe`);
+    }
+    add(visual, [0.62, 0.34, 1.0], flesh, [0, -0.02, -0.12], "body", "lanternshell-body");
+    add(visual, [0.74, 0.18, 0.46], shellDeep, [0, 0.12, 0.08], "body", "lanternshell-mantle-collar");
+    add(visual, [0.5, 0.2, 0.32], fleshPale, [0, 0.08, -0.44], undefined, "lanternshell-neck");
+
+    const head = childPivot(visual, "lanternshell-head-pivot", [0, 0.1, -0.56]);
+    add(head, [0.44, 0.3, 0.4], fleshPale, [0, 0.0, -0.14], "head", "lanternshell-head");
+    add(head, [0.36, 0.1, 0.26], flesh, [0, 0.15, -0.2], undefined, "lanternshell-brow");
+      add(head, [0.3, 0.19, 0.22], fleshPale, [0, -0.05, -0.32], "head", "lanternshell-muzzle");
+    add(head, [0.2, 0.06, 0.09], sole, [0, -0.11, -0.4], undefined, "lanternshell-mouth");
+    add(head, [0.26, 0.07, 0.13], flesh, [0, -0.05, -0.4], undefined, "lanternshell-lip");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(head, [0.09, 0.19, 0.26], flesh, [side * 0.2, -0.01, -0.16], undefined, `lanternshell-${sideName}-cheek`);
+      const stalk = childPivot(head, `lanternshell-${sideName}-stalk-pivot`, [side * 0.13, 0.14, -0.2]);
+      stalk.rotation.x = -0.34;
+      stalk.rotation.z = side * -0.1;
+      add(stalk, [0.06, 0.26, 0.06], flesh, [0, 0.12, 0], undefined, `lanternshell-${sideName}-stalk-lower`);
+      const knuckle = childPivot(stalk, `lanternshell-${sideName}-stalk-knuckle-pivot`, [0, 0.25, 0]);
+      add(knuckle, [0.07, 0.07, 0.07], fleshPale, [0, 0, 0], undefined, `lanternshell-${sideName}-stalk-joint`);
+      add(knuckle, [0.055, 0.2, 0.055], flesh, [0, 0.11, -0.03], undefined, `lanternshell-${sideName}-stalk-upper`);
+      add(knuckle, [0.11, 0.11, 0.11], eyeMaterial, [0, 0.24, -0.06], undefined, `lanternshell-${sideName}-eye`);
+      add(knuckle, [0.05, 0.05, 0.04], pupilMaterial, [0, 0.25, -0.12], undefined, `lanternshell-${sideName}-pupil`);
+      const feeler = childPivot(head, `lanternshell-${sideName}-feeler-pivot`, [side * 0.17, -0.1, -0.36]);
+      feeler.rotation.x = 0.42;
+      feeler.rotation.y = side * 0.3;
+      add(feeler, [0.04, 0.04, 0.28], flesh, [0, 0, -0.14], undefined, `lanternshell-${sideName}-feeler`);
+    }
+
+    // A planispiral shell: eight tapering whorl blocks wound around a sideways
+    // axis so the coil itself is the silhouette, read from either flank.
+    const shell = childPivot(visual, "lanternshell-shell-pivot", [0, 0.3, 0.23]);
+    shell.rotation.z = -0.07;
+    shell.rotation.x = -0.1;
+    shell.userData.restZ = -0.07;
+    const WHORLS = 12;
+    const coilTurn = (progress: number) => -0.6 + progress * 10;
+    const coilRadius = (progress: number) => 0.28 * (1 - progress * 0.78);
+    for (let whorl = 1; whorl <= WHORLS; whorl += 1) {
+      const progress = (whorl - 1) / (WHORLS - 1);
+      const turn = coilTurn(progress);
+      const radius = coilRadius(progress);
+      const girth = 0.3 * (1 - progress * 0.62);
+      const segment = add(
+        shell,
+        [0.4 * (1 - progress * 0.4), girth, girth],
+        whorl % 3 === 0 ? shellPale : shellMaterial,
+        [progress * 0.015, Math.sin(turn) * radius, Math.cos(turn) * radius],
+        undefined,
+        `lanternshell-shell-whorl-${whorl}`,
+      );
+      segment.rotation.x = -turn;
+    }
+    add(shell, [0.46, 0.36, 0.15], shellDeep, [0, Math.sin(-0.6) * 0.3, Math.cos(-0.6) * 0.3], undefined, "lanternshell-shell-rim").rotation.x = 0.6;
+    add(shell, [0.3, 0.26, 0.1], sole, [0, -0.25, 0.26], undefined, "lanternshell-shell-aperture").rotation.x = 0.6;
+    // The lantern is the suture line itself: five glass windows set along the
+    // coil, each proud of the whorl it sits in, so the spiral is legible as a
+    // glowing groove from either flank.
+    for (const [index, progress] of [[1, 0.06], [2, 0.28], [3, 0.5], [4, 0.71], [5, 0.9]] as const) {
+      const turn = coilTurn(progress);
+      const radius = coilRadius(progress);
+      const girth = 0.3 * (1 - progress * 0.62);
+      const window = add(
+        shell,
+        [0.4 * (1 - progress * 0.4) + 0.07, girth * 0.44, girth * 0.44],
+        glowMaterial,
+        [0, Math.sin(turn) * radius, Math.cos(turn) * radius],
+        undefined,
+        `lanternshell-spiral-${index}`,
+      );
+      window.rotation.x = -turn;
     }
   } else if (kind === "puddlehopper") {
     const belly = material(0xe7d57c);
@@ -4878,19 +5033,77 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       child.scale.multiplyScalar(speciesScale);
     }
   } else if (kind === "reed-dragonfly") {
-    add(visual, [0.16, 0.14, 0.62], bodyMaterial, [0, 0, 0.15], "body", "reed-dragonfly-abdomen");
-    add(visual, [0.2, 0.18, 0.22], darkMaterial, [0, 0, -0.28], "body", "reed-dragonfly-thorax");
-    add(visual, [0.24, 0.2, 0.22], accentMaterial, [0, 0.02, -0.49], "head", "reed-dragonfly-head");
-    eyePair(0.09, 0.07, -0.61, 0.09, "reed-dragonfly");
-    const wingMaterial = material(0xcff8ed, false, 0.55);
-    for (const side of [-1, 1]) for (const [pair, z] of [["front", -0.22], ["rear", 0.02]] as const) {
-      const wing = add(visual, [0.54, 0.028, 0.2], wingMaterial, [side * 0.31, 0.11, z], "wings", `reed-dragonfly-${side < 0 ? "left" : "right"}-${pair}-wing`);
+    // Rebuilt from four flat planks into a real odonate: compound eyes, a
+    // muscled thorax, a segmented abdomen that flexes, a leg basket, and four
+    // veined wings that now hinge at their roots instead of spinning around
+    // their own centres. The authored wing names stay the flap contract.
+    visual.userData.wildlifeRig = "reed-dragonfly";
+    const chitin = bodyMaterial;
+    const chitinDark = darkMaterial;
+    const chitinPale = material(0x7fd6c0);
+    const eyeShell = material(0x2f6f78);
+    const veinMaterial = material(0x2c5566);
+    const wingMaterial = material(0xcff8ed, false, 0.5);
+    const stigmaMaterial = material(0x9fd8cc);
+
+    const head = childPivot(visual, "reed-dragonfly-head-pivot", [0, 0.01, -0.44]);
+    add(head, [0.18, 0.15, 0.15], accentMaterial, [0, 0, -0.05], "head", "reed-dragonfly-head");
+    add(head, [0.09, 0.05, 0.05], chitinDark, [0, -0.09, -0.12], undefined, "reed-dragonfly-mandible");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(head, [0.11, 0.14, 0.15], eyeShell, [side * 0.08, 0.03, -0.05], undefined, `reed-dragonfly-${sideName}-eye`);
+      add(head, [0.07, 0.08, 0.06], eyeMaterial, [side * 0.1, 0.05, -0.12], undefined, `reed-dragonfly-${sideName}-eye-facet`);
+      add(head, [0.018, 0.018, 0.09], chitinDark, [side * 0.05, 0.07, -0.15], undefined, `reed-dragonfly-${sideName}-antenna`).rotation.x = -0.3;
+    }
+
+    add(visual, [0.16, 0.14, 0.11], chitinDark, [0, 0.01, -0.31], "body", "reed-dragonfly-prothorax");
+    add(visual, [0.2, 0.19, 0.26], chitin, [0, 0.03, -0.16], "body", "reed-dragonfly-mesothorax");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.06, 0.13, 0.2], chitinPale, [side * 0.1, 0.05, -0.17], undefined, `reed-dragonfly-${sideName}-thorax-stripe`);
+      add(visual, [0.09, 0.09, 0.12], chitinDark, [side * 0.07, 0.09, -0.09], undefined, `reed-dragonfly-${sideName}-flight-muscle`);
+    }
+
+    let abdomenParent: THREE.Object3D = childPivot(visual, "reed-dragonfly-abdomen-pivot", [0, 0.01, -0.03]);
+    for (let segment = 0; segment < 4; segment += 1) {
+      const width = 0.125 - segment * 0.019;
+      add(abdomenParent, [width, width * 0.88, 0.19], segment % 2 === 0 ? chitin : chitinDark, [0, 0, 0.09], "body", `reed-dragonfly-abdomen-${segment + 1}`);
+      if (segment % 2 === 1) add(abdomenParent, [width + 0.014, 0.03, 0.045], accentMaterial, [0, 0.005, 0.17], undefined, `reed-dragonfly-abdomen-band-${segment + 1}`);
+      if (segment === 3) break;
+      abdomenParent = childPivot(abdomenParent, `reed-dragonfly-abdomen-${segment + 2}-pivot`, [0, 0, 0.19]);
+    }
+    for (const side of [-1, 1]) {
+      add(abdomenParent, [0.026, 0.026, 0.07], chitinPale, [side * 0.02, 0, 0.22], undefined, `reed-dragonfly-${side < 0 ? "left" : "right"}-clasper`).rotation.y = side * 0.16;
+    }
+
+    for (const side of [-1, 1]) for (const [pair, z, chord] of [["front", -0.24, 0.17], ["rear", 0.05, 0.2]] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      // The pivot itself carries the authored wing name so the shared flap
+      // channel rotates the whole membrane about its root hinge.
+      const wing = childPivot(visual, `reed-dragonfly-${sideName}-${pair}-wing`, [side * 0.07, 0.1, z]);
       wing.rotation.y = side * (pair === "front" ? -0.14 : 0.12);
       wing.rotation.z = side * -0.08;
       wing.userData.side = side;
       wing.userData.phase = pair === "front" ? 0 : Math.PI * 0.24;
+      parts.wings.push(wing);
+      add(wing, [0.52, 0.02, chord], wingMaterial, [side * 0.27, 0.002, 0.01], undefined, `reed-dragonfly-${sideName}-${pair}-wing-membrane`);
+      add(wing, [0.54, 0.028, 0.028], veinMaterial, [side * 0.27, 0.007, -chord / 2], undefined, `reed-dragonfly-${sideName}-${pair}-wing-vein`);
+      add(wing, [0.07, 0.026, 0.04], stigmaMaterial, [side * 0.46, 0.009, -chord / 2 + 0.01], undefined, `reed-dragonfly-${sideName}-${pair}-wing-stigma`);
     }
-    for (let segment = 0; segment < 3; segment += 1) add(visual, [0.18 - segment * 0.02, 0.04, 0.1], accentMaterial, [0, 0.02, 0.11 + segment * 0.18], undefined, `reed-dragonfly-abdomen-band-${segment + 1}`);
+
+    for (const side of [-1, 1]) for (const [leg, z, reach] of [[1, -0.27, -0.13], [2, -0.19, -0.03], [3, -0.09, 0.08]] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const hip = childPivot(visual, `reed-dragonfly-${sideName}-leg-${leg}-pivot`, [side * 0.06, -0.05, z]);
+      hip.rotation.z = side * 0.5;
+      hip.userData.side = side;
+      hip.userData.phase = leg * 1.9 + (side < 0 ? 0 : Math.PI);
+      hip.userData.restZ = side * 0.5;
+      add(hip, [0.09, 0.022, 0.022], chitinDark, [side * 0.05, -0.02, 0], undefined, `reed-dragonfly-${sideName}-femur-${leg}`);
+      const knee = childPivot(hip, `reed-dragonfly-${sideName}-knee-${leg}-pivot`, [side * 0.09, -0.04, 0]);
+      knee.rotation.z = side * 0.9;
+      add(knee, [0.02, 0.1, 0.02], chitin, [0, -0.05, reach * 0.3], undefined, `reed-dragonfly-${sideName}-tibia-${leg}`);
+      if (leg === 1) add(knee, [0.018, 0.018, 0.06], chitinPale, [0, -0.1, reach * 0.5], undefined, `reed-dragonfly-${sideName}-tarsal-claw-${leg}`);
+    }
   } else if (["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"].includes(kind)) {
     const frost = kind === "frost-hare";
     const chocolate = kind === "chocolate-bunny";
@@ -5330,11 +5543,112 @@ export function applyWildlifePose(
       if (wing) wing.rotation.z = side * (-0.12 - alert * 0.18 + Math.sin(time * 1.9) * (0.025 + travel * 0.04));
     }
   } else if (rig === "lanternshell") {
-    for (let spiral = 1; spiral <= 3; spiral += 1) {
+    // The glow travels down the coil rather than pulsing in unison, so the
+    // shell reads as one living light instead of five separate lamps.
+    for (let spiral = 1; spiral <= 5; spiral += 1) {
       const glow = visual.getObjectByName(`lanternshell-spiral-${spiral}`);
       if (!glow) continue;
-      const pulse = 1 + Math.sin(time * 1.7 + spiral * 0.7) * 0.08;
-      glow.scale.setScalar(pulse);
+      const pulse = 1 + Math.sin(time * 1.7 - spiral * 0.7) * 0.1;
+      glow.scale.set(1, pulse, pulse);
+    }
+    // A gastropod pushes itself forward on a wave that runs back to front
+    // along the sole, so the ripple phase advances with travel, not with a
+    // free-running clock.
+    for (let wave = 1; wave <= 4; wave += 1) {
+      const ripple = visual.getObjectByName(`lanternshell-foot-wave-${wave}-pivot`);
+      if (!ripple) continue;
+      const baseY = Number(ripple.userData.baseY) || -0.15;
+      const crest = Math.sin(time * (1.6 + travel * 5.4) - wave * 1.15);
+      ripple.position.y = baseY + Math.max(0, crest) * (0.012 + travel * 0.05);
+      ripple.scale.z = 1 + crest * (0.03 + travel * 0.08);
+    }
+    // Alert retracts the eyestalks toward the shell instead of hiding them.
+    for (const sideName of ["left", "right"] as const) {
+      const side = sideName === "left" ? -1 : 1;
+      const stalk = visual.getObjectByName(`lanternshell-${sideName}-stalk-pivot`);
+      if (stalk) {
+        stalk.rotation.x = -0.34 + alert * 0.5 + Math.sin(time * 1.25 + side) * 0.06;
+        stalk.rotation.z = side * (-0.1 + Math.sin(time * 0.95 + side * 1.4) * 0.07);
+        stalk.scale.y = 1 - alert * 0.42;
+      }
+      const knuckle = visual.getObjectByName(`lanternshell-${sideName}-stalk-knuckle-pivot`);
+      if (knuckle) knuckle.rotation.x = -Math.sin(time * 1.25 + side) * 0.1 + alert * 0.34;
+      const feeler = visual.getObjectByName(`lanternshell-${sideName}-feeler-pivot`);
+      if (feeler) {
+        feeler.rotation.x = 0.42 - travel * 0.14;
+        feeler.rotation.y = side * (0.3 + Math.sin(time * 2.05 + side * 0.8) * 0.16);
+      }
+    }
+    const shell = visual.getObjectByName("lanternshell-shell-pivot");
+    if (shell) shell.rotation.z = (Number(shell.userData.restZ) || -0.2) + Math.sin(time * (1.6 + travel * 5.4) - 0.6) * (0.012 + travel * 0.026);
+  } else if (rig === "runeowl") {
+    // Owls turn the whole head rather than the eyes; the generic head channel
+    // only nods, so the swivel and its slow settle live here.
+    const owlHead = visual.getObjectByName("runeowl-head-pivot");
+    if (owlHead) {
+      const sweep = Math.sin(time * 0.42) + Math.sin(time * 0.17 + 1.1) * 0.6;
+      owlHead.rotation.y = sweep * (0.34 + alert * 0.34);
+      owlHead.rotation.z = -sweep * (0.06 + alert * 0.08);
+      owlHead.rotation.x += -alert * 0.08;
+    }
+    for (const sideName of ["left", "right"] as const) {
+      const side = sideName === "left" ? -1 : 1;
+      for (let feather = 1; feather <= 3; feather += 1) {
+        const primary = visual.getObjectByName(`runeowl-${sideName}-primary-${feather}`);
+        if (primary) primary.rotation.x = Math.sin(time * (5.2 + travel * 4) - feather * 0.5) * (0.05 + travel * 0.13);
+      }
+      const alula = visual.getObjectByName(`runeowl-${sideName}-alula`);
+      if (alula) alula.rotation.y = side * (0.1 + travel * 0.3);
+      // Talons close when the owl is settling and spread as it comes in hot.
+      for (let toe = 1; toe <= 3; toe += 1) {
+        const claw = visual.getObjectByName(`runeowl-${sideName}-talon-${toe}`);
+        if (claw) claw.rotation.x = 0.16 + (1 - travel) * 0.34 - alert * 0.2;
+      }
+      const hind = visual.getObjectByName(`runeowl-${sideName}-hind-talon`);
+      if (hind) hind.rotation.x = -0.2 - (1 - travel) * 0.3;
+    }
+    for (let feather = 1; feather <= 3; feather += 1) {
+      const quill = visual.getObjectByName(`runeowl-tail-feather-${feather}`);
+      if (quill) quill.rotation.y = (feather - 2) * (0.16 + travel * 0.2 + Math.sin(time * 1.7) * 0.05);
+    }
+    for (let rune = 1; rune <= 4; rune += 1) {
+      const glyph = visual.getObjectByName(`runeowl-rune-${rune}`);
+      if (!glyph) continue;
+      const pulse = 1 + Math.sin(time * 1.9 + rune * 1.3) * (0.12 + alert * 0.2);
+      glyph.scale.set(pulse, pulse, 1);
+    }
+    const sigil = visual.getObjectByName("runeowl-mantle-sigil");
+    if (sigil) {
+      sigil.rotation.y = time * 0.7;
+      sigil.scale.setScalar(1 + Math.sin(time * 2.3) * 0.1);
+    }
+  } else if (rig === "reed-dragonfly") {
+    // The abdomen is the dragonfly's rudder: it whips laterally on turns and
+    // curls under during the hover, driven down the segment chain.
+    for (let segment = 2; segment <= 4; segment += 1) {
+      const joint = visual.getObjectByName(`reed-dragonfly-abdomen-${segment}-pivot`);
+      if (!joint) continue;
+      joint.rotation.y = Math.sin(time * (2.6 + travel * 3.4) - segment * 0.6) * (0.045 + travel * 0.075);
+      joint.rotation.x = Math.sin(time * 1.5 - segment * 0.4) * 0.03 - travel * 0.035 * segment;
+    }
+    const abdomen = visual.getObjectByName("reed-dragonfly-abdomen-pivot");
+    if (abdomen) abdomen.rotation.x = -0.04 + travel * 0.12 + Math.sin(time * 2.2) * 0.02;
+    // Hovering odonates hold the leg basket forward; cruising tucks it back.
+    for (const sideName of ["left", "right"] as const) {
+      const side = sideName === "left" ? -1 : 1;
+      for (let leg = 1; leg <= 3; leg += 1) {
+        const hip = visual.getObjectByName(`reed-dragonfly-${sideName}-leg-${leg}-pivot`);
+        if (hip) {
+          hip.rotation.z = (Number(hip.userData.restZ) || side * 0.5) + travel * side * 0.3;
+          hip.rotation.x = -travel * 0.5 + Math.sin(time * 3.1 + leg) * 0.03;
+        }
+        const knee = visual.getObjectByName(`reed-dragonfly-${sideName}-knee-${leg}-pivot`);
+        if (knee) knee.rotation.z = side * (0.9 + travel * 0.5);
+      }
+      for (const pair of ["front", "rear"] as const) {
+        const stigma = visual.getObjectByName(`reed-dragonfly-${sideName}-${pair}-wing-stigma`);
+        if (stigma) stigma.rotation.x = Math.sin(time * 26 + (pair === "front" ? 0 : 1.2)) * 0.08;
+      }
     }
   } else if (rig === "glowmoth") {
     for (const sideName of ["left", "right"] as const) {
