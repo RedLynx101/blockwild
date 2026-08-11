@@ -6,19 +6,23 @@
 mod authority;
 mod cardforge;
 mod combat;
+mod content_manifest;
 mod contract;
 mod fixture;
 mod inventory;
 mod machines;
+mod metadata_store;
 mod progression;
 
 pub use authority::{GameplayAuthority, GameplayState, ReplayEntry};
 pub use cardforge::*;
 pub use combat::*;
+pub use content_manifest::*;
 pub use contract::*;
 pub use fixture::{FixtureReport, run_reference_fixture};
 pub use inventory::*;
 pub use machines::*;
+pub use metadata_store::*;
 pub use progression::*;
 
 #[cfg(test)]

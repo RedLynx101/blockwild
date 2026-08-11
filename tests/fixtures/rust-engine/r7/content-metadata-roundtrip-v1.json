@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "filled-capture-orb",
+      "domain": "item",
+      "schemaId": "inventory-slot",
+      "value": {
+        "item": 156,
+        "count": 1,
+        "metadata": {
+          "captureOrb": {
+            "schema": 1,
+            "orbId": "orb:sea:001",
+            "capturedAt": 1712345678901,
+            "creature": {
+              "schema": 1,
+              "entityId": "creature:otter:001",
+              "kind": "brinewhisk-otter",
+              "health": 18,
+              "maxHealth": 20,
+              "ageTicks": 48000,
+              "baby": false,
+              "temperament": "Gentle",
+              "hostile": false,
+              "tamed": false,
+              "ownerId": null,
+              "name": "Mizu 水",
+              "geneticSeed": 4294967295,
+              "command": null,
+              "custom": {
+                "care": { "favoriteFoods": ["shellfruit", "moonberry"], "trust": 7 },
+                "markings": [3, 1, 4]
+              }
+            },
+            "lens": null,
+            "attunement": null
+          }
+        }
+      },
+      "extensionHex": "0080ff07"
+    },
+    {
+      "id": "creature-cage",
+      "domain": "item",
+      "schemaId": "captured-creature",
+      "value": {
+        "schema": 1,
+        "cageId": "cage:旧森:9",
+        "capturedAt": 1712345678999,
+        "creature": {
+          "schema": 1,
+          "entityId": "creature:fox:雪",
+          "kind": "petalfox",
+          "health": 12,
+          "maxHealth": 12,
+          "ageTicks": 1,
+          "baby": true,
+          "temperament": "Skittish",
+          "hostile": false,
+          "tamed": false,
+          "ownerId": null,
+          "name": "Fleur 🌸",
+          "geneticSeed": 1,
+          "command": null,
+          "custom": { "lineage": { "parents": ["a", "b"], "generation": 2 } }
+        }
+      },
+      "extensionHex": "ff800000"
+    },
+    {
+      "id": "named-durable-relic",
+      "domain": "item",
+      "schemaId": "inventory-slot",
+      "value": {
+        "item": 407,
+        "count": 1,
+        "durability": 317,
+        "metadata": {
+          "customName": "Ægir's Oath — 海",
+          "nested": { "flags": [true, false, null], "measurements": { "x": -0.25, "y": 1200 } }
+        }
+      },
+      "extensionHex": "7f80feff"
+    },
+    {
+      "id": "cardforge-instance",
+      "domain": "cardforge-card",
+      "schemaId": "tcg-match-card",
+      "value": {
+        "instanceId": "match:Δ:card:17",
+        "printingId": "printing:mob:wreckwhistle-porpoise:wildroads-core:standard:standard",
+        "definitionId": "card:mob:wreckwhistle-porpoise",
+        "generated": false,
+        "damage": 2,
+        "exhausted": true,
+        "enteredTurn": 4,
+        "temporaryPower": 3,
+        "temporaryGuard": -1,
+        "submergedUntilTurn": 6
+      },
+      "extensionHex": "00010280ff"
+    }
+  ]
+}
