@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "source": "exact published Rust generation and shared BWRD/BWRF records",
+  "rendererContract": "RenderResourceBatchV2/RenderFrameV2",
+  "contactSheet": "r3-landscape-three-wgpu-contact-sheet.png",
+  "reports": [
+    {
+      "id": "poi-negative-chunk",
+      "chunkHash": "f8078d0b6424a9d75010483aa79cd9bc",
+      "resources": "poi-negative-chunk.bwrd",
+      "frame": "poi-negative-chunk.bwrf",
+      "wgpuReport": {
+        "applied": {
+          "revision": 1,
+          "applied": true
+        },
+        "rendered": {
+          "cpuMicros": 7000,
+          "gpuMicros": null,
+          "backend": "BrowserWebGpu",
+          "adapter": "",
+          "visibleInstances": 1,
+          "culledInstances": 0,
+          "drawCalls": 1,
+          "transparentDrawCalls": 0,
+          "geometryBytes": 262256,
+          "instanceBytes": 80,
+          "residentInstanceBytes": 256,
+          "instanceBufferReallocations": 0,
+          "deviceLost": false
+        }
+      }
+    },
+    {
+      "id": "connected-ocean-horizon",
+      "chunkHash": "e9f1c24b9fb4d43ac83a575691bb62bd",
+      "resources": "connected-ocean-horizon.bwrd",
+      "frame": "connected-ocean-horizon.bwrf",
+      "wgpuReport": {
+        "applied": {
+          "revision": 1,
+          "applied": true
+        },
+        "rendered": {
+          "cpuMicros": 5000,
+          "gpuMicros": null,
+          "backend": "BrowserWebGpu",
+          "adapter": "",
+          "visibleInstances": 1,
+          "culledInstances": 0,
+          "drawCalls": 1,
+          "transparentDrawCalls": 0,
+          "geometryBytes": 347504,
+          "instanceBytes": 80,
+          "residentInstanceBytes": 256,
+          "instanceBufferReallocations": 0,
+          "deviceLost": false
+        }
+      }
+    },
+    {
+      "id": "deep-ocean-flora",
+      "chunkHash": "5bfddc0fb1ffd238c83a575691bb623d",
+      "resources": "deep-ocean-flora.bwrd",
+      "frame": "deep-ocean-flora.bwrf",
+      "wgpuReport": {
+        "applied": {
+          "revision": 1,
+          "applied": true
+        },
+        "rendered": {
+          "cpuMicros": 3000,
+          "gpuMicros": null,
+          "backend": "BrowserWebGpu",
+          "adapter": "",
+          "visibleInstances": 1,
+          "culledInstances": 0,
+          "drawCalls": 1,
+          "transparentDrawCalls": 0,
+          "geometryBytes": 144152,
+          "instanceBytes": 80,
+          "residentInstanceBytes": 256,
+          "instanceBufferReallocations": 0,
+          "deviceLost": false
+        }
+      }
+    },
+    {
+      "id": "cave-aquifer-section",
+      "chunkHash": "7527b8ab71de0602c83a575691bb62bd",
+      "resources": "cave-aquifer-section.bwrd",
+      "frame": "cave-aquifer-section.bwrf",
+      "wgpuReport": {
+        "applied": {
+          "revision": 1,
+          "applied": true
+        },
+        "rendered": {
+          "cpuMicros": 4000,
+          "gpuMicros": null,
+          "backend": "BrowserWebGpu",
+          "adapter": "",
+          "visibleInstances": 1,
+          "culledInstances": 0,
+          "drawCalls": 1,
+          "transparentDrawCalls": 0,
+          "geometryBytes": 185888,
+          "instanceBytes": 80,
+          "residentInstanceBytes": 256,
+          "instanceBufferReallocations": 0,
+          "deviceLost": false
+        }
+      }
+    },
+    {
+      "id": "biome-transition-negative-space",
+      "chunkHash": "dcc26b6583c21ebfc83a575691bb623d",
+      "resources": "biome-transition-negative-space.bwrd",
+      "frame": "biome-transition-negative-space.bwrf",
+      "wgpuReport": {
+        "applied": {
+          "revision": 1,
+          "applied": true
+        },
+        "rendered": {
+          "cpuMicros": 4000,
+          "gpuMicros": null,
+          "backend": "BrowserWebGpu",
+          "adapter": "",
+          "visibleInstances": 1,
+          "culledInstances": 0,
+          "drawCalls": 1,
+          "transparentDrawCalls": 0,
+          "geometryBytes": 151552,
+          "instanceBytes": 80,
+          "residentInstanceBytes": 256,
+          "instanceBufferReallocations": 0,
+          "deviceLost": false
+        }
+      }
+    }
+  ]
+}

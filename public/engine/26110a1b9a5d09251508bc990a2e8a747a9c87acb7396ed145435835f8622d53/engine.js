@@ -116,6 +116,47 @@ export function blockwild_engine_take_events(handle) {
 }
 
 /**
+ * Generate one complete generator-v18 chunk through the coarse BWR2 packet
+ * contract. Malformed or unsupported requests fail closed as an empty result;
+ * the browser bridge rejects that before any authoritative installation.
+ * @param {Uint8Array} request
+ * @returns {Uint8Array}
+ */
+export function blockwild_generate_chunk_v2(request) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_generate_chunk_v2(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Checked-in exact-parity certificate for the fail-closed R3 corpus.
+ * @returns {Uint8Array}
+ */
+export function blockwild_generation_parity_certificate_v2() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.blockwild_generation_parity_certificate_v2(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * @returns {number}
  */
 export function blockwild_protocol_version() {

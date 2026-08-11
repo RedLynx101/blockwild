@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "artifactHash": "4dc03c90b0dee8a3b3934a05736898f98b986d786205348882177166e3064c25",
+  "artifactHash": "26110a1b9a5d09251508bc990a2e8a747a9c87acb7396ed145435835f8622d53",
   "variant": "compatibility",
   "package": "blockwild-wasm",
   "packageVersion": "0.1.0",
@@ -12,40 +12,40 @@
   "cargoVersion": "1.91.1",
   "wasmBindgenVersion": "0.2.127",
   "wasmOpt": null,
-  "createdAt": "2026-08-11T16:52:13.711Z",
+  "createdAt": "2026-08-11T19:03:29.944Z",
   "totals": {
-    "rawBytes": 668970,
-    "gzipBytes": 215701,
-    "brotliBytes": 164361
+    "rawBytes": 1443285,
+    "gzipBytes": 482471,
+    "brotliBytes": 364250
   },
   "files": [
     {
       "path": "engine_bg.wasm",
       "role": "wasm",
       "mimeType": "application/wasm",
-      "bytes": 649109,
-      "sha256": "842cd305c8a2b58d0fe66e3d3a7a7ad702d8fe2ca4692d313d45dba86cd4024e"
+      "bytes": 1421053,
+      "sha256": "2041a34dbab73f0b929ae0086e1bf9e92779d1720361566e3843c3b3a69ae915"
     },
     {
       "path": "engine_bg.wasm.d.ts",
       "role": "wasm-types",
       "mimeType": "text/plain; charset=utf-8",
-      "bytes": 1433,
-      "sha256": "d309947c27f8470cfc606e0e3e320c3d71df036ac7a7f0f2673ac4ab5106baa2"
+      "bytes": 1596,
+      "sha256": "11094ba9cc8a919f6b96e341efd28954d12bcbb91f32cbbb1f42bee5ad2a0345"
     },
     {
       "path": "engine.d.ts",
       "role": "glue-types",
       "mimeType": "text/plain; charset=utf-8",
-      "bytes": 4525,
-      "sha256": "1cd76d46f81826a0d3af706fe6c58b82f1ca6bb1a7213b20eadab2ee95fbde12"
+      "bytes": 5157,
+      "sha256": "22470f7c4f7dd0003d9e2f1eb89fe1f440bfeefe7f0c5f63d7f7593211484187"
     },
     {
       "path": "engine.js",
       "role": "glue",
       "mimeType": "text/javascript; charset=utf-8",
-      "bytes": 13903,
-      "sha256": "3af6ee8267eeb8a1cff601bf9676f51e59a94cc1f8d71ff32f6dec16584727db"
+      "bytes": 15479,
+      "sha256": "3d50b967586d56c5bc5486e96127bfbccc218a7f4ab0dcfcaf3b135f6d35310a"
     }
   ]
 }

@@ -102,7 +102,7 @@ export type TerrainGenerationWorkerResponseV2 =
     protocolVersion: number;
     requestSchemaVersion: number;
     resultSchemaVersion: number;
-    backend: "typescript-compatibility-oracle";
+    backend: "typescript-compatibility-oracle" | "rust-wasm-shadow" | "rust-wasm-authoritative";
   }>
   | Readonly<{ type: "generated-chunk-v2"; epoch: number; taskId: number; result: GeneratedChunkV2 }>
   | Readonly<{ type: "generate-chunk-error-v2"; epoch: number; taskId: number; message: string }>
@@ -493,7 +493,8 @@ function markerTableIssues(value: unknown) {
             if (marker.type === "chest") {
               recordIssue(issues, typeof marker.lootTable === "string" && Array.isArray(marker.loot), `markerTable row ${index} chest metadata is invalid`);
             } else if (marker.type === "spawn") {
-              recordIssue(issues, typeof marker.mobKind === "string" && validU32(marker.count) && validU32(marker.radius)
+              recordIssue(issues, typeof marker.mobKind === "string" && validU32(marker.count)
+                && typeof marker.radius === "number" && Number.isFinite(marker.radius) && marker.radius >= 0 && marker.radius <= 65_535
                 && typeof marker.persistent === "boolean", `markerTable row ${index} spawn metadata is invalid`);
             } else if (marker.type === "landmark") {
               recordIssue(issues, typeof marker.tag === "string", `markerTable row ${index} landmark tag is invalid`);

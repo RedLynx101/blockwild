@@ -13,6 +13,18 @@ export function blockwild_engine_step(handle: number, monotonic_time_us: number,
 
 export function blockwild_engine_take_events(handle: number): Uint8Array;
 
+/**
+ * Generate one complete generator-v18 chunk through the coarse BWR2 packet
+ * contract. Malformed or unsupported requests fail closed as an empty result;
+ * the browser bridge rejects that before any authoritative installation.
+ */
+export function blockwild_generate_chunk_v2(request: Uint8Array): Uint8Array;
+
+/**
+ * Checked-in exact-parity certificate for the fail-closed R3 corpus.
+ */
+export function blockwild_generation_parity_certificate_v2(): Uint8Array;
+
 export function blockwild_protocol_version(): number;
 
 export function blockwild_schema_version(): number;
@@ -59,6 +71,8 @@ export interface InitOutput {
     readonly blockwild_engine_state_hash: (a: number, b: number) => void;
     readonly blockwild_engine_step: (a: number, b: number, c: number, d: number) => void;
     readonly blockwild_engine_take_events: (a: number, b: number) => void;
+    readonly blockwild_generate_chunk_v2: (a: number, b: number, c: number) => void;
+    readonly blockwild_generation_parity_certificate_v2: (a: number) => void;
     readonly blockwild_protocol_version: () => number;
     readonly blockwild_world_authority_create_r4: (a: number, b: number, c: number) => void;
     readonly blockwild_world_authority_destroy_r4: (a: number, b: number, c: number, d: number) => void;

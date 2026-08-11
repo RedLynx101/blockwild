@@ -89,6 +89,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockwild-generation"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
+]
+
+[[package]]
 name = "blockwild-network"
 version = "0.1.0"
 dependencies = [
@@ -159,6 +166,7 @@ version = "0.1.0"
 dependencies = [
  "blockwild-authority",
  "blockwild-engine",
+ "blockwild-generation",
  "blockwild-protocol",
  "blockwild-render",
  "blockwild-types",

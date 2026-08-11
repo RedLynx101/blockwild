@@ -3,6 +3,7 @@ members = [
   "crates/blockwild-types",
   "crates/blockwild-protocol",
   "crates/blockwild-world",
+  "crates/blockwild-generation",
   "crates/blockwild-authority",
   "crates/blockwild-simulation",
   "crates/blockwild-entity",
@@ -28,6 +29,7 @@ repository = "https://github.com/RedLynx101/blockwild"
 blockwild-types = { path = "crates/blockwild-types" }
 blockwild-protocol = { path = "crates/blockwild-protocol" }
 blockwild-world = { path = "crates/blockwild-world" }
+blockwild-generation = { path = "crates/blockwild-generation" }
 blockwild-authority = { path = "crates/blockwild-authority" }
 blockwild-simulation = { path = "crates/blockwild-simulation" }
 blockwild-entity = { path = "crates/blockwild-entity" }

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "deep-ocean-flora",
+  "focus": "ocean floor, dominant flora, transparent water layers",
+  "seed": "OCEAN-V07",
+  "chunk": [
+    -16,
+    23
+  ],
+  "chunkHash": "5bfddc0fb1ffd238c83a575691bb623d",
+  "vertices": 1948,
+  "triangles": 974,
+  "camera": {
+    "position": [
+      -230,
+      42,
+      394
+    ],
+    "lookAt": [
+      -248,
+      32,
+      376
+    ],
+    "fov": 56
+  },
+  "resourceBytes": 46910,
+  "frameBytes": 261,
+  "source": "published Rust/Wasm generation -> renderer extraction V2"
+}

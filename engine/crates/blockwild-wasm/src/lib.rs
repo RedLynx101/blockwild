@@ -52,6 +52,22 @@ pub fn blockwild_schema_version() -> u32 {
     SCHEMA_VERSION as u32
 }
 
+/// Generate one complete generator-v18 chunk through the coarse BWR2 packet
+/// contract. Malformed or unsupported requests fail closed as an empty result;
+/// the browser bridge rejects that before any authoritative installation.
+#[wasm_bindgen]
+#[must_use]
+pub fn blockwild_generate_chunk_v2(request: &[u8]) -> Vec<u8> {
+    blockwild_generation::generate_packet_v2(request).unwrap_or_default()
+}
+
+/// Checked-in exact-parity certificate for the fail-closed R3 corpus.
+#[wasm_bindgen]
+#[must_use]
+pub fn blockwild_generation_parity_certificate_v2() -> Vec<u8> {
+    blockwild_generation::parity_certificate_json_v2().into_bytes()
+}
+
 #[wasm_bindgen]
 #[must_use]
 pub fn blockwild_engine_create(config_envelope: &[u8]) -> Vec<u8> {
@@ -403,5 +419,20 @@ mod tests {
             b"BWI1"
         );
         assert_eq!(&blockwild_world_mesh_section_v1(b"bad", &registry_bytes)[..4], b"BWE1");
+    }
+
+    #[test]
+    fn generation_facade_preserves_the_native_packet_and_certificate() {
+        let request = blockwild_generation::fixture_request("wasm-generation", -31, 47, 9);
+        let encoded = blockwild_generation::encode_request(&request).unwrap();
+        let result = blockwild_generate_chunk_v2(&encoded);
+        blockwild_generation::decode_result(&result)
+            .unwrap()
+            .validate(&request)
+            .unwrap();
+        let certificate = String::from_utf8(blockwild_generation_parity_certificate_v2()).unwrap();
+        assert!(certificate.contains("\"corpusCases\":131"));
+        assert!(certificate.contains("\"byteEqual\":true"));
+        assert!(blockwild_generate_chunk_v2(b"malformed").is_empty());
     }
 }

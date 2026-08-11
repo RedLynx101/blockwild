@@ -91,8 +91,9 @@ export function recommendedTerrainWorkerCount(
 }
 
 /**
- * V2 transfer pipeline. TypeScript remains authoritative: bad, stale, timed
- * out or crashed worker tasks always release the existing synchronous path.
+ * V2 transfer pipeline. Certified Rust/Wasm is authoritative: bad, stale,
+ * timed out or crashed worker tasks release the existing synchronous TypeScript
+ * path as an emergency fallback without installing partial worker state.
  */
 export class TerrainGenerationPipeline {
   private slots: Slot[] = [];
@@ -174,7 +175,7 @@ export class TerrainGenerationPipeline {
       const valid = message.protocolVersion === TERRAIN_GENERATION_PROTOCOL_V2
         && message.requestSchemaVersion === GENERATE_CHUNK_REQUEST_SCHEMA_V2
         && message.resultSchemaVersion === GENERATED_CHUNK_SCHEMA_V2
-        && message.backend === "typescript-compatibility-oracle";
+        && (message.backend === "typescript-compatibility-oracle" || message.backend === "rust-wasm-authoritative");
       if (!valid) {
         this.failSlot(slot, new Error("Terrain generation worker negotiated an incompatible V2 contract"));
         return;

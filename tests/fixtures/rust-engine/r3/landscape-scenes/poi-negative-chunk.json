@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "poi-negative-chunk",
+  "focus": "surface POI, marker table, authored structure silhouette",
+  "seed": "WILDERNESS",
+  "chunk": [
+    -8,
+    -1
+  ],
+  "chunkHash": "f8078d0b6424a9d75010483aa79cd9bc",
+  "vertices": 3544,
+  "triangles": 1772,
+  "camera": {
+    "position": [
+      -103,
+      52,
+      9
+    ],
+    "lookAt": [
+      -120,
+      38,
+      -8
+    ],
+    "fov": 48
+  },
+  "resourceBytes": 85214,
+  "frameBytes": 261,
+  "source": "published Rust/Wasm generation -> renderer extraction V2"
+}

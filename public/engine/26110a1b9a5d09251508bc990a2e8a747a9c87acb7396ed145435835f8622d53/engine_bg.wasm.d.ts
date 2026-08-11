@@ -7,6 +7,8 @@ export const blockwild_engine_ingest: (a: number, b: number, c: number, d: numbe
 export const blockwild_engine_state_hash: (a: number, b: number) => void;
 export const blockwild_engine_step: (a: number, b: number, c: number, d: number) => void;
 export const blockwild_engine_take_events: (a: number, b: number) => void;
+export const blockwild_generate_chunk_v2: (a: number, b: number, c: number) => void;
+export const blockwild_generation_parity_certificate_v2: (a: number) => void;
 export const blockwild_protocol_version: () => number;
 export const blockwild_world_authority_create_r4: (a: number, b: number, c: number) => void;
 export const blockwild_world_authority_destroy_r4: (a: number, b: number, c: number, d: number) => void;

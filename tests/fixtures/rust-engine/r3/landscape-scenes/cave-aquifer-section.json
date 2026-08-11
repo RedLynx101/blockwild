@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "cave-aquifer-section",
+  "focus": "cave topology, sealed aquifer, ore and emission metadata",
+  "seed": "WILDERNESS",
+  "chunk": [
+    -2,
+    3
+  ],
+  "chunkHash": "7527b8ab71de0602c83a575691bb62bd",
+  "vertices": 2512,
+  "triangles": 1256,
+  "camera": {
+    "position": [
+      -9,
+      -16,
+      56
+    ],
+    "lookAt": [
+      -27,
+      -21,
+      56
+    ],
+    "fov": 52
+  },
+  "resourceBytes": 60446,
+  "frameBytes": 261,
+  "source": "published Rust/Wasm generation -> renderer extraction V2"
+}

@@ -7,6 +7,7 @@ import {
   type TerrainGenerationWorkerResponseV2,
 } from "./terrain-generation-contract";
 import { InjectedTerrainGenerationBackendV2, type TerrainGenerationBackendV2 } from "./rust-terrain-generation-backend";
+import { RustTerrainGenerationBridgeV2 } from "./rust-terrain-generation-bridge";
 
 declare const self: {
   onmessage: ((event: MessageEvent<TerrainGenerationWorkerRequestV2>) => void) | null;
@@ -18,16 +19,12 @@ let backendPromise: Promise<TerrainGenerationBackendV2> | null = null;
 
 function taskKey(epoch: number, taskId: number) { return `${epoch}:${taskId}`; }
 
-/**
- * The import below is the sole compatibility bridge back to ChunkWorld. It is
- * deliberately lazy and isolated: the worker protocol and injectable backend
- * do not import or construct Three.js. R3 promotion requires replacing this
- * oracle with the Rust generator, not widening the contract.
- */
 function backend() {
-  backendPromise ??= import("./rust-terrain-generation-legacy-oracle").then(({ generateChunkWithLegacyOracleV2 }) => (
-    new InjectedTerrainGenerationBackendV2(generateChunkWithLegacyOracleV2, "typescript-compatibility-oracle")
-  ));
+  backendPromise ??= Promise.resolve().then(async () => {
+    const bridge = new RustTerrainGenerationBridgeV2();
+    await bridge.initialize();
+    return new InjectedTerrainGenerationBackendV2((request) => bridge.generate(request), "rust-wasm-authoritative");
+  });
   return backendPromise;
 }
 
@@ -35,13 +32,19 @@ function post(message: TerrainGenerationWorkerResponseV2, transfer: Transferable
   self.postMessage(message, { transfer });
 }
 
-post({
+void backend().then(() => post({
   type: "terrain-generation-ready-v2",
   protocolVersion: TERRAIN_GENERATION_PROTOCOL_V2,
   requestSchemaVersion: GENERATE_CHUNK_REQUEST_SCHEMA_V2,
   resultSchemaVersion: GENERATED_CHUNK_SCHEMA_V2,
-  backend: "typescript-compatibility-oracle",
-});
+  backend: "rust-wasm-authoritative",
+})).catch(() => post({
+  type: "terrain-generation-ready-v2",
+  protocolVersion: TERRAIN_GENERATION_PROTOCOL_V2,
+  requestSchemaVersion: GENERATE_CHUNK_REQUEST_SCHEMA_V2,
+  resultSchemaVersion: GENERATED_CHUNK_SCHEMA_V2,
+  backend: "rust-wasm-shadow",
+}));
 
 self.onmessage = (event: MessageEvent<TerrainGenerationWorkerRequestV2>) => {
   const message = event.data;

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "connected-ocean-horizon",
+  "focus": "ocean datum, ice and water adjacency, horizon continuity",
+  "seed": "CONNECTED-WATER-DATUM",
+  "chunk": [
+    0,
+    0
+  ],
+  "chunkHash": "e9f1c24b9fb4d43ac83a575691bb62bd",
+  "vertices": 4696,
+  "triangles": 2348,
+  "camera": {
+    "position": [
+      25,
+      56.5,
+      25
+    ],
+    "lookAt": [
+      8,
+      42.5,
+      8
+    ],
+    "fov": 48
+  },
+  "resourceBytes": 112862,
+  "frameBytes": 261,
+  "source": "published Rust/Wasm generation -> renderer extraction V2"
+}

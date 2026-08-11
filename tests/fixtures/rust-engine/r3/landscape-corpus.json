@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "generatorVersion": 18,
+  "purpose": "Shared Three and wgpu landscape comparison cases; camera records are renderer-neutral.",
+  "cases": [
+    {
+      "id": "poi-negative-chunk",
+      "seed": "WILDERNESS",
+      "chunk": [-8, -1],
+      "focus": "surface POI, marker table, authored structure silhouette",
+      "camera": { "position": [-120, 72, -8], "lookAt": [-120, 38, -8], "fov": 62 }
+    },
+    {
+      "id": "connected-ocean-horizon",
+      "seed": "CONNECTED-WATER-DATUM",
+      "chunk": [0, 0],
+      "focus": "ocean datum, ice and water adjacency, horizon continuity",
+      "camera": { "position": [8, 45, 8], "lookAt": [40, 30, 40], "fov": 68 }
+    },
+    {
+      "id": "deep-ocean-flora",
+      "seed": "OCEAN-V07",
+      "chunk": [-16, 23],
+      "focus": "ocean floor, dominant flora, transparent water layers",
+      "camera": { "position": [-248, 24, 376], "lookAt": [-252, 8, 372], "fov": 70 }
+    },
+    {
+      "id": "cave-aquifer-section",
+      "seed": "WILDERNESS",
+      "chunk": [-2, 3],
+      "focus": "cave topology, sealed aquifer, ore and emission metadata",
+      "camera": { "position": [-24, -8, 56], "lookAt": [-28, -18, 52], "fov": 72 }
+    },
+    {
+      "id": "biome-transition-negative-space",
+      "seed": "large-negative-9007199254740991",
+      "chunk": [-511, 509],
+      "focus": "negative-coordinate macro terrain and biome transition",
+      "camera": { "position": [-8168, 86, 8152], "lookAt": [-8176, 44, 8144], "fov": 64 }
+    }
+  ]
+}

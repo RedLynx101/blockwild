@@ -2,12 +2,98 @@ import {
   assertGeneratedChunkMatchesRequestV2,
   assertGenerateChunkRequestV2,
   createGeneratedChunkV2,
+  hashTerrainGenerationIdentityV2,
   type GeneratedChunkV2,
   type GeneratedChunkV2Payload,
   type GenerateChunkRequestV2,
 } from "./terrain-generation-contract";
 
-export type TerrainGenerationBackendKindV2 = "injected-pure" | "typescript-compatibility-oracle";
+function bytesOf(view: ArrayBufferView) {
+  return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+}
+
+function equalBytes(left: ArrayBufferView, right: ArrayBufferView) {
+  const a = bytesOf(left), b = bytesOf(right);
+  if (a.byteLength !== b.byteLength) return false;
+  for (let index = 0; index < a.byteLength; index += 1) if (a[index] !== b[index]) return false;
+  return true;
+}
+
+/** Collision-independent byte comparison used to mint the promotion certificate. */
+export function terrainGenerationChunksByteEqualV2(left: GeneratedChunkV2, right: GeneratedChunkV2) {
+  return left.protocolVersion === right.protocolVersion
+    && left.schemaVersion === right.schemaVersion
+    && left.epoch === right.epoch
+    && left.taskId === right.taskId
+    && left.revision === right.revision
+    && left.namespace === right.namespace
+    && left.contentHash === right.contentHash
+    && left.generatorHash === right.generatorHash
+    && left.requestHash === right.requestHash
+    && left.key === right.key
+    && left.cx === right.cx
+    && left.cz === right.cz
+    && equalBytes(left.blocks, right.blocks)
+    && equalBytes(left.heightmap, right.heightmap)
+    && equalBytes(left.biomes, right.biomes)
+    && equalBytes(left.sectionBlockCounts, right.sectionBlockCounts)
+    && equalBytes(left.skyTops, right.skyTops)
+    && equalBytes(left.light, right.light)
+    && equalBytes(left.lightIndices, right.lightIndices)
+    && equalBytes(left.leafIndices, right.leafIndices)
+    && equalBytes(left.markerTable.offsets, right.markerTable.offsets)
+    && equalBytes(left.markerTable.bytes, right.markerTable.bytes);
+}
+
+export class TerrainGenerationParityLedgerV2 {
+  private readonly cases = new Map<string, Readonly<{
+    key: string;
+    equal: boolean;
+    referenceHash: string;
+    candidateHash: string;
+  }>>();
+  private contentHash: string | null = null;
+  private generatorHash: string | null = null;
+
+  record(request: GenerateChunkRequestV2, reference: GeneratedChunkV2, candidate: GeneratedChunkV2) {
+    assertGeneratedChunkMatchesRequestV2(reference, request);
+    assertGeneratedChunkMatchesRequestV2(candidate, request);
+    if ((this.contentHash && this.contentHash !== request.contentHash)
+      || (this.generatorHash && this.generatorHash !== request.generatorHash)) {
+      throw new Error("Terrain parity corpus mixed content or generator identities");
+    }
+    this.contentHash = request.contentHash;
+    this.generatorHash = request.generatorHash;
+    this.cases.set(request.requestHash, {
+      key: `${request.seedText}\0${request.cx}\0${request.cz}\0${request.requestHash}`,
+      equal: terrainGenerationChunksByteEqualV2(reference, candidate),
+      referenceHash: reference.chunkHash,
+      candidateHash: candidate.chunkHash,
+    });
+  }
+
+  certificate() {
+    const rows = [...this.cases.values()].sort((left, right) => left.key.localeCompare(right.key));
+    return {
+      generatorVersion: 18 as const,
+      generatorHash: this.generatorHash ?? "0".repeat(32),
+      contentHash: this.contentHash ?? "0".repeat(32),
+      corpusHash: hashTerrainGenerationIdentityV2(
+        "blockwild-terrain-parity-corpus-v2",
+        ...rows.flatMap((row) => [row.key, row.referenceHash, row.candidateHash]),
+      ),
+      corpusCases: rows.length,
+      byteEqual: rows.length > 0 && rows.every((row) => row.equal),
+      mismatches: rows.filter((row) => !row.equal).map((row) => row.key),
+    } as const;
+  }
+}
+
+export type TerrainGenerationBackendKindV2 =
+  | "injected-pure"
+  | "typescript-compatibility-oracle"
+  | "rust-wasm-shadow"
+  | "rust-wasm-authoritative";
 
 export type TerrainGenerationBackendContextV2 = Readonly<{
   signal?: AbortSignal;
