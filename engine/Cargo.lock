@@ -106,8 +106,16 @@ dependencies = [
  "blockwild-protocol",
  "blockwild-render",
  "blockwild-types",
+ "blockwild-world",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "blockwild-world"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
 ]
 
 [[package]]

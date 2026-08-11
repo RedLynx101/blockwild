@@ -7,6 +7,11 @@ use blockwild_engine::{Engine, EngineConfig};
 use blockwild_protocol::{Envelope, MessageKind, PROTOCOL_VERSION, ProtocolError, ProtocolErrorCode, SCHEMA_VERSION};
 #[cfg(feature = "renderer")]
 use blockwild_render::{SceneFixture, smoke_offscreen};
+use blockwild_world::{
+    LightingSectionOutcomeV1, MeshSectionOutcomeV1, begin_section_lighting_v1, decode_material_registry_v1,
+    decode_section_snapshot_v1, encode_lighting_result_v1, encode_mesh_packet_v1, encode_section_ineligibility_v1,
+    encode_world_error_v1, mesh_opaque_section_v1,
+};
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -179,6 +184,58 @@ pub fn blockwild_engine_destroy(handle: u32) -> Vec<u8> {
     })
 }
 
+/// Validate and mesh one complete R2 section. The returned payload begins with
+/// `BWM1` on success, `BWI1` when the whole section must fall back to the
+/// TypeScript oracle, or `BWE1` on malformed input. This is intentionally one
+/// coarse call per section, never one call per voxel.
+#[wasm_bindgen]
+#[must_use]
+pub fn blockwild_world_mesh_section_v1(snapshot_bytes: &[u8], registry_bytes: &[u8]) -> Vec<u8> {
+    let snapshot = match decode_section_snapshot_v1(snapshot_bytes) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return encode_world_error_v1(&error),
+    };
+    let registry = match decode_material_registry_v1(registry_bytes) {
+        Ok(registry) => registry,
+        Err(error) => return encode_world_error_v1(&error),
+    };
+    match mesh_opaque_section_v1(&snapshot, &registry, None) {
+        Ok(MeshSectionOutcomeV1::Eligible(packet)) => encode_mesh_packet_v1(&packet),
+        Ok(MeshSectionOutcomeV1::Ineligible(reason)) => encode_section_ineligibility_v1(&reason),
+        Err(error) => encode_world_error_v1(&error),
+    }
+}
+
+/// Rebuild packed sky/R/G/B light for one complete section. `direct_sky_above`
+/// is exactly 256 nibble levels in x + 16*z order. The result uses the same
+/// `BWL1`/`BWI1`/`BWE1` coarse-payload convention as meshing.
+#[wasm_bindgen]
+#[must_use]
+pub fn blockwild_world_light_section_v1(
+    snapshot_bytes: &[u8],
+    registry_bytes: &[u8],
+    direct_sky_above: &[u8],
+) -> Vec<u8> {
+    let snapshot = match decode_section_snapshot_v1(snapshot_bytes) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return encode_world_error_v1(&error),
+    };
+    let registry = match decode_material_registry_v1(registry_bytes) {
+        Ok(registry) => registry,
+        Err(error) => return encode_world_error_v1(&error),
+    };
+    let mut task = match begin_section_lighting_v1(&snapshot, &registry, direct_sky_above.to_vec()) {
+        Ok(LightingSectionOutcomeV1::Eligible(task)) => task,
+        Ok(LightingSectionOutcomeV1::Ineligible(reason)) => return encode_section_ineligibility_v1(&reason),
+        Err(error) => return encode_world_error_v1(&error),
+    };
+    while !task.step(u32::MAX).complete {}
+    match task.finish() {
+        Ok(result) => encode_lighting_result_v1(&result),
+        Err(error) => encode_world_error_v1(&error),
+    }
+}
+
 /// Canonical scene bytes consumed by both the Three.js oracle and `wgpu` smoke path.
 #[cfg(feature = "renderer")]
 #[wasm_bindgen]
@@ -264,6 +321,11 @@ fn invalid_handle(handle: u32) -> Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blockwild_world::{
+        OpaqueCubeMaterialV1, SectionSnapshotV1, TerrainMaterialRegistryV1, TerrainMaterialV1, TerrainSectionAddressV1,
+        TerrainSectionRevisionV1, TerrainSectionSnapshotStreamsV1, encode_material_registry_v1,
+        encode_section_snapshot_v1, halo_cell_index_v1,
+    };
 
     #[test]
     fn facade_negotiates_steps_hashes_and_destroys() {
@@ -279,5 +341,63 @@ mod tests {
         assert_eq!(destroyed.header.kind, MessageKind::Shutdown);
         let missing = Envelope::decode(&blockwild_engine_state_hash(handle)).unwrap();
         assert_eq!(missing.header.kind, MessageKind::Error);
+    }
+
+    #[test]
+    fn world_facade_processes_whole_sections_and_returns_tagged_fallbacks() {
+        const HASH: &str = "0123456789abcdef0123456789abcdef";
+        let registry = TerrainMaterialRegistryV1 {
+            content_hash: HASH.into(),
+            blocks: vec![
+                Some(TerrainMaterialV1::Air),
+                Some(TerrainMaterialV1::OpaqueFullCube(OpaqueCubeMaterialV1 {
+                    side_tile: 1,
+                    top_tile: 2,
+                    bottom_tile: 3,
+                    emitted_light: 0,
+                    emissive_strength: 0.0,
+                    light_dampening: 15,
+                    ambient_occlusion: true,
+                })),
+                Some(TerrainMaterialV1::Specialty),
+            ],
+            biome_tints: vec![Some([1.0; 3])],
+        };
+        let registry_bytes = encode_material_registry_v1(&registry);
+        let snapshot = SectionSnapshotV1::create(
+            HASH.into(),
+            TerrainSectionAddressV1 {
+                universe_id: "1".into(),
+                location_id: "overworld".into(),
+                chunk_x: -1,
+                chunk_z: 0,
+                section_y: -4,
+            },
+            TerrainSectionRevisionV1 {
+                section: 1,
+                halo: 2,
+                lighting: 3,
+            },
+            TerrainSectionSnapshotStreamsV1::empty(),
+        )
+        .unwrap();
+        let snapshot_bytes = encode_section_snapshot_v1(&snapshot);
+        assert_eq!(
+            &blockwild_world_mesh_section_v1(&snapshot_bytes, &registry_bytes)[..4],
+            b"BWM1"
+        );
+        assert_eq!(
+            &blockwild_world_light_section_v1(&snapshot_bytes, &registry_bytes, &[0; 256])[..4],
+            b"BWL1"
+        );
+
+        let mut specialty = snapshot;
+        specialty.streams.blocks[halo_cell_index_v1(0, 0, 0).unwrap()] = 2;
+        specialty.snapshot_hash = blockwild_world::hash_section_snapshot_v1(&specialty);
+        assert_eq!(
+            &blockwild_world_mesh_section_v1(&encode_section_snapshot_v1(&specialty), &registry_bytes)[..4],
+            b"BWI1"
+        );
+        assert_eq!(&blockwild_world_mesh_section_v1(b"bad", &registry_bytes)[..4], b"BWE1");
     }
 }
