@@ -124,6 +124,51 @@ function pruneUnreferencedArtifacts(publicEngineDirectory, index) {
   }
 }
 
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+export function acquireRustEngineBuildLock(lockPath, { isProcessAlive = processIsAlive } = {}) {
+  const open = () => {
+    const descriptor = openSync(lockPath, "wx");
+    try {
+      writeFileSync(descriptor, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
+      return descriptor;
+    } catch (error) {
+      closeSync(descriptor);
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+      throw error;
+    }
+  };
+  try {
+    return open();
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    let owner = null;
+    try { owner = JSON.parse(readFileSync(lockPath, "utf8")); } catch { /* fail closed below */ }
+    if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0 || isProcessAlive(owner.pid)) {
+      throw new RustEngineToolError(`Another Rust engine build may be active (${lockPath}).`, {
+        owner,
+        cause: error.message,
+      });
+    }
+    // The target is the fixed, non-recursive lock file inside public/engine;
+    // the recorded process was independently verified absent before removal.
+    unlinkSync(lockPath);
+    return open();
+  }
+}
+
+export function releaseRustEngineBuildLock(lockPath, descriptor) {
+  if (descriptor !== undefined) closeSync(descriptor);
+  if (existsSync(lockPath)) unlinkSync(lockPath);
+}
+
 export function buildRustEngine(argv = process.argv) {
   const options = parseCommandLine(argv, OPTIONS);
   if (!/^[a-z][a-z0-9-]*$/.test(options.variant)) {
@@ -162,22 +207,21 @@ export function buildRustEngine(argv = process.argv) {
   const lockPath = path.join(publicEngineDirectory, ".build-lock");
   let lockDescriptor;
   try {
-    lockDescriptor = openSync(lockPath, "wx");
-    writeFileSync(lockDescriptor, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
+    lockDescriptor = acquireRustEngineBuildLock(lockPath);
   } catch (error) {
-    throw new RustEngineToolError(`Another Rust engine build may be active (${lockPath}). Remove a stale lock only after verifying its process is gone.`, {
-      cause: error.message,
-    });
+    if (error instanceof RustEngineToolError) throw error;
+    throw new RustEngineToolError(`Rust engine build lock could not be acquired (${lockPath}).`, { cause: error.message });
   }
 
-  const buildRoot = path.join(repositoryRoot, "work", "rust-engine-build");
-  mkdirSync(buildRoot, { recursive: true });
-  const stagingRoot = assertContainedPath(buildRoot, path.join(buildRoot, `${options.variant}-${process.pid}-${Date.now()}`), "Build staging directory");
-  const packageDirectory = path.join(stagingRoot, "package");
-  mkdirSync(packageDirectory, { recursive: true });
-
+  let buildRoot;
+  let stagingRoot;
   let result;
   try {
+    buildRoot = path.join(repositoryRoot, "work", "rust-engine-build");
+    mkdirSync(buildRoot, { recursive: true });
+    stagingRoot = assertContainedPath(buildRoot, path.join(buildRoot, `${options.variant}-${process.pid}-${Date.now()}`), "Build staging directory");
+    const packageDirectory = path.join(stagingRoot, "package");
+    mkdirSync(packageDirectory, { recursive: true });
     const cargoArgs = [
       "build",
       "--locked",
@@ -291,9 +335,8 @@ export function buildRustEngine(argv = process.argv) {
       },
     };
   } finally {
-    if (lockDescriptor !== undefined) closeSync(lockDescriptor);
-    if (existsSync(lockPath)) unlinkSync(lockPath);
-    if (existsSync(stagingRoot)) safeRemoveTree(buildRoot, stagingRoot);
+    releaseRustEngineBuildLock(lockPath, lockDescriptor);
+    if (stagingRoot && existsSync(stagingRoot)) safeRemoveTree(buildRoot, stagingRoot);
   }
 
   const verification = validatePublishedArtifacts(publicEngineDirectory);

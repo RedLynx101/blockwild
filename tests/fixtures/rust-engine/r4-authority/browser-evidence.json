@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "phase": "R4",
+  "capturedAt": "2026-08-11T17:42:57.607Z",
+  "artifact": {
+    "variant": "compatibility",
+    "hash": "4dc03c90b0dee8a3b3934a05736898f98b986d786205348882177166e3064c25",
+    "wasmSha256": "842cd305c8a2b58d0fe66e3d3a7a7ad702d8fe2ca4692d313d45dba86cd4024e"
+  },
+  "runtime": {
+    "browserWorker": "rust-wasm",
+    "renderer": "rust-terrain-promote",
+    "controlledSettings": {
+      "renderDistance": 2,
+      "simulationDistance": 2,
+      "resourceMode": "cpu",
+      "settleTimeoutMilliseconds": 90000
+    },
+    "modesValidated": ["shadow", "canary", "authority"],
+    "productionPlayerEditAuthority": false,
+    "perVoxelBoundaryCalls": 0
+  },
+  "correctness": {
+    "createImportInstall": true,
+    "all12SectionsAndAuxiliary": true,
+    "markerAndPoiContinuity": true,
+    "loadedAirTriState": true,
+    "atomicMultiEditRollback": true,
+    "immediatePresentation": true,
+    "staleRevisionRejected": true,
+    "saveAndExtensionRoundTrip": true,
+    "memoryCacheRoundTrip": true,
+    "residencyAndCancellation": true,
+    "locationSwitch": true,
+    "crashFallbackAndRestart": true,
+    "shadowMismatches": 0,
+    "unexpectedPageErrors": 0
+  },
+  "controlledWarmRun": {
+    "settled": false,
+    "settleMilliseconds": 90678.1,
+    "queueBefore": {
+      "generation": 30,
+      "lighting": 4,
+      "meshSections": 26,
+      "relightSections": 0,
+      "consolidationLayers": 3
+    },
+    "queueAfter": {
+      "generation": 0,
+      "lighting": 0,
+      "meshSections": 39,
+      "relightSections": 0,
+      "consolidationLayers": 3
+    },
+    "editCallMilliseconds": { "p50": 0.3, "p95": 0.5, "p99": 0.8 },
+    "readPageMilliseconds": { "p50": 0.9, "p95": 2.5, "p99": 3.4 },
+    "eventLoopMilliseconds": { "p50": 5.0, "p95": 22.8, "p99": 27.8 },
+    "visibleEdit": {
+      "sampleCount": 1,
+      "synchronousMilliseconds": 193.4,
+      "receiptMilliseconds": 249.7,
+      "auxiliarySyncMilliseconds": 259.2
+    },
+    "auxiliaryTransfer": {
+      "fullCopiedBytes": 0,
+      "patchBytes": 50504,
+      "patchRequests": 1,
+      "lightSections": 6
+    },
+    "promotionReady": false
+  },
+  "recovery": {
+    "deliberateCrashFallbacks": 1,
+    "restarts": 1,
+    "recoveredAuthority": true
+  },
+  "knownEnvironmentNoise": {
+    "classification": "network-isolated external metadata requests; console is not claimed clean",
+    "requests": [
+      "https://blockwild.app/brand/blockwild-icon-16.png",
+      "https://blockwild.app/brand/blockwild-icon-32.png",
+      "https://blockwild.app/brand/blockwild-icon-64.png",
+      "https://blockwild.app/brand/blockwild-icon-192.png",
+      "https://blockwild.app/brand/blockwild-icon-512.png"
+    ]
+  },
+  "evidence": {
+    "controlled": "work/hybrid-rust-migration/r4-browser-shadow.json",
+    "canary": "work/hybrid-rust-migration/r4-browser-canary.json",
+    "authority": "work/hybrid-rust-migration/r4-browser-authority.json",
+    "normalSettingsSoak": "work/hybrid-rust-migration/r4-browser-normal-soak.json",
+    "inWorldFrame": "work/hybrid-rust-migration/r4-browser-shadow-in-world.png"
+  },
+  "remainingGates": [
+    "R7 gameplay transactions must await the same Rust receipt, or use an explicit pending-command protocol, before inventory or progression commits",
+    "renderer mesh and consolidation queues must settle before input-to-visible and event-loop samples qualify as warm promotion evidence",
+    "a 100-sample input-to-visible distribution is still required; the current controlled trace contains one visible edit and does not claim a p95"
+  ]
+}

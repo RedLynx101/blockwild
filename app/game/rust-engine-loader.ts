@@ -14,6 +14,45 @@ export interface RustEngineWasmExports {
   blockwild_engine_take_events(handle: number): RustEngineBytes;
   blockwild_engine_state_hash(handle: number): RustEngineBytes;
   blockwild_engine_destroy(handle: number): RustEngineBytes;
+  /** Coarse R2 whole-section kernels. Older artifacts may omit them. */
+  blockwild_world_mesh_section_v1?(snapshot: Uint8Array, registry: Uint8Array): RustEngineBytes;
+  blockwild_world_light_section_v1?(snapshot: Uint8Array, registry: Uint8Array, directSkyAbove: Uint8Array): RustEngineBytes;
+  /** Coarse R4 world-authority lifecycle. Older rollback artifacts omit it. */
+  blockwild_world_authority_create_r4?(request: Uint8Array): RustEngineBytes;
+  blockwild_world_authority_request_r4?(handle: number, request: Uint8Array): RustEngineBytes;
+  blockwild_world_authority_destroy_r4?(handle: number, request: Uint8Array): RustEngineBytes;
+}
+
+export type RustTerrainWasmExports = RustEngineWasmExports & Required<Pick<
+  RustEngineWasmExports,
+  "blockwild_world_mesh_section_v1" | "blockwild_world_light_section_v1"
+>>;
+
+export function assertRustTerrainWasmExports(exports: RustEngineWasmExports): asserts exports is RustTerrainWasmExports {
+  for (const name of ["blockwild_world_mesh_section_v1", "blockwild_world_light_section_v1"] as const) {
+    if (typeof exports[name] !== "function") {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact is missing export ${name}`);
+    }
+  }
+}
+
+export type RustWorldAuthorityWasmExportsR4V1 = RustEngineWasmExports & Required<Pick<
+  RustEngineWasmExports,
+  "blockwild_world_authority_create_r4" | "blockwild_world_authority_request_r4" | "blockwild_world_authority_destroy_r4"
+>>;
+
+export function assertRustWorldAuthorityWasmExportsR4V1(
+  exports: RustEngineWasmExports,
+): asserts exports is RustWorldAuthorityWasmExportsR4V1 {
+  for (const name of [
+    "blockwild_world_authority_create_r4",
+    "blockwild_world_authority_request_r4",
+    "blockwild_world_authority_destroy_r4",
+  ] as const) {
+    if (typeof exports[name] !== "function") {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact is missing export ${name}`);
+    }
+  }
 }
 
 export type RustEngineArtifact = Readonly<{

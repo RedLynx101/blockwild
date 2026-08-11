@@ -132,6 +132,73 @@ export function blockwild_schema_version() {
 }
 
 /**
+ * Create one long-lived R4 authority. The request includes the complete
+ * directional/waterlogging catalog required to preserve mutation semantics.
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_world_authority_create_r4(request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_world_authority_create_r4(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Destroy a live R4 authority. Destruction is identity-bound so an obsolete
+ * worker cannot tear down a replacement authority that reused a request path.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_world_authority_destroy_r4(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_world_authority_destroy_r4(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Execute a bounded R4 authority request against a live handle.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_world_authority_request_r4(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_world_authority_request_r4(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Rebuild packed sky/R/G/B light for one complete section. `direct_sky_above`
  * is exactly 256 nibble levels in x + 16*z order. The result uses the same
  * `BWL1`/`BWI1`/`BWE1` coarse-payload convention as meshing.

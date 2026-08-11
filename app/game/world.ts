@@ -18,6 +18,24 @@ import {
   type TerrainSectionRevisionV1,
 } from "./terrain-mesh-contract";
 import { RustTerrainMesherBackend } from "./rust-terrain-mesher";
+import {
+  RustWorldAuthorityRuntimeR4V1,
+  configuredRustWorldAuthorityModeR4V1,
+  type RustWorldAuthorityModeR4V1,
+} from "./rust-world-authority-runtime-r4";
+import type {
+  RustChunkAuxiliaryInstallR4V1,
+  RustChunkAuxiliaryPatchR4V1,
+  RustSectionInstallR4V1,
+  RustWorldMutationCommandR4V1,
+} from "./rust-world-authority-bridge-r4";
+import {
+  canonicalWorldJsonV1,
+  createWorldCompatibilitySaveV1,
+  encodeWorldCompatibilitySaveV1,
+  type WorldAddressV1,
+} from "./world-authority-contract";
+import { TypeScriptCanonicalHasher } from "./rust-kernel-shadow";
 import { TypeScriptTerrainMesherBackend } from "./typescript-terrain-mesher";
 import { TERRAIN_BIOME_TINTS_V1, canonicalTerrainMaterialRegistryV2 } from "./terrain-material-registry";
 import {
@@ -190,6 +208,17 @@ export type RustTerrainR2BrowserHarnessV1 = Readonly<{
   exerciseImmediateEdit(): Promise<Readonly<Record<string, unknown>>>;
   exerciseCrashRecovery(): Promise<Readonly<Record<string, unknown>>>;
   awaitSettled(timeoutMilliseconds?: number, submittedBefore?: number): Promise<ReturnType<ChunkWorld["streamingDiagnostics"]>["rustTerrain"]>;
+}>;
+
+export type RustWorldAuthorityR4BrowserHarnessV1 = Readonly<{
+  schemaVersion: 1;
+  mode: RustWorldAuthorityModeR4V1;
+  diagnostics(): ReturnType<RustWorldAuthorityRuntimeR4V1["diagnostics"]>;
+  readPage(origin: Readonly<{ x: number; y: number; z: number }>, size: Readonly<{ x: number; y: number; z: number }>): ReturnType<RustWorldAuthorityRuntimeR4V1["readPage"]>;
+  exportSave(): ReturnType<RustWorldAuthorityRuntimeR4V1["exportSave"]>;
+  exerciseLifecycle(): Promise<Readonly<Record<string, unknown>>>;
+  exerciseWarmBenchmark(position: Readonly<{ x: number; y: number; z: number }>): Promise<Readonly<Record<string, unknown>>>;
+  simulateCrash(): Promise<Readonly<Record<string, unknown>>>;
 }>;
 /** v1.8.4: conventional ore rolls are 25% richer before the world's abundance setting. */
 export const ORE_SPAWN_RATE_MULTIPLIER = 1.25;
@@ -577,8 +606,8 @@ const configuredRustTerrainMode = typeof process === "undefined"
   : process.env.NEXT_PUBLIC_BLOCKWILD_RUST_TERRAIN_MESHER;
 export const DEFAULT_RUST_TERRAIN_MESHER_MODE: RustTerrainMesherMode = typeof document === "undefined"
   ? "off"
-  : configuredRustTerrainMode === "promote" ? "promote"
-    : configuredRustTerrainMode === "shadow" ? "shadow" : "off";
+  : new URLSearchParams(location.search).get("rust-terrain") === "promote" || configuredRustTerrainMode === "promote" ? "promote"
+    : new URLSearchParams(location.search).get("rust-terrain") === "shadow" || configuredRustTerrainMode === "shadow" ? "shadow" : "off";
 const worldRenderOrder = (layer: WorldRenderLayer) => layer === "glass" ? 6
   : layer === "transparent" ? 5
     : layer === "water" ? 4
@@ -2977,6 +3006,49 @@ export class ChunkWorld {
   terrainGenerationPipeline = new TerrainGenerationPipeline();
   private readonly rustTerrainMode: RustTerrainMesherMode;
   private readonly rustTerrainMesher: RustTerrainMesherBackend | null;
+  private readonly rustWorldAuthority: RustWorldAuthorityRuntimeR4V1;
+  private rustWorldAuthorityEpoch = 0;
+  private rustWorldMutationSequence = 0;
+  private applyingRustWorldAuthorityEvent = false;
+  private readonly rustWorldPendingChunkKeys = new Set<string>();
+  private readonly rustWorldChunkInstallGenerations = new Map<string, number>();
+  private readonly rustWorldInstalledSources = new Map<string, {
+    sections: Map<number, string>;
+    auxiliaryHash: string | null;
+    auxiliaryRevision: number | null;
+  }>();
+  private readonly rustWorldAuxiliaryPatchInFlight = new Set<string>();
+  private readonly rustWorldDirtyLightSections = new Map<string, Set<number>>();
+  private readonly rustWorldDirtySectionCounts = new Map<string, Set<number>>();
+  private readonly rustWorldDirtySkyTops = new Map<string, Set<number>>();
+  private readonly rustWorldDirtyLightIndices = new Set<string>();
+  private readonly rustWorldDirtyLeafIndices = new Set<string>();
+  private rustWorldAuditStreamingPaused = false;
+  private readonly rustWorldSectionTransferChunks = new Set<string>();
+  private readonly rustWorldInstalls = new Map<string, Readonly<{
+    accepted: number;
+    stale: number;
+    auxiliaryAccepted: number;
+    markerRows: number;
+  }>>();
+  private rustWorldInstallMetrics = {
+    requests: 0,
+    sectionBatches: 0,
+    partialSectionBatches: 0,
+    auxiliaryOnlyRequests: 0,
+    uniqueSectionChunks: 0,
+    reinstallSectionBatches: 0,
+    sectionsTransferred: 0,
+    auxiliaryTransferred: 0,
+    copiedBytes: 0,
+    fullAuxiliaryBytes: 0,
+    patchRequests: 0,
+    patchBytes: 0,
+    lightSectionsPatched: 0,
+    dedupedSections: 0,
+    dedupedAuxiliary: 0,
+  };
+  private rustWorldAuthorityHarness: RustWorldAuthorityR4BrowserHarnessV1 | null = null;
   private rustTerrainR2BrowserHarness: RustTerrainR2BrowserHarnessV1 | null = null;
   private rustTerrainR2AuditPosition: Readonly<{ x: number; y: number; z: number }> | null = null;
   private readonly rustTerrainReferencePackets = new Map<string, MeshPacketV1>();
@@ -3090,7 +3162,10 @@ export class ChunkWorld {
     falling: boolean;
   }> | undefined) | null = null;
 
-  constructor(options: Readonly<{ rustTerrainMode?: RustTerrainMesherMode }> = {}) {
+  constructor(options: Readonly<{
+    rustTerrainMode?: RustTerrainMesherMode;
+    rustWorldAuthorityMode?: RustWorldAuthorityModeR4V1;
+  }> = {}) {
     this.rustTerrainMode = options.rustTerrainMode ?? DEFAULT_RUST_TERRAIN_MESHER_MODE;
     this.atlas = typeof document === "undefined"
       ? new THREE.DataTexture(new Uint8Array([127, 127, 127, 255]), 1, 1, THREE.RGBAFormat)
@@ -3115,7 +3190,10 @@ export class ChunkWorld {
       sectionHeight: SECTION_HEIGHT,
       getChunk: (cx, cz) => this.chunks.get(chunkKey(cx, cz)),
       getDefinition: (type) => BLOCKS[type],
-      markLightDirty: (x, y, z) => this.queueLightSectionAt(x, y, z),
+      markLightDirty: (x, y, z) => {
+        this.markRustWorldLightSectionDirty(x, y, z);
+        this.queueLightSectionAt(x, y, z);
+      },
     });
     this.rustTerrainMesher = this.rustTerrainMode === "off" ? null : new RustTerrainMesherBackend({
       fallback: new TypeScriptTerrainMesherBackend({
@@ -3130,7 +3208,448 @@ export class ChunkWorld {
       startupTimeoutMs: 30_000,
       maximumRestarts: 2,
     });
+    this.rustWorldAuthority = new RustWorldAuthorityRuntimeR4V1({
+      mode: options.rustWorldAuthorityMode ?? configuredRustWorldAuthorityModeR4V1(),
+    });
     this.installRustTerrainR2BrowserHarness();
+    this.installRustWorldAuthorityR4BrowserHarness();
+  }
+
+  private rustWorldAddress(): WorldAddressV1 {
+    return Object.freeze({ universeId: "1", locationId: this.seedText });
+  }
+
+  private rustWorldAuthorityReady() {
+    return this.rustWorldAuthority.diagnostics().state === "ready";
+  }
+
+  private rustSectionSourceHash(chunk: Chunk, section: number, facing: Uint8Array, liquidKind: Uint8Array, liquidLevel: Uint8Array, flags: Uint8Array) {
+    const start = section * CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT;
+    const blocks = chunk.blocks.subarray(start, start + CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT);
+    return new TypeScriptCanonicalHasher("blockwild-r4-section-install-v1")
+      .writeI32(chunk.cx).writeI32(chunk.cz).writeI32(section).writeU32(GENERATOR_VERSION)
+      .writeBytes(new Uint8Array(blocks.buffer, blocks.byteOffset, blocks.byteLength))
+      .writeBytes(facing).writeBytes(liquidKind).writeBytes(liquidLevel).writeBytes(flags)
+      .finishHex();
+  }
+
+  private rustChunkInstall(
+    chunk: Chunk,
+    requestedSections: readonly number[] = Array.from({ length: SECTION_COUNT }, (_, section) => section),
+    auxiliarySourceRevision = GENERATOR_VERSION,
+  ): Readonly<{
+    sections: readonly RustSectionInstallR4V1[];
+    auxiliary: readonly RustChunkAuxiliaryInstallR4V1[];
+  }> {
+    const address = this.rustWorldAddress();
+    const sections: RustSectionInstallR4V1[] = [];
+    const sectionVolume = CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT;
+    for (const section of requestedSections) {
+      if (!Number.isInteger(section) || section < 0 || section >= SECTION_COUNT) continue;
+      const start = section * sectionVolume;
+      const blocks = chunk.blocks.slice(start, start + sectionVolume);
+      const facing = new Uint8Array(sectionVolume);
+      const liquidKind = new Uint8Array(sectionVolume);
+      const liquidLevel = new Uint8Array(sectionVolume);
+      const flags = new Uint8Array(sectionVolume);
+      for (let index = 0; index < sectionVolume; index += 1) {
+        const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+        const localX = horizontal % CHUNK_SIZE;
+        const localZ = Math.floor(horizontal / CHUNK_SIZE);
+        const y = MIN_Y + section * SECTION_HEIGHT + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+        const x = chunk.cx * CHUNK_SIZE + localX;
+        const z = chunk.cz * CHUNK_SIZE + localZ;
+        const block = blocks[index] as BlockId;
+        const definition = BLOCKS[block];
+        if (isDirectionallyPlacedBlock(block)) facing[index] = this.blockFacingAt(x, y, z);
+        const kind = definition?.liquid === "water" ? 1 : definition?.liquid === "lava" ? 2
+          : definition?.liquid === "honey" ? 3 : definition?.liquid === "syrup" ? 4 : 0;
+        const flow = kind ? this.liquidCellProvider?.(x, y, z) : undefined;
+        liquidKind[index] = kind;
+        liquidLevel[index] = kind ? Math.max(0, Math.min(8, Math.trunc(flow?.level ?? 8))) : 0;
+        flags[index] = Number(blockContainsWater(block))
+          | (Number(kind !== 0 && (flow?.source ?? true)) << 1)
+          | (Number(kind !== 0 && Boolean(flow?.falling)) << 2)
+          | (Number(Boolean(definition?.waterlogged)) << 3);
+      }
+      sections.push(Object.freeze({
+        address: Object.freeze({ ...address, chunkX: chunk.cx, chunkZ: chunk.cz, sectionY: section }),
+        sourceRevision: GENERATOR_VERSION,
+        sourceHash: this.rustSectionSourceHash(chunk, section, facing, liquidKind, liquidLevel, flags),
+        blocks,
+        facing,
+        liquidKind,
+        liquidLevel,
+        flags,
+      }));
+    }
+    const markerRows = this.structureMarkerEntriesForChunk(chunk.cx, chunk.cz)
+      .map(([key, marker]) => Object.freeze({ key, canonicalJson: canonicalWorldJsonV1(marker) }))
+      .sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+    const auxiliaryHash = new TypeScriptCanonicalHasher("blockwild-r4-chunk-auxiliary-v1")
+      .writeI32(chunk.cx).writeI32(chunk.cz).writeU32(GENERATOR_VERSION)
+      .writeBytes(new Uint8Array(chunk.heightmap.buffer, chunk.heightmap.byteOffset, chunk.heightmap.byteLength))
+      .writeBytes(chunk.biomes)
+      .writeBytes(new Uint8Array(chunk.sectionBlockCounts.buffer, chunk.sectionBlockCounts.byteOffset, chunk.sectionBlockCounts.byteLength))
+      .writeBytes(new Uint8Array(chunk.skyTops.buffer, chunk.skyTops.byteOffset, chunk.skyTops.byteLength))
+      .writeBytes(new Uint8Array(chunk.light.buffer, chunk.light.byteOffset, chunk.light.byteLength))
+      .writeString(canonicalWorldJsonV1(markerRows))
+      .finishHex();
+    const auxiliary: RustChunkAuxiliaryInstallR4V1 = Object.freeze({
+      address: Object.freeze({ ...address, chunkX: chunk.cx, chunkZ: chunk.cz }),
+      sourceRevision: auxiliarySourceRevision,
+      sourceHash: auxiliaryHash,
+      heightmap: chunk.heightmap.slice(),
+      biomes: chunk.biomes.slice(),
+      sectionBlockCounts: chunk.sectionBlockCounts.slice(),
+      skyTops: chunk.skyTops.slice(),
+      light: chunk.light.slice(),
+      lightIndices: Uint32Array.from([...chunk.lightIndices].sort((left, right) => left - right)),
+      leafIndices: Uint32Array.from([...chunk.leafIndices].sort((left, right) => left - right)),
+      markers: Object.freeze(markerRows),
+    });
+    return Object.freeze({ sections: Object.freeze(sections), auxiliary: Object.freeze([auxiliary]) });
+  }
+
+  private markRustWorldLightSectionDirty(x: number, y: number, z: number) {
+    if (y < MIN_Y || y > MAX_Y) return;
+    const sx = splitCoordinate(x);
+    const sz = splitCoordinate(z);
+    const key = chunkKey(sx.chunk, sz.chunk);
+    if (!this.chunks.has(key)) return;
+    const sections = this.rustWorldDirtyLightSections.get(key) ?? new Set<number>();
+    sections.add(sectionForY(y));
+    this.rustWorldDirtyLightSections.set(key, sections);
+  }
+
+  private markRustWorldBlockAuxiliaryDirty(chunk: Chunk, section: number, column: number) {
+    const counts = this.rustWorldDirtySectionCounts.get(chunk.key) ?? new Set<number>();
+    counts.add(section);
+    this.rustWorldDirtySectionCounts.set(chunk.key, counts);
+    const skyTops = this.rustWorldDirtySkyTops.get(chunk.key) ?? new Set<number>();
+    skyTops.add(column);
+    this.rustWorldDirtySkyTops.set(chunk.key, skyTops);
+    this.rustWorldDirtyLightIndices.add(chunk.key);
+    this.rustWorldDirtyLeafIndices.add(chunk.key);
+  }
+
+  private flushRustWorldAuxiliaryPatches(onlyKey?: string) {
+    if (this.rustWorldAuthority.configuredMode === "off" || !this.rustWorldAuthorityReady()) return;
+    const keys = new Set<string>([
+      ...this.rustWorldDirtyLightSections.keys(),
+      ...this.rustWorldDirtySectionCounts.keys(),
+      ...this.rustWorldDirtySkyTops.keys(),
+      ...this.rustWorldDirtyLightIndices,
+      ...this.rustWorldDirtyLeafIndices,
+    ]);
+    const prepared: Array<{
+      key: string;
+      installed: { sections: Map<number, string>; auxiliaryHash: string | null; auxiliaryRevision: number | null };
+      patch: RustChunkAuxiliaryPatchR4V1;
+      sourceRevision: number;
+      lightSections: number[];
+      sectionCounts: number[];
+      skyTops: number[];
+      includeLightIndices: boolean;
+      includeLeafIndices: boolean;
+      patchBytes: number;
+    }> = [];
+    for (const key of keys) {
+      if ((onlyKey && key !== onlyKey) || this.rustWorldAuxiliaryPatchInFlight.has(key)
+        || this.rustWorldPendingChunkKeys.has(key)) continue;
+      const chunk = this.chunks.get(key);
+      const installed = this.rustWorldInstalledSources.get(key);
+      if (!chunk || !installed?.auxiliaryHash || installed.auxiliaryRevision === null) continue;
+      const lightSections = [...(this.rustWorldDirtyLightSections.get(key) ?? [])].sort((left, right) => left - right);
+      const sectionCounts = [...(this.rustWorldDirtySectionCounts.get(key) ?? [])].sort((left, right) => left - right);
+      const skyTops = [...(this.rustWorldDirtySkyTops.get(key) ?? [])].sort((left, right) => left - right);
+      const includeLightIndices = this.rustWorldDirtyLightIndices.has(key);
+      const includeLeafIndices = this.rustWorldDirtyLeafIndices.has(key);
+      if (!lightSections.length && !sectionCounts.length && !skyTops.length && !includeLightIndices && !includeLeafIndices) continue;
+
+      this.rustWorldDirtyLightSections.delete(key);
+      this.rustWorldDirtySectionCounts.delete(key);
+      this.rustWorldDirtySkyTops.delete(key);
+      this.rustWorldDirtyLightIndices.delete(key);
+      this.rustWorldDirtyLeafIndices.delete(key);
+      const sectionVolume = CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT;
+      const lightPatches = lightSections.map((sectionY) => Object.freeze({
+        sectionY,
+        light: chunk.light.slice(sectionY * sectionVolume, (sectionY + 1) * sectionVolume),
+      }));
+      const countPatches = sectionCounts.map((index) => Object.freeze({ index, value: chunk.sectionBlockCounts[index] }));
+      const skyPatches = skyTops.map((index) => Object.freeze({ index, value: chunk.skyTops[index] }));
+      const sourceRevision = installed.auxiliaryRevision + 1;
+      const sourceHashBuilder = new TypeScriptCanonicalHasher("blockwild-r4-chunk-auxiliary-patch-v1")
+        .writeString(installed.auxiliaryHash).writeU64(sourceRevision)
+        .writeString(canonicalWorldJsonV1({ lightSections, sectionCounts: countPatches, skyTops: skyPatches }));
+      for (const entry of lightPatches) {
+        sourceHashBuilder.writeU16(entry.sectionY).writeBytes(
+          new Uint8Array(entry.light.buffer, entry.light.byteOffset, entry.light.byteLength),
+        );
+      }
+      const lightIndices = includeLightIndices ? Uint32Array.from([...chunk.lightIndices].sort((left, right) => left - right)) : undefined;
+      const leafIndices = includeLeafIndices ? Uint32Array.from([...chunk.leafIndices].sort((left, right) => left - right)) : undefined;
+      if (lightIndices) sourceHashBuilder.writeBytes(new Uint8Array(lightIndices.buffer));
+      if (leafIndices) sourceHashBuilder.writeBytes(new Uint8Array(leafIndices.buffer));
+      const patch: RustChunkAuxiliaryPatchR4V1 = Object.freeze({
+        address: Object.freeze({ ...this.rustWorldAddress(), chunkX: chunk.cx, chunkZ: chunk.cz }),
+        expectedSourceRevision: installed.auxiliaryRevision,
+        expectedSourceHash: installed.auxiliaryHash,
+        sourceRevision,
+        sourceHash: sourceHashBuilder.finishHex(),
+        lightSections: Object.freeze(lightPatches),
+        sectionBlockCounts: Object.freeze(countPatches),
+        skyTops: Object.freeze(skyPatches),
+        ...(lightIndices ? { lightIndices } : {}),
+        ...(leafIndices ? { leafIndices } : {}),
+      });
+      const patchBytes = lightPatches.reduce((total, entry) => total + entry.light.byteLength, 0)
+        + countPatches.length * 4 + skyPatches.length * 4
+        + (lightIndices?.byteLength ?? 0) + (leafIndices?.byteLength ?? 0);
+      this.rustWorldAuxiliaryPatchInFlight.add(key);
+      this.rustWorldPendingChunkKeys.add(key);
+      this.rustWorldInstallMetrics.patchBytes += patchBytes;
+      this.rustWorldInstallMetrics.copiedBytes += patchBytes;
+      this.rustWorldInstallMetrics.lightSectionsPatched += lightPatches.length;
+      prepared.push({
+        key, installed, patch, sourceRevision, lightSections, sectionCounts, skyTops,
+        includeLightIndices, includeLeafIndices, patchBytes,
+      });
+    }
+    if (!prepared.length) return;
+    this.rustWorldInstallMetrics.patchRequests += 1;
+    void this.rustWorldAuthority.patchAuxiliary(prepared.map((entry) => entry.patch)).then((response) => {
+      for (const entry of prepared) {
+        const {
+          key, installed, patch, sourceRevision, lightSections, sectionCounts, skyTops,
+          includeLightIndices, includeLeafIndices,
+        } = entry;
+        if (response) {
+          installed.auxiliaryRevision = sourceRevision;
+          installed.auxiliaryHash = patch.sourceHash;
+        } else {
+          const retryLight = this.rustWorldDirtyLightSections.get(key) ?? new Set<number>();
+          for (const section of lightSections) retryLight.add(section);
+          this.rustWorldDirtyLightSections.set(key, retryLight);
+          const retryCounts = this.rustWorldDirtySectionCounts.get(key) ?? new Set<number>();
+          for (const index of sectionCounts) retryCounts.add(index);
+          this.rustWorldDirtySectionCounts.set(key, retryCounts);
+          const retrySky = this.rustWorldDirtySkyTops.get(key) ?? new Set<number>();
+          for (const index of skyTops) retrySky.add(index);
+          this.rustWorldDirtySkyTops.set(key, retrySky);
+          if (includeLightIndices) this.rustWorldDirtyLightIndices.add(key);
+          if (includeLeafIndices) this.rustWorldDirtyLeafIndices.add(key);
+        }
+        this.rustWorldAuxiliaryPatchInFlight.delete(key);
+        this.rustWorldPendingChunkKeys.delete(key);
+        this.flushRustWorldAuxiliaryPatches(key);
+      }
+    });
+  }
+
+  private queueRustWorldChunkInstall(chunk: Chunk, requestedSections?: readonly number[]) {
+    if (this.rustWorldAuthority.configuredMode === "off") return;
+    this.rustWorldPendingChunkKeys.add(chunk.key);
+    if (!this.rustWorldAuthorityReady()) return;
+    const prior = this.rustWorldInstalledSources.get(chunk.key) ?? {
+      sections: new Map<number, string>(), auxiliaryHash: null, auxiliaryRevision: null,
+    };
+    const built = this.rustChunkInstall(
+      chunk,
+      requestedSections,
+      prior.auxiliaryRevision === null ? GENERATOR_VERSION : prior.auxiliaryRevision + 1,
+    );
+    const sections = built.sections.filter((section) => prior.sections.get(section.address.sectionY) !== section.sourceHash);
+    const auxiliary = built.auxiliary.filter((entry) => prior.auxiliaryHash !== entry.sourceHash);
+    this.rustWorldInstallMetrics.dedupedSections += built.sections.length - sections.length;
+    this.rustWorldInstallMetrics.dedupedAuxiliary += built.auxiliary.length - auxiliary.length;
+    if (sections.length === 0 && auxiliary.length === 0) {
+      this.rustWorldPendingChunkKeys.delete(chunk.key);
+      return;
+    }
+    const generation = (this.rustWorldChunkInstallGenerations.get(chunk.key) ?? 0) + 1;
+    const authorityEpoch = this.rustWorldAuthorityEpoch;
+    this.rustWorldChunkInstallGenerations.set(chunk.key, generation);
+    this.rustWorldInstallMetrics.requests += 1;
+    this.rustWorldInstallMetrics.sectionBatches += Number(sections.length > 0);
+    this.rustWorldInstallMetrics.partialSectionBatches += Number(sections.length > 0 && sections.length < SECTION_COUNT);
+    this.rustWorldInstallMetrics.auxiliaryOnlyRequests += Number(sections.length === 0 && auxiliary.length > 0);
+    if (sections.length > 0) {
+      if (this.rustWorldSectionTransferChunks.has(chunk.key)) this.rustWorldInstallMetrics.reinstallSectionBatches += 1;
+      else {
+        this.rustWorldSectionTransferChunks.add(chunk.key);
+        this.rustWorldInstallMetrics.uniqueSectionChunks += 1;
+      }
+    }
+    this.rustWorldInstallMetrics.sectionsTransferred += sections.length;
+    this.rustWorldInstallMetrics.auxiliaryTransferred += auxiliary.length;
+    this.rustWorldInstallMetrics.copiedBytes += sections.reduce((total, section) => total
+      + section.blocks.byteLength + section.facing.byteLength + section.liquidKind.byteLength
+      + section.liquidLevel.byteLength + section.flags.byteLength, 0);
+    const fullAuxiliaryBytes = auxiliary.reduce((total, entry) => total
+      + entry.heightmap.byteLength + entry.biomes.byteLength + entry.sectionBlockCounts.byteLength
+      + entry.skyTops.byteLength + entry.light.byteLength + entry.lightIndices.byteLength
+      + entry.leafIndices.byteLength
+      + entry.markers.reduce((markerBytes, marker) => markerBytes + (marker.key.length + marker.canonicalJson.length) * 2, 0), 0);
+    this.rustWorldInstallMetrics.copiedBytes += fullAuxiliaryBytes;
+    this.rustWorldInstallMetrics.fullAuxiliaryBytes += fullAuxiliaryBytes;
+    if (auxiliary.length > 0) {
+      this.rustWorldDirtyLightSections.delete(chunk.key);
+      this.rustWorldDirtySectionCounts.delete(chunk.key);
+      this.rustWorldDirtySkyTops.delete(chunk.key);
+      this.rustWorldDirtyLightIndices.delete(chunk.key);
+      this.rustWorldDirtyLeafIndices.delete(chunk.key);
+    }
+    void this.rustWorldAuthority.installSections(sections, auxiliary).then((response) => {
+      if (authorityEpoch !== this.rustWorldAuthorityEpoch
+        || this.rustWorldChunkInstallGenerations.get(chunk.key) !== generation) return;
+      if (response) {
+        const installed = this.rustWorldInstalledSources.get(chunk.key) ?? {
+          sections: new Map<number, string>(), auxiliaryHash: null, auxiliaryRevision: null,
+        };
+        for (const section of sections) installed.sections.set(section.address.sectionY, section.sourceHash);
+        if (auxiliary.length > 0) {
+          installed.auxiliaryHash = auxiliary[0].sourceHash;
+          installed.auxiliaryRevision = auxiliary[0].sourceRevision;
+        }
+        this.rustWorldInstalledSources.set(chunk.key, installed);
+        this.rustWorldInstalls.set(chunk.key, Object.freeze({
+          accepted: response.accepted,
+          stale: response.stale,
+          auxiliaryAccepted: response.auxiliaryAccepted ?? 0,
+          markerRows: response.markerRows ?? 0,
+        }));
+      }
+      this.rustWorldPendingChunkKeys.delete(chunk.key);
+      this.flushRustWorldAuxiliaryPatches(chunk.key);
+    });
+  }
+
+  private compatibilitySaveForRust(savedEdits?: ChunkEditSave, savedFacings?: Readonly<Record<string, number>>) {
+    const edits = Object.entries(savedEdits ?? {}).map(([key, entries]) => {
+      const [chunkX, chunkZ] = key.split(",").map(Number);
+      return { chunkX, chunkZ, entries };
+    });
+    const editedPositions = new Set<string>();
+    for (const chunk of edits) for (const [index] of chunk.entries) {
+      const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+      editedPositions.add(`${chunk.chunkX * CHUNK_SIZE + horizontal % CHUNK_SIZE},${MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE))},${chunk.chunkZ * CHUNK_SIZE + Math.floor(horizontal / CHUNK_SIZE)}`);
+    }
+    const facings = Object.entries(savedFacings ?? {}).flatMap(([key, rawFacing]) => {
+      if (!editedPositions.has(key)) return [];
+      const [x, y, z] = key.split(",").map(Number);
+      return [{ x, y, z, facing: normalizeBlockFacing(rawFacing) }];
+    });
+    return createWorldCompatibilitySaveV1({
+      address: this.rustWorldAddress(),
+      revision: { epoch: 1, mutation: 0, residency: 0 },
+      edits,
+      facings,
+    });
+  }
+
+  private startRustWorldAuthority(savedEdits: ChunkEditSave | undefined, savedFacings: Readonly<Record<string, number>> | undefined) {
+    const epoch = ++this.rustWorldAuthorityEpoch;
+    if (this.rustWorldAuthority.configuredMode === "off") return;
+    void this.rustWorldAuthority.start(this.rustWorldAddress()).then(async (identity) => {
+      if (!identity || epoch !== this.rustWorldAuthorityEpoch) return;
+      const save = this.compatibilitySaveForRust(savedEdits, savedFacings);
+      if (save.edits.length || save.facings.length) {
+        if (!await this.rustWorldAuthority.importCompatibilitySave(encodeWorldCompatibilitySaveV1(save))) return;
+      }
+      if (epoch !== this.rustWorldAuthorityEpoch) return;
+      for (const chunk of this.chunks.values()) this.queueRustWorldChunkInstall(chunk);
+    });
+  }
+
+  private applyRustWorldImmediateEvent(
+    event: NonNullable<NonNullable<Awaited<ReturnType<RustWorldAuthorityRuntimeR4V1["mutate"]>>>["immediateEvent"]>,
+    immediate: boolean,
+  ) {
+    this.applyingRustWorldAuthorityEvent = true;
+    try {
+      this.setBlocksBatch(event.changes.map((change) => ({ x: change.x, y: change.y, z: change.z, type: change.blockId as BlockId })), true, immediate);
+      for (const change of event.changes) {
+        if (change.facing !== this.blockFacingAt(change.x, change.y, change.z)) {
+          this.setBlockFacing(change.x, change.y, change.z, normalizeBlockFacing(change.facing), immediate);
+        }
+      }
+    } finally {
+      this.applyingRustWorldAuthorityEvent = false;
+    }
+  }
+
+  private submitRustWorldMutation(
+    commands: readonly RustWorldMutationCommandR4V1[],
+    immediate: boolean,
+    fallback: () => void,
+  ) {
+    if (this.applyingRustWorldAuthorityEvent || !this.rustWorldAuthorityReady()) {
+      fallback();
+      return;
+    }
+    const mode = this.rustWorldAuthority.mode();
+    if (mode === "off") { fallback(); return; }
+    const expected = new Map<string, {
+      initialBlock: BlockId | undefined;
+      initialFacing: BlockFacing;
+      block: BlockId | undefined;
+      facing: BlockFacing;
+      blockTouched: boolean;
+      facingTouched: boolean;
+    }>();
+    for (const command of commands) {
+      const key = `${command.x},${command.y},${command.z}`;
+      const state = expected.get(key) ?? {
+        initialBlock: this.getBlock(command.x, command.y, command.z),
+        initialFacing: this.blockFacingAt(command.x, command.y, command.z),
+        block: this.getBlock(command.x, command.y, command.z),
+        facing: this.blockFacingAt(command.x, command.y, command.z),
+        blockTouched: false,
+        facingTouched: false,
+      };
+      if (command.kind === "set-block") {
+        state.block = command.blockId === BlockId.Air && state.block !== undefined && isWaterloggedFloraBlock(state.block)
+          ? BlockId.Water
+          : command.blockId as BlockId;
+        state.blockTouched = true;
+      } else if (command.kind === "set-facing") {
+        state.facing = normalizeBlockFacing(command.facing);
+        state.facingTouched = true;
+      }
+      expected.set(key, state);
+    }
+    const expectedChanges = new Map([...expected].filter(([, state]) => (
+      (state.blockTouched && state.block !== state.initialBlock)
+      || (state.facingTouched && state.facing !== state.initialFacing)
+    )));
+    const batchId = `browser-${++this.rustWorldMutationSequence}`;
+    if (mode === "shadow") fallback();
+    void this.rustWorldAuthority.mutate(batchId, "browser-world", commands).then((response) => {
+      if (!response) {
+        if (mode !== "shadow") fallback();
+        return;
+      }
+      if (mode === "shadow") {
+        const changes = response.immediateEvent?.changes ?? [];
+        const actual = new Map(changes.map((change) => [`${change.x},${change.y},${change.z}`, change]));
+        const exact = response.status === "accepted"
+          && response.mutated === (expectedChanges.size > 0)
+          && actual.size === expectedChanges.size
+          && [...expectedChanges].every(([key, state]) => {
+            const change = actual.get(key);
+            return Boolean(change)
+              && (!state.blockTouched || change!.blockId === state.block)
+              && (!state.facingTouched || change!.facing === state.facing);
+          });
+        this.rustWorldAuthority.recordShadowComparison(exact);
+      } else if (response.immediateEvent) this.applyRustWorldImmediateEvent(response.immediateEvent, immediate);
+      // The Rust mutation receipt advances cell authority first. Any lighting
+      // and small derived streams changed by the local presentation projection
+      // follow as a revision-checked section patch, never a whole-chunk resend.
+      this.flushRustWorldAuxiliaryPatches();
+    });
   }
 
   /** Supplies sparse runtime flow metadata without coupling world storage to the simulator. */
@@ -3245,6 +3764,35 @@ export class ChunkWorld {
     this.mutationRevision = 0;
     this.rustTerrainReferencePackets.clear();
     this.rustTerrainRevisions.clear();
+    this.rustWorldPendingChunkKeys.clear();
+    this.rustWorldChunkInstallGenerations.clear();
+    this.rustWorldInstalledSources.clear();
+    this.rustWorldAuxiliaryPatchInFlight.clear();
+    this.rustWorldDirtyLightSections.clear();
+    this.rustWorldDirtySectionCounts.clear();
+    this.rustWorldDirtySkyTops.clear();
+    this.rustWorldDirtyLightIndices.clear();
+    this.rustWorldDirtyLeafIndices.clear();
+    this.rustWorldAuditStreamingPaused = false;
+    this.rustWorldSectionTransferChunks.clear();
+    this.rustWorldInstalls.clear();
+    this.rustWorldInstallMetrics = {
+      requests: 0,
+      sectionBatches: 0,
+      partialSectionBatches: 0,
+      auxiliaryOnlyRequests: 0,
+      uniqueSectionChunks: 0,
+      reinstallSectionBatches: 0,
+      sectionsTransferred: 0,
+      auxiliaryTransferred: 0,
+      copiedBytes: 0,
+      fullAuxiliaryBytes: 0,
+      patchRequests: 0,
+      patchBytes: 0,
+      lightSectionsPatched: 0,
+      dedupedSections: 0,
+      dedupedAuxiliary: 0,
+    };
     this.rustTerrainShadow = {
       submitted: 0,
       rustEligible: 0,
@@ -3288,6 +3836,7 @@ export class ChunkWorld {
         if (facing !== BLOCK_FACING_NORTH) this.blockFacings.set(key, facing);
       }
     }
+    this.startRustWorldAuthority(savedEdits, savedFacings);
   }
 
   blockFacingAt(x: number, y: number, z: number): BlockFacing {
@@ -3295,6 +3844,16 @@ export class ChunkWorld {
   }
 
   setBlockFacing(x: number, y: number, z: number, facing: BlockFacing, immediate = false) {
+    if (!this.applyingRustWorldAuthorityEvent && this.rustWorldAuthority.mode() !== "off") {
+      const applyFallback = () => {
+        this.applyingRustWorldAuthorityEvent = true;
+        try { this.setBlockFacing(x, y, z, facing, immediate); } finally { this.applyingRustWorldAuthorityEvent = false; }
+      };
+      this.submitRustWorldMutation([{
+        kind: "set-facing", x: Math.trunc(x), y: Math.trunc(y), z: Math.trunc(z), facing: normalizeBlockFacing(facing),
+      }], immediate, applyFallback);
+      return true;
+    }
     const key = `${Math.trunc(x)},${Math.trunc(y)},${Math.trunc(z)}`;
     const normalized = normalizeBlockFacing(facing);
     const previous = this.blockFacings.get(key) ?? BLOCK_FACING_NORTH;
@@ -3374,6 +3933,17 @@ export class ChunkWorld {
     const streamingStartedAt = performance.now();
     this.releaseOrphanedSeamPresentationBlockers();
     schedulingMilliseconds += performance.now() - streamingStartedAt;
+    if (this.rustWorldAuditStreamingPaused) return {
+      schedulingMilliseconds,
+      generationMilliseconds,
+      lightingMilliseconds,
+      meshingMilliseconds,
+      installationMilliseconds,
+      generationSlices,
+      lightingSlices,
+      meshSlices,
+      installationSlices,
+    };
     const deadline = streamingStartedAt + this.streamingFrameBudgetMilliseconds;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
@@ -3518,6 +4088,7 @@ export class ChunkWorld {
   }
 
   scheduleAround(x: number, z: number, force = false, y?: number) {
+    if (this.rustWorldAuditStreamingPaused) return;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
     const focusSection = Number.isFinite(y) ? clamp(sectionForY(y!), 0, SECTION_COUNT - 1) : this.playerSection;
@@ -3892,6 +4463,7 @@ export class ChunkWorld {
     this.group.add(chunk.group);
     this.freezeTerrainTransform(chunk.group);
     this.restoreStructureMarkerEntries(data.structureMarkers);
+    this.queueRustWorldChunkInstall(chunk);
     this.setChunkStreamingVisibility(chunk);
     if (chunk.lightInitialized) this.queueLightReconciliation(chunk);
     else this.prepareGeneratedChunk(chunk);
@@ -4076,6 +4648,7 @@ export class ChunkWorld {
         this.group.add(chunk.group);
         this.freezeTerrainTransform(chunk.group);
         this.restoreStructureMarkerEntries(completed.structureMarkers);
+        this.queueRustWorldChunkInstall(chunk);
         this.generationQueued.delete(chunk.key);
         this.generationEnqueuedAt.delete(chunk.key);
         this.streamingCompleted.generation += 1;
@@ -4286,6 +4859,7 @@ export class ChunkWorld {
       this.lightInitializationTasks.delete(active.key);
       this.activeLightInitialization = null;
       this.streamingCompleted.lighting += 1;
+      this.queueRustWorldChunkInstall(chunk, []);
       this.queueChunkMeshesAndSeams(chunk);
     }
     return true;
@@ -4331,7 +4905,10 @@ export class ChunkWorld {
       this.lightReconciliationQueued.delete(active.key);
       this.activeLightReconciliation = null;
       this.streamingCompleted.lighting += 1;
-      if (chunk) this.prepareGeneratedChunk(chunk);
+      if (chunk) {
+        this.queueRustWorldChunkInstall(chunk, []);
+        this.prepareGeneratedChunk(chunk);
+      }
     }
     return true;
   }
@@ -5355,6 +5932,7 @@ export class ChunkWorld {
     this.chunks.set(key, chunk);
     this.group.add(chunk.group);
     this.freezeTerrainTransform(chunk.group);
+    this.queueRustWorldChunkInstall(chunk);
     this.generationQueued.delete(key);
     this.generationEnqueuedAt.delete(key);
     this.streamingCompleted.generation += 1;
@@ -5365,6 +5943,7 @@ export class ChunkWorld {
   private completeChunkGenerationSynchronously(task: ChunkGenerationTask) {
     while (task.stage !== "complete") this.advanceChunkGeneration(task, CHUNK_SIZE, SECTION_COUNT);
     if (!task.chunk.lightInitialized) this.lightEngine.initializeChunk(task.chunk);
+    this.queueRustWorldChunkInstall(task.chunk, []);
     return task.chunk;
   }
 
@@ -7573,6 +8152,7 @@ export class ChunkWorld {
       }
       chunk.skyTops[column] = nextTop;
     }
+    this.markRustWorldBlockAuxiliaryDirty(chunk, section, column);
     // Propagated skylight updates mesh light attributes without rebuilding
     // unchanged positions, UVs, normals, or indices in lower sections.
   }
@@ -7609,6 +8189,16 @@ export class ChunkWorld {
 
   setBlock(x: number, y: number, z: number, type: BlockId, record = true, immediate = false) {
     if (y < MIN_Y || y > MAX_Y) return false;
+    if (record && !this.applyingRustWorldAuthorityEvent && this.rustWorldAuthority.mode() !== "off") {
+      const applyFallback = () => {
+        this.applyingRustWorldAuthorityEvent = true;
+        try { this.setBlock(x, y, z, type, record, immediate); } finally { this.applyingRustWorldAuthorityEvent = false; }
+      };
+      this.submitRustWorldMutation([{
+        kind: "set-block", x: Math.trunc(x), y: Math.trunc(y), z: Math.trunc(z), blockId: type,
+      }], immediate, applyFallback);
+      return true;
+    }
     const sx = splitCoordinate(x);
     const sz = splitCoordinate(z);
     const key = chunkKey(sx.chunk, sz.chunk);
@@ -7661,6 +8251,21 @@ export class ChunkWorld {
     immediate = false,
     deferLighting = false,
   ) {
+    if (record && !this.applyingRustWorldAuthorityEvent && this.rustWorldAuthority.mode() !== "off") {
+      const commands = changes
+        .filter((change) => change.y >= MIN_Y && change.y <= MAX_Y)
+        .map((change) => ({
+          kind: "set-block" as const,
+          x: Math.trunc(change.x), y: Math.trunc(change.y), z: Math.trunc(change.z), blockId: change.type,
+        }));
+      const applyFallback = () => {
+        this.applyingRustWorldAuthorityEvent = true;
+        try { this.setBlocksBatch(changes, record, immediate, deferLighting); } finally { this.applyingRustWorldAuthorityEvent = false; }
+      };
+      this.submitRustWorldMutation(commands, immediate, applyFallback);
+      return;
+    }
+    this.flushRustWorldAuxiliaryPatches();
     const affected = new Set<string>();
     const directlyAffected = new Set<string>();
     const affectedLayersByEntry = new Map<string, Set<WorldRenderLayer>>();
@@ -7718,6 +8323,7 @@ export class ChunkWorld {
       else this.lightEngine.rebuildAround(lightChanges);
     }
     for (const change of affectedLavaCells.values()) this.refreshLavaLightCell(change.x, change.y, change.z);
+    this.flushRustWorldAuxiliaryPatches();
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");
       const key = entry.slice(0, separator);
@@ -9183,6 +9789,15 @@ export class ChunkWorld {
     const chunk = this.chunks.get(key);
     if (!chunk) return;
     const cached = this.cachedChunkData(chunk);
+    if (this.rustWorldAuthorityReady()) {
+      const address = this.rustWorldAddress();
+      void this.rustWorldAuthority.evictSections(Array.from({ length: SECTION_COUNT }, (_, sectionY) => ({
+        ...address,
+        chunkX: chunk.cx,
+        chunkZ: chunk.cz,
+        sectionY,
+      })));
+    }
     this.chunkMemoryCache.set(cached);
     void this.chunkPersistentCache.set(cached);
     this.lightInitializationQueued.delete(key);
@@ -9215,6 +9830,16 @@ export class ChunkWorld {
     }
     this.group.remove(chunk.group);
     this.chunks.delete(key);
+    this.rustWorldPendingChunkKeys.delete(key);
+    this.rustWorldChunkInstallGenerations.delete(key);
+    this.rustWorldInstalledSources.delete(key);
+    this.rustWorldAuxiliaryPatchInFlight.delete(key);
+    this.rustWorldDirtyLightSections.delete(key);
+    this.rustWorldDirtySectionCounts.delete(key);
+    this.rustWorldDirtySkyTops.delete(key);
+    this.rustWorldDirtyLightIndices.delete(key);
+    this.rustWorldDirtyLeafIndices.delete(key);
+    this.rustWorldInstalls.delete(key);
   }
 
   disposeChunks() {
@@ -9581,6 +10206,337 @@ export class ChunkWorld {
     (window as Window & { blockwildRustTerrainR2?: RustTerrainR2BrowserHarnessV1 }).blockwildRustTerrainR2 = harness;
   }
 
+  private installRustWorldAuthorityR4BrowserHarness() {
+    if (typeof window === "undefined" || new URLSearchParams(window.location.search).get("rust-world-authority-r4-audit") !== "1") return;
+    const waitReady = async (timeoutMilliseconds = 30_000) => {
+      const started = performance.now();
+      while (performance.now() - started <= timeoutMilliseconds) {
+        const diagnostic = this.rustWorldAuthority.diagnostics();
+        if (diagnostic.state === "ready" && this.rustWorldPendingChunkKeys.size === 0 && this.chunks.size > 0) return diagnostic;
+        if (diagnostic.state === "fallback") throw new Error(`Rust R4 authority fell back: ${diagnostic.lastFallbackReason}`);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 25));
+      }
+      throw new Error(`Rust R4 authority did not become ready: ${JSON.stringify(this.rustWorldAuthority.diagnostics())}`);
+    };
+    const rehydrate = async () => {
+      const save = this.compatibilitySaveForRust(this.serializeEdits(), this.serializeBlockFacings());
+      if (save.edits.length || save.facings.length) {
+        const imported = await this.rustWorldAuthority.importCompatibilitySave(encodeWorldCompatibilitySaveV1(save));
+        if (!imported) throw new Error("R4 crash recovery could not import the compatibility save");
+      }
+      for (const chunk of this.chunks.values()) {
+        const install = this.rustChunkInstall(chunk);
+        const response = await this.rustWorldAuthority.installSections(install.sections, install.auxiliary);
+        if (!response || response.accepted + response.stale !== SECTION_COUNT || response.auxiliaryAccepted !== 1) {
+          throw new Error("R4 crash recovery did not restore all 12 sections and auxiliary streams");
+        }
+        this.rustWorldInstalledSources.set(chunk.key, {
+          sections: new Map(install.sections.map((section) => [section.address.sectionY, section.sourceHash])),
+          auxiliaryHash: install.auxiliary[0].sourceHash,
+          auxiliaryRevision: install.auxiliary[0].sourceRevision,
+        });
+      }
+    };
+    const exerciseLifecycle = async () => {
+      const ready = await waitReady();
+      const chunk = this.chunks.values().next().value as Chunk | undefined;
+      if (!chunk) throw new Error("R4 lifecycle audit requires a resident chunk");
+      const origin = { x: chunk.cx * CHUNK_SIZE, y: MIN_Y, z: chunk.cz * CHUNK_SIZE } as const;
+      const auditLocalX = Math.floor(CHUNK_SIZE / 2);
+      const auditLocalZ = Math.floor(CHUNK_SIZE / 2);
+      const auditSurfaceY = Math.max(MIN_Y, Math.min(MAX_Y, chunk.heightmap[auditLocalX + auditLocalZ * CHUNK_SIZE] + 1));
+      const auditSurfacePosition = Object.freeze({
+        x: origin.x + auditLocalX,
+        y: auditSurfaceY,
+        z: origin.z + auditLocalZ,
+      });
+      const auditMarkerKey = `r4-browser-audit:${chunk.key}`;
+      this.structureMarkers.set(auditMarkerKey, Object.freeze({
+        type: "landmark",
+        id: auditMarkerKey,
+        position: auditSurfacePosition,
+        tag: "r4-browser-authority-audit",
+        mapLayer: "underground",
+      }));
+      this.queueRustWorldChunkInstall(chunk, []);
+      await waitReady();
+      const page = await this.rustWorldAuthority.readPage(origin, { x: CHUNK_SIZE, y: WORLD_HEIGHT, z: CHUNK_SIZE });
+      if (!page) throw new Error("R4 lifecycle audit could not read the resident chunk");
+      const loadedCells = page.streams.loadedMask.reduce((sum, value) => sum + value, 0);
+      const loadedAir = page.streams.blocks.reduce((sum, value, index) => sum + Number(value === BlockId.Air && page.streams.loadedMask[index] === 1), 0);
+      const airIndex = page.streams.blocks.findIndex((value, index) => value === BlockId.Air && page.streams.loadedMask[index] === 1);
+      const auditSurfaceIndex = auditLocalX + auditLocalZ * CHUNK_SIZE + (auditSurfaceY - MIN_Y) * CHUNK_SIZE * CHUNK_SIZE;
+      const editIndex = page.streams.loadedMask[auditSurfaceIndex] === 1 && page.streams.blocks[auditSurfaceIndex] === BlockId.Air
+        ? auditSurfaceIndex
+        : airIndex >= 0 ? airIndex : page.streams.blocks.findIndex((_, index) => page.streams.loadedMask[index] === 1);
+      if (editIndex < 0) throw new Error("R4 lifecycle audit could not find a loaded edit cell");
+      const localY = Math.floor(editIndex / (CHUNK_SIZE * CHUNK_SIZE));
+      const horizontal = editIndex % (CHUNK_SIZE * CHUNK_SIZE);
+      const position = { x: origin.x + horizontal % CHUNK_SIZE, y: MIN_Y + localY, z: origin.z + Math.floor(horizontal / CHUNK_SIZE) };
+      const beforeRollback = page.streams.blocks[editIndex];
+      const rejected = await this.rustWorldAuthority.exerciseRejectedBatchForDiagnostics([
+        { kind: "set-block", ...position, blockId: beforeRollback === BlockId.Stone ? BlockId.Dirt : BlockId.Stone },
+        { kind: "set-block", x: position.x + 1, y: MAX_Y + 1, z: position.z, blockId: BlockId.Stone },
+      ]);
+      const rollbackPage = await this.rustWorldAuthority.readPage(position, { x: 1, y: 1, z: 1 });
+      const atomicRollback = rejected?.status === "rejected" && rollbackPage?.streams.blocks[0] === beforeRollback;
+      const stale = await this.rustWorldAuthority.exerciseStaleMutationForDiagnostics([
+        { kind: "set-block", ...position, blockId: beforeRollback },
+      ]);
+      const immediateBefore = this.rustWorldAuthority.diagnostics().immediateEvents;
+      const nextBlock = beforeRollback === BlockId.Glowstone ? BlockId.Stone : BlockId.Glowstone;
+      const editStarted = performance.now();
+      this.setBlock(position.x, position.y, position.z, nextBlock, true, true);
+      const synchronousPresentationMilliseconds = performance.now() - editStarted;
+      const synchronousPresentationVisible = this.getBlock(position.x, position.y, position.z) === nextBlock;
+      while (performance.now() - editStarted < 10_000
+        && (this.getBlock(position.x, position.y, position.z) !== nextBlock
+          || this.rustWorldAuthority.diagnostics().immediateEvents <= immediateBefore)) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 5));
+      }
+      const mutationReceiptMilliseconds = performance.now() - editStarted;
+      const exported = await this.rustWorldAuthority.exportSave();
+      const saveBytes = exported?.compatibilityJson.byteLength ?? 0;
+      const extensionBytes = exported?.rustExtension.byteLength ?? 0;
+      const imported = exported
+        ? await this.rustWorldAuthority.importCompatibilitySave(exported.compatibilityJson, exported.rustExtension)
+        : null;
+      const markersExpected = this.structureMarkerEntriesForChunk(chunk.cx, chunk.cz).length;
+      const cacheKey = this.chunkCacheKey(chunk.key);
+      this.unloadChunk(chunk.key);
+      const cached = this.chunkMemoryCache.take(cacheKey);
+      if (!cached) throw new Error("R4 lifecycle audit could not recover the unloaded chunk from memory cache");
+      const restoredChunk = this.restoreCachedChunk(cached);
+      if (!restoredChunk) throw new Error("R4 lifecycle audit could not reinstall the memory-cached chunk");
+      await waitReady();
+      const restoredPage = await this.rustWorldAuthority.readPage(position, { x: 1, y: 1, z: 1 });
+      const cacheRoundTrip = restoredChunk.key === chunk.key
+        && this.getBlock(position.x, position.y, position.z) === nextBlock
+        && restoredPage?.streams.loadedMask[0] === 1
+        && restoredPage.streams.blocks[0] === nextBlock;
+      const requestId = Date.now() % 1_000_000 + 1;
+      const residency = await this.rustWorldAuthority.updateResidency([{
+        requestId,
+        address: { ...this.rustWorldAddress(), chunkX: chunk.cx + 8, chunkZ: chunk.cz, sectionY: 0 },
+        class: "background",
+        purpose: "generate",
+        distanceSquared: 64,
+        directionPenalty: 0,
+        sequence: requestId,
+      }], []);
+      const cancellation = await this.rustWorldAuthority.updateResidency([], [requestId]);
+      const originalAddress = this.rustWorldAddress();
+      const switched = await this.rustWorldAuthority.switchLocation({ ...originalAddress, locationId: `${originalAddress.locationId}-r4-audit` });
+      const switchedBack = switched ? await this.rustWorldAuthority.switchLocation(originalAddress) : null;
+      if (switchedBack) await rehydrate();
+      const install = this.rustWorldInstalls.get(chunk.key);
+      return Object.freeze({
+        ready,
+        artifactHash: ready.artifactHash,
+        all12Sections: page.sectionRevisions.length === SECTION_COUNT,
+        auxiliaryAccepted: install?.auxiliaryAccepted === 1,
+        markerRows: install?.markerRows ?? 0,
+        markersExpected,
+        markerContinuity: markersExpected > 0
+          && (install?.markerRows ?? 0) === markersExpected
+          && this.structureMarkers.has(auditMarkerKey),
+        loadedCells,
+        loadedAir,
+        loadedAirTriState: loadedCells === CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT && loadedAir > 0,
+        atomicRollback,
+        rejectionCode: rejected?.rejectionCode ?? null,
+        staleRejected: stale?.rejectionCode === "stale-revision",
+        immediateVisible: this.getBlock(position.x, position.y, position.z) === nextBlock,
+        synchronousPresentationVisible,
+        synchronousPresentationMilliseconds,
+        mutationReceiptMilliseconds,
+        saveBytes,
+        extensionBytes,
+        saveRoundTrip: Boolean(imported),
+        cacheRoundTrip,
+        residencyQueued: residency?.queued ?? 0,
+        residencyCancelled: cancellation?.cancelled ?? 0,
+        locationSwitch: Boolean(switched && switchedBack),
+        auditPosition: Object.freeze({ ...position }),
+        installMetrics: Object.freeze({ ...this.rustWorldInstallMetrics }),
+        zeroPerVoxelMessages: true,
+        coarseBoundary: "one message per lifecycle, section batch, mutation batch, or read page",
+      });
+    };
+    const exerciseWarmBenchmark = async (position: Readonly<{ x: number; y: number; z: number }>) => {
+      await waitReady();
+      // The browser harness creates a bounded render/simulation-distance-two
+      // world. Wait for its immediate ring and every relevant queue to drain,
+      // then pause new audit-only streaming work while sampling so the result
+      // is a genuine steady-state edit/page measurement.
+      const streamingBeforeSettle = this.streamingDiagnostics();
+      const settleStarted = performance.now();
+      const configuredSettle = Number(new URLSearchParams(window.location.search).get("rust-world-authority-r4-settle-ms"));
+      const settleTimeoutMilliseconds = Number.isFinite(configuredSettle)
+        ? clamp(Math.round(configuredSettle), 1_000, 90_000)
+        : 90_000;
+      let quietPolls = 0;
+      let settled = false;
+      let streamingAfterSettle = this.streamingDiagnostics();
+      while (performance.now() - settleStarted < settleTimeoutMilliseconds) {
+        streamingAfterSettle = this.streamingDiagnostics();
+        const quiet = streamingAfterSettle.immediateRing.ratio === 1
+          && streamingAfterSettle.generationQueued === 0
+          && streamingAfterSettle.lightingQueued === 0
+          && streamingAfterSettle.meshSectionsQueued === 0
+          && streamingAfterSettle.relightSectionsQueued === 0
+          && streamingAfterSettle.consolidationLayersQueued === 0
+          && streamingAfterSettle.terrainWorker.pending === 0
+          && this.rustWorldPendingChunkKeys.size === 0;
+        quietPolls = quiet ? quietPolls + 1 : 0;
+        if (quietPolls >= 3) {
+          settled = true;
+          break;
+        }
+        const advanceTime = (window as Window & { advanceTime?: (milliseconds: number) => Promise<void> }).advanceTime;
+        if (advanceTime) await advanceTime(16);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+      }
+      this.rustWorldAuditStreamingPaused = true;
+      const samples: number[] = [];
+      const pageSamples: number[] = [];
+      const eventLoopSamples: number[] = [];
+      let responsePayloadBytes = 0;
+      const percentile = (values: readonly number[], fraction: number) => {
+        if (values.length === 0) return 0;
+        const sorted = [...values].sort((left, right) => left - right);
+        return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+      };
+      const runEdit = async (index: number, measured: boolean) => {
+        const started = performance.now();
+        const blockId = this.getBlock(position.x, position.y, position.z) ?? BlockId.Air;
+        const response = await this.rustWorldAuthority.mutate(`r4-warm-${index}`, "browser-warm-benchmark", [{
+          kind: "set-block", ...position, blockId,
+        }]);
+        if (!response || response.status !== "accepted" || response.mutated) throw new Error("R4 warm benchmark no-op mutation failed");
+        if (measured) samples.push(performance.now() - started);
+      };
+      const runPage = async (index: number, measured: boolean) => {
+        const started = performance.now();
+        const page = await this.rustWorldAuthority.readPage({
+          x: position.x + index % 5,
+          y: position.y + Math.floor(index / 25),
+          z: position.z + Math.floor(index / 5) % 5,
+        }, { x: 1, y: 1, z: 1 });
+        if (!page) throw new Error("R4 warm benchmark read failed");
+        responsePayloadBytes += page.streams.loadedMask.byteLength + page.streams.boundary.byteLength
+          + page.streams.blocks.byteLength + page.streams.facing.byteLength + page.streams.liquidKind.byteLength
+          + page.streams.liquidLevel.byteLength + page.streams.flags.byteLength;
+        if (measured) pageSamples.push(performance.now() - started);
+      };
+      for (let index = 0; index < 10; index += 1) {
+        await runEdit(1_000 + index, false);
+        await runPage(index, false);
+      }
+      const before = this.rustWorldAuthority.diagnostics();
+      const copiedBytesBefore = this.rustWorldInstallMetrics.copiedBytes;
+      const fullAuxiliaryBytesBefore = this.rustWorldInstallMetrics.fullAuxiliaryBytes;
+      const patchBytesBefore = this.rustWorldInstallMetrics.patchBytes;
+      const patchRequestsBefore = this.rustWorldInstallMetrics.patchRequests;
+      const lightSectionsPatchedBefore = this.rustWorldInstallMetrics.lightSectionsPatched;
+      for (let index = 0; index < 100; index += 1) await runEdit(index, true);
+      for (let index = 0; index < 50; index += 1) await runPage(index, true);
+      for (let index = 0; index < 30; index += 1) {
+        const started = performance.now();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        eventLoopSamples.push(performance.now() - started);
+      }
+      const presentationBlock = this.getBlock(position.x, position.y, position.z) === BlockId.Glowstone ? BlockId.Stone : BlockId.Glowstone;
+      const immediateEventsBefore = this.rustWorldAuthority.diagnostics().immediateEvents;
+      const presentationStarted = performance.now();
+      this.setBlock(position.x, position.y, position.z, presentationBlock, true, true);
+      const synchronousPresentationMilliseconds = performance.now() - presentationStarted;
+      const synchronousPresentationVisible = this.getBlock(position.x, position.y, position.z) === presentationBlock;
+      while (performance.now() - presentationStarted < 10_000
+        && (this.getBlock(position.x, position.y, position.z) !== presentationBlock
+          || this.rustWorldAuthority.diagnostics().immediateEvents <= immediateEventsBefore)) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 1));
+      }
+      const mutationReceiptMilliseconds = performance.now() - presentationStarted;
+      while (performance.now() - presentationStarted < 10_000
+        && (this.rustWorldAuxiliaryPatchInFlight.size > 0 || this.rustWorldPendingChunkKeys.size > 0)) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 1));
+      }
+      const after = this.rustWorldAuthority.diagnostics();
+      return Object.freeze({
+        settled,
+        settleMilliseconds: performance.now() - settleStarted,
+        streamingBeforeSettle: Object.freeze({
+          generationQueued: streamingBeforeSettle.generationQueued,
+          lightingQueued: streamingBeforeSettle.lightingQueued,
+          meshSectionsQueued: streamingBeforeSettle.meshSectionsQueued,
+          relightSectionsQueued: streamingBeforeSettle.relightSectionsQueued,
+          consolidationLayersQueued: streamingBeforeSettle.consolidationLayersQueued,
+        }),
+        streamingAfterSettle: Object.freeze({
+          generationQueued: streamingAfterSettle.generationQueued,
+          lightingQueued: streamingAfterSettle.lightingQueued,
+          meshSectionsQueued: streamingAfterSettle.meshSectionsQueued,
+          relightSectionsQueued: streamingAfterSettle.relightSectionsQueued,
+          consolidationLayersQueued: streamingAfterSettle.consolidationLayersQueued,
+        }),
+        operations: samples.length,
+        pageOperations: pageSamples.length,
+        messages: after.requests - before.requests,
+        responsePayloadBytes,
+        copiedInstallBytes: this.rustWorldInstallMetrics.copiedBytes - copiedBytesBefore,
+        fullAuxiliaryBytes: this.rustWorldInstallMetrics.fullAuxiliaryBytes - fullAuxiliaryBytesBefore,
+        auxiliaryPatchBytes: this.rustWorldInstallMetrics.patchBytes - patchBytesBefore,
+        auxiliaryPatchRequests: this.rustWorldInstallMetrics.patchRequests - patchRequestsBefore,
+        lightSectionsPatched: this.rustWorldInstallMetrics.lightSectionsPatched - lightSectionsPatchedBefore,
+        latency: Object.freeze({
+          p50Milliseconds: percentile(samples, 0.5),
+          p95Milliseconds: percentile(samples, 0.95),
+          p99Milliseconds: percentile(samples, 0.99),
+        }),
+        pageLatency: Object.freeze({
+          p50Milliseconds: percentile(pageSamples, 0.5),
+          p95Milliseconds: percentile(pageSamples, 0.95),
+          p99Milliseconds: percentile(pageSamples, 0.99),
+        }),
+        eventLoop: Object.freeze({
+          p50Milliseconds: percentile(eventLoopSamples, 0.5),
+          p95Milliseconds: percentile(eventLoopSamples, 0.95),
+          p99Milliseconds: percentile(eventLoopSamples, 0.99),
+        }),
+        presentation: Object.freeze({
+          synchronousVisible: synchronousPresentationVisible,
+          synchronousMilliseconds: synchronousPresentationMilliseconds,
+          receiptMilliseconds: mutationReceiptMilliseconds,
+          auxiliarySyncMilliseconds: performance.now() - presentationStarted,
+          finalVisible: this.getBlock(position.x, position.y, position.z) === presentationBlock,
+        }),
+      });
+    };
+    const simulateCrash = async () => {
+      await waitReady();
+      const before = this.rustWorldAuthority.diagnostics();
+      const restarted = await this.rustWorldAuthority.simulateCrashForDiagnostics(async () => rehydrate());
+      const after = this.rustWorldAuthority.diagnostics();
+      return Object.freeze({ restarted, before, after, recoveredAuthority: restarted && after.state === "ready", fallbackObserved: after.failures > before.failures });
+    };
+    const harness: RustWorldAuthorityR4BrowserHarnessV1 = Object.freeze({
+      schemaVersion: 1,
+      mode: this.rustWorldAuthority.configuredMode,
+      diagnostics: () => Object.freeze({
+        ...this.rustWorldAuthority.diagnostics(),
+        installation: Object.freeze({ ...this.rustWorldInstallMetrics }),
+      }),
+      readPage: (origin, size) => this.rustWorldAuthority.readPage(origin, size),
+      exportSave: () => this.rustWorldAuthority.exportSave(),
+      exerciseLifecycle,
+      exerciseWarmBenchmark,
+      simulateCrash,
+    });
+    this.rustWorldAuthorityHarness = harness;
+    (window as Window & { blockwildRustWorldAuthorityR4?: RustWorldAuthorityR4BrowserHarnessV1 }).blockwildRustWorldAuthorityR4 = harness;
+  }
+
   streamingDiagnostics() {
     const playerState = this.playerChunkStreamingState();
     const now = performance.now();
@@ -9617,6 +10573,10 @@ export class ChunkWorld {
         mode: this.rustTerrainMode,
         ...this.rustTerrainShadow,
         backend: this.rustTerrainMesher?.diagnostics() ?? null,
+      },
+      rustWorldAuthority: {
+        ...this.rustWorldAuthority.diagnostics(),
+        installation: { ...this.rustWorldInstallMetrics },
       },
       playerEdits: this.playerEditFeedbackDiagnostics(),
       generationBudget: this.generationWorkPerFrame,
@@ -9655,12 +10615,18 @@ export class ChunkWorld {
 
   dispose() {
     if (typeof window !== "undefined") {
-      const target = window as Window & { blockwildRustTerrainR2?: RustTerrainR2BrowserHarnessV1 };
+      const target = window as Window & {
+        blockwildRustTerrainR2?: RustTerrainR2BrowserHarnessV1;
+        blockwildRustWorldAuthorityR4?: RustWorldAuthorityR4BrowserHarnessV1;
+      };
       if (target.blockwildRustTerrainR2 === this.rustTerrainR2BrowserHarness) delete target.blockwildRustTerrainR2;
+      if (target.blockwildRustWorldAuthorityR4 === this.rustWorldAuthorityHarness) delete target.blockwildRustWorldAuthorityR4;
     }
     this.rustTerrainR2BrowserHarness = null;
+    this.rustWorldAuthorityHarness = null;
     this.disposeChunks();
     void this.rustTerrainMesher?.dispose();
+    void this.rustWorldAuthority.dispose();
     this.terrainBufferPipeline.dispose();
     this.terrainGenerationPipeline.dispose();
     this.atlas.dispose();

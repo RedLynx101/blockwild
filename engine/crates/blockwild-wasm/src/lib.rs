@@ -1,5 +1,9 @@
 //! The only WebAssembly-facing Blockwild engine ABI.
 
+mod world_authority_r4;
+
+pub use world_authority_r4::*;
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 

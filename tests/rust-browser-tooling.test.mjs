@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -21,6 +23,10 @@ import {
   parseTransferSizes,
   selectBrowserArtifact,
 } from "../scripts/benchmark-rust-browser.mjs";
+import {
+  acquireRustEngineBuildLock,
+  releaseRustEngineBuildLock,
+} from "../scripts/build-rust-engine.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryDirectories = [];
@@ -140,4 +146,21 @@ test("build fails clearly without an engine workspace and does not install tools
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /No Rust workspace was found/);
+});
+
+test("publisher recovers only a verified stale lock and always releases its replacement", () => {
+  const root = temporaryDirectory("rust-build-lock");
+  const lockPath = path.join(root, ".build-lock");
+  writeJson(lockPath, { pid: 424_242, startedAt: "2026-01-01T00:00:00.000Z" });
+  const descriptor = acquireRustEngineBuildLock(lockPath, { isProcessAlive: (pid) => pid !== 424_242 });
+  assert.match(String(readFileSync(lockPath)), new RegExp(`"pid":${process.pid}`));
+  releaseRustEngineBuildLock(lockPath, descriptor);
+  assert.equal(existsSync(lockPath), false);
+
+  writeJson(lockPath, { pid: process.pid, startedAt: new Date().toISOString() });
+  assert.throws(
+    () => acquireRustEngineBuildLock(lockPath, { isProcessAlive: () => true }),
+    /build may be active/,
+  );
+  assert.equal(existsSync(lockPath), true, "an active owner's lock is never removed");
 });

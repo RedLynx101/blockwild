@@ -18,6 +18,23 @@ export function blockwild_protocol_version(): number;
 export function blockwild_schema_version(): number;
 
 /**
+ * Create one long-lived R4 authority. The request includes the complete
+ * directional/waterlogging catalog required to preserve mutation semantics.
+ */
+export function blockwild_world_authority_create_r4(request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Destroy a live R4 authority. Destruction is identity-bound so an obsolete
+ * worker cannot tear down a replacement authority that reused a request path.
+ */
+export function blockwild_world_authority_destroy_r4(handle: number, request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Execute a bounded R4 authority request against a live handle.
+ */
+export function blockwild_world_authority_request_r4(handle: number, request_bytes: Uint8Array): Uint8Array;
+
+/**
  * Rebuild packed sky/R/G/B light for one complete section. `direct_sky_above`
  * is exactly 256 nibble levels in x + 16*z order. The result uses the same
  * `BWL1`/`BWI1`/`BWE1` coarse-payload convention as meshing.
@@ -43,6 +60,9 @@ export interface InitOutput {
     readonly blockwild_engine_step: (a: number, b: number, c: number, d: number) => void;
     readonly blockwild_engine_take_events: (a: number, b: number) => void;
     readonly blockwild_protocol_version: () => number;
+    readonly blockwild_world_authority_create_r4: (a: number, b: number, c: number) => void;
+    readonly blockwild_world_authority_destroy_r4: (a: number, b: number, c: number, d: number) => void;
+    readonly blockwild_world_authority_request_r4: (a: number, b: number, c: number, d: number) => void;
     readonly blockwild_world_light_section_v1: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly blockwild_world_mesh_section_v1: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly blockwild_schema_version: () => number;
