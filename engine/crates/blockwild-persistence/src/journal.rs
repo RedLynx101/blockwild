@@ -344,6 +344,43 @@ pub struct JournalState {
 }
 
 impl JournalState {
+    pub fn from_checkpoint(
+        checkpoint: &crate::Checkpoint,
+        payloads: &BTreeMap<RecordAddress, Vec<u8>>,
+    ) -> Result<Self, PersistenceError> {
+        checkpoint.verify()?;
+        if checkpoint.records.len() != payloads.len() {
+            return Err(PersistenceError::new(
+                "recovery-completeness",
+                "checkpoint and recovered payload counts disagree",
+            ));
+        }
+        let mut records = BTreeMap::new();
+        for descriptor in &checkpoint.records {
+            let payload = payloads
+                .get(&descriptor.address)
+                .ok_or_else(|| PersistenceError::new("recovery-completeness", "checkpoint payload is missing"))?;
+            if payload.len() != descriptor.byte_length as usize || payload_hash(payload) != descriptor.payload_hash {
+                return Err(PersistenceError::new(
+                    "corrupt",
+                    "recovered payload does not match its checkpoint",
+                ));
+            }
+            records.insert(
+                descriptor.address.clone(),
+                StoredRecord {
+                    revision: descriptor.revision,
+                    payload: payload.clone(),
+                    payload_hash: descriptor.payload_hash,
+                },
+            );
+        }
+        Ok(Self {
+            sequence: checkpoint.journal_sequence,
+            records,
+        })
+    }
+
     #[must_use]
     pub const fn sequence(&self) -> u64 {
         self.sequence
