@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "contentManifestHash": "0102030405060708090a0b0c0d0e0f10",
+  "modelRevision": 7,
+  "modelHashes": {
+    "asterjaw": "101112131415161718191a1b1c1d1e1f",
+    "hearthback-badger": "202122232425262728292a2b2c2d2e2f",
+    "sea-dragon": "303132333435363738393a3b3c3d3e3f",
+    "glasswake-stag": "404142434445464748494a4b4c4d4e4f",
+    "player-standing": "505152535455565758595a5b5c5d5e5f"
+  },
+  "scenarios": [
+    {
+      "name": "tier-matrix",
+      "records": [
+        { "id": "4294967297", "tier": "hero", "residency": "hot", "model": "asterjaw", "class": "creature", "name": "Asterjaw" },
+        { "id": "4294967298", "tier": "nearby", "residency": "hot", "model": "hearthback-badger", "class": "creature", "name": "Bramble" },
+        { "id": "4294967299", "tier": "coarse", "residency": "hot", "model": "sea-dragon", "class": "creature", "name": "Ægir 🐉" },
+        { "id": "4294967300", "tier": "dormant", "residency": "cold", "model": "glasswake-stag", "class": "creature", "name": "眠る鹿" }
+      ],
+      "expected": {
+        "resourceHash": "d2cd51d1203a040148cb06a1c5d1f9ef",
+        "frameHash": "23ee1bc680adbee4c83a579e605485b7",
+        "resourceBytes": 3900,
+        "frameBytes": 23169,
+        "instances": 250
+      }
+    },
+    {
+      "name": "mounted-equipped-large",
+      "records": [
+        { "id": "8589934593", "tier": "hero", "residency": "hot", "model": "sea-dragon", "class": "creature", "name": "Tiderend", "mountSeat": 0, "mountOccupant": "8589934594" },
+        { "id": "8589934594", "tier": "hero", "residency": "hot", "model": "player-standing", "class": "player", "name": "Noah", "parentMount": "8589934593", "occupiedSeat": 0, "equipment": "iron_sword" }
+      ],
+      "expected": {
+        "resourceHash": "18cc8056bf06170e48cb06a1c5d1f9ef",
+        "frameHash": "7f833949f8fdd5acc83a579ee0b3ede0",
+        "resourceBytes": 3572,
+        "frameBytes": 22709,
+        "instances": 245
+      }
+    }
+  ]
+}
