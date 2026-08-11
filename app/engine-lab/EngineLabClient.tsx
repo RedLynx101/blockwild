@@ -31,6 +31,16 @@ type EngineReport = Readonly<{
   message: string;
 }>;
 
+type PersistenceReport = Readonly<{
+  status: "idle" | "ready" | "fallback" | "stopped";
+  database: string | null;
+  commitDurationMs: number | null;
+  checkpointRoundTrip: boolean;
+  atomicConflictRejected: boolean;
+  legacyNamespaceUntouched: boolean;
+  message: string;
+}>;
+
 type EngineLabSnapshot = Readonly<{
   schema: 1;
   route: "/engine-lab";
@@ -38,6 +48,7 @@ type EngineLabSnapshot = Readonly<{
   fallbackActive: boolean;
   artifact: RustArtifactProbeReport;
   engine: EngineReport;
+  persistence: PersistenceReport;
   webgpu: WebGpuSmokeReport;
   three: Readonly<{
     status: "idle" | "rendered" | "failed";
@@ -76,6 +87,16 @@ const EMPTY_ENGINE: EngineReport = {
   message: "Worker service has not started.",
 };
 
+const EMPTY_PERSISTENCE: PersistenceReport = {
+  status: "idle",
+  database: null,
+  commitDurationMs: null,
+  checkpointRoundTrip: false,
+  atomicConflictRejected: false,
+  legacyNamespaceUntouched: true,
+  message: "Transactional persistence probe has not run.",
+};
+
 const EMPTY_WEBGPU: WebGpuSmokeReport = {
   status: "unavailable",
   adapterName: null,
@@ -95,6 +116,7 @@ const INITIAL_SNAPSHOT: EngineLabSnapshot = {
   fallbackActive: true,
   artifact: EMPTY_ARTIFACT,
   engine: EMPTY_ENGINE,
+  persistence: EMPTY_PERSISTENCE,
   webgpu: EMPTY_WEBGPU,
   three: {
     status: "idle",
@@ -111,6 +133,8 @@ type EngineServiceHandle = {
     transferredFromWorkerBytes: number;
   }>;
 };
+
+type PersistenceDiagnosticHandle = { destroyForDiagnostics(): Promise<void> };
 
 declare global {
   interface Window {
@@ -141,6 +165,7 @@ export default function EngineLabClient() {
   const threeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const serviceRef = useRef<EngineServiceHandle | null>(null);
+  const persistenceRef = useRef<PersistenceDiagnosticHandle | null>(null);
   const smokeRef = useRef<WebGpuSmokeSession | null>(null);
   const threeCleanupRef = useRef<(() => void) | null>(null);
   const runRef = useRef(0);
@@ -157,6 +182,9 @@ export default function EngineLabClient() {
     const service = serviceRef.current;
     serviceRef.current = null;
     if (service) await service.shutdown();
+    const persistence = persistenceRef.current;
+    persistenceRef.current = null;
+    if (persistence) await persistence.destroyForDiagnostics();
   }, []);
 
   const stop = useCallback(async () => {
@@ -169,6 +197,7 @@ export default function EngineLabClient() {
         phase: "stopped",
         fallbackActive: true,
         engine: { ...current.engine, status: "stopped", lifecycle: "stopped", message: "Worker and GPU resources were released." },
+        persistence: { ...current.persistence, status: "stopped", message: "Diagnostic IndexedDB was closed and deleted." },
       }));
     }
   }, [cleanResources]);
@@ -331,10 +360,67 @@ export default function EngineLabClient() {
       };
     }
     if (!mountedRef.current || run !== runRef.current) return;
-    const fallbackActive = artifactReport.status !== "ready" || engineReport.status !== "ready";
+
+    let persistenceReport: PersistenceReport;
+    try {
+      const [{ IndexedDbPersistenceAdapterV1 }, persistence] = await Promise.all([
+        import("../game/indexeddb-persistence-adapter"),
+        import("../game/persistence-journal-contract"),
+      ]);
+      const database = `blockwild-rust-persistence-lab-${run}-${Date.now().toString(36)}`;
+      const adapter = new IndexedDbPersistenceAdapterV1(indexedDB, database);
+      persistenceRef.current = adapter;
+      const alpha = { universeId: "lab", locationId: "overworld", kind: "entity" as const, recordId: "alpha" };
+      const zeta = { universeId: "lab", locationId: "overworld", kind: "entity" as const, recordId: "zeta" };
+      const transaction = persistence.createPersistenceTransactionV1({
+        transactionId: "lab-transaction-1", worldId: "lab-world", checkpointId: "lab-checkpoint", expectedJournalSequence: 0, nextJournalSequence: 1,
+        mutations: [
+          { operation: "put", address: zeta, expectedRecordRevision: null, nextRecordRevision: 1, payload: Uint8Array.from([9, 8, 7]) },
+          { operation: "put", address: alpha, expectedRecordRevision: null, nextRecordRevision: 1, payload: Uint8Array.from([1, 2, 3]) },
+        ],
+      });
+      const commitStartedAt = performance.now();
+      const receipt = await adapter.commit(transaction);
+      const commitDurationMs = Math.max(0, performance.now() - commitStartedAt);
+      if (receipt.status !== "committed") throw new Error(`${receipt.code}: ${receipt.message}`);
+      const alphaMutation = transaction.mutations.find((mutation) => mutation.address.recordId === "alpha");
+      if (!alphaMutation || alphaMutation.operation !== "put") throw new Error("canonical transaction lost the alpha record");
+      const checkpoint = persistence.createPersistenceCheckpointV1({
+        checkpointId: "lab-checkpoint", parentCheckpointId: null, worldId: "lab-world", journalSequence: 1,
+        generatorHash: "0123456789abcdef0123456789abcdef", contentHash: "fedcba9876543210fedcba9876543210", createdAt: 1,
+        records: transaction.mutations.flatMap((mutation) => mutation.operation === "put" ? [{ address: mutation.address, revision: mutation.nextRecordRevision, byteLength: mutation.payload.byteLength, payloadHash: mutation.payloadHash }] : []),
+      });
+      await adapter.putCheckpoint(checkpoint);
+      const loadedCheckpoint = await adapter.readCheckpoint(checkpoint.worldId, checkpoint.checkpointId);
+      const loadedAlpha = await adapter.readRecord(alpha, 1);
+      const conflict = persistence.createPersistenceTransactionV1({
+        transactionId: "lab-transaction-conflict", worldId: "lab-world", checkpointId: "lab-checkpoint", expectedJournalSequence: 1, nextJournalSequence: 2,
+        mutations: [
+          { operation: "put", address: alpha, expectedRecordRevision: 9, nextRecordRevision: 10, payload: Uint8Array.from([4]) },
+          { operation: "put", address: zeta, expectedRecordRevision: 1, nextRecordRevision: 2, payload: Uint8Array.from([6]) },
+        ],
+      });
+      const conflictReceipt = await adapter.commit(conflict);
+      const alphaAfterConflict = await adapter.readRecord(alpha, 1);
+      const checkpointRoundTrip = loadedCheckpoint?.checkpointHash === checkpoint.checkpointHash && loadedAlpha?.join(",") === "1,2,3";
+      const atomicConflictRejected = conflictReceipt.status === "rejected" && conflictReceipt.code === "record-conflict" && alphaAfterConflict?.join(",") === "1,2,3";
+      if (!checkpointRoundTrip || !atomicConflictRejected) throw new Error("IndexedDB journal failed checkpoint readback or atomic rollback");
+      persistenceReport = {
+        status: "ready", database, commitDurationMs, checkpointRoundTrip, atomicConflictRejected, legacyNamespaceUntouched: true,
+        message: "Strict IndexedDB journal committed two records, round-tripped its checkpoint, and rejected a conflicting batch without partial mutation.",
+      };
+    } catch (error) {
+      persistenceReport = {
+        status: "fallback", database: null, commitDurationMs: null, checkpointRoundTrip: false, atomicConflictRejected: false, legacyNamespaceUntouched: true,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (!mountedRef.current || run !== runRef.current) return;
+    const fallbackActive = artifactReport.status !== "ready" || engineReport.status !== "ready" || persistenceReport.status !== "ready";
     setSnapshot((current) => ({
       ...current,
       engine: engineReport,
+      persistence: persistenceReport,
       fallbackActive,
       phase: fallbackActive ? "fallback" : "ready",
     }));
@@ -435,6 +521,14 @@ export default function EngineLabClient() {
             <Metric label="Heartbeat RTT" value={milliseconds(snapshot.engine.heartbeatRoundTripMs)} />
             <Metric label="State hash" value={snapshot.engine.stateHashHex ?? "—"} code />
             <Metric label="Transferred" value={`${bytes(snapshot.engine.transferredToWorkerBytes)} → / ${bytes(snapshot.engine.transferredFromWorkerBytes)} ←`} />
+          </DiagnosticCard>
+
+          <DiagnosticCard title="Rust journal adapter" kicker="INDEXEDDB · ATOMICITY · READBACK" status={snapshot.persistence.status} message={snapshot.persistence.message}>
+            <Metric label="Database" value={snapshot.persistence.database ?? "ephemeral / unavailable"} code />
+            <Metric label="Two-record commit" value={milliseconds(snapshot.persistence.commitDurationMs)} />
+            <Metric label="Checkpoint readback" value={snapshot.persistence.checkpointRoundTrip ? "verified" : "not verified"} />
+            <Metric label="Conflict rollback" value={snapshot.persistence.atomicConflictRejected ? "verified" : "not verified"} />
+            <Metric label="Legacy namespace" value={snapshot.persistence.legacyNamespaceUntouched ? "untouched" : "modified"} />
           </DiagnosticCard>
 
           <DiagnosticCard title="WebGPU device" kicker="ADAPTER · PIPELINE · DEVICE LOSS" status={snapshot.webgpu.status} message={snapshot.webgpu.message}>

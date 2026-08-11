@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use blockwild_engine::{ENGINE_VERSION, Engine, EngineConfig};
+use blockwild_persistence::{PersistenceWireRecord, decode_record, inspect_checkpoint};
 use blockwild_protocol::{PROTOCOL_VERSION, ReplayFrame, ReplayHeader, ReplayLog};
 use blockwild_render::SceneFixture;
 #[cfg(not(target_arch = "wasm32"))]
@@ -53,8 +54,51 @@ fn run(args: Vec<String>) -> Result<(), String> {
             };
             render_smoke(output)
         }
-        _ => Err("usage: blockwild-tools <replay-self-test|replay FILE|write-replay FILE|benchmark [ITERATIONS]|kernels-json [--input FILE]|render-fixture|render-smoke [--output] FILE>".into()),
+        Some("save-inspect") => save_inspect(args.get(1).ok_or("save-inspect requires a persistence wire file")?),
+        _ => Err("usage: blockwild-tools <replay-self-test|replay FILE|write-replay FILE|benchmark [ITERATIONS]|kernels-json [--input FILE]|render-fixture|render-smoke [--output] FILE|save-inspect FILE>".into()),
     }
+}
+
+fn save_inspect(path: &str) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|error| format!("cannot read persistence record {path}: {error}"))?;
+    match decode_record(&bytes).map_err(|error| error.to_string())? {
+        PersistenceWireRecord::Checkpoint(checkpoint) => {
+            let report = inspect_checkpoint(&checkpoint);
+            println!(
+                "save=checkpoint valid={} checkpoint={} world={} journal={} records={} bytes={} hash={}",
+                report.valid,
+                report.checkpoint_id,
+                report.world_id,
+                report.journal_sequence,
+                report.records,
+                report.bytes,
+                checkpoint.checkpoint_hash.to_hex(),
+            );
+            if let Some(issue) = report.issue {
+                return Err(issue.to_string());
+            }
+        }
+        PersistenceWireRecord::Transaction(transaction) => println!(
+            "save=transaction id={} world={} expected={} next={} mutations={} bytes={} hash={}",
+            transaction.transaction_id,
+            transaction.world_id,
+            transaction.expected_journal_sequence,
+            transaction.next_journal_sequence,
+            transaction.mutations.len(),
+            transaction.byte_length,
+            transaction.transaction_hash.to_hex(),
+        ),
+        PersistenceWireRecord::Migration(bundle) => println!(
+            "save=migration source={} world={} normalized_bytes={} source_hash={} normalized_hash={} migration_hash={}",
+            bundle.source_key,
+            bundle.world_id,
+            bundle.normalized_payload.len(),
+            bundle.source_hash.to_hex(),
+            bundle.normalized_hash.to_hex(),
+            bundle.migration_hash.to_hex(),
+        ),
+    }
+    Ok(())
 }
 
 fn kernels_json(input_path: Option<&str>) -> Result<(), String> {

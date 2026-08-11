@@ -1,0 +1,10 @@
+{
+  "schema": "blockwild-network-authority-v1",
+  "source": "app/game/network-authority-contract.ts TypeScript parity oracle",
+  "identity": "58fe8921315fa69bc83a57243b37de36",
+  "handshake": "49933fb3af588f00c8aa230cc62ccda1",
+  "interest": "60c7ca0475dfd0c7903e97801b161b26",
+  "humanCommand": "3c138c46b6083b0400566e319bfd728f",
+  "delta": "64bc7697c9401c7aa06ad421ec1fdbac",
+  "checkpoint": "24aef6ec54505dfb6068cd6b96893934"
+}

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { WorldSave } from "../app/game/engine.ts";
 import { DEFAULT_WORLD_GENERATION_OPTIONS, GENERATOR_VERSION } from "../app/game/world.ts";
+import { MemoryPersistenceAdapterV1 } from "../app/game/indexeddb-persistence-adapter.ts";
+import { WorldPersistenceCoordinatorV1 } from "../app/game/world-persistence-coordinator.ts";
 import {
   DEFAULT_WORLD_OPTIONS,
   LEGACY_WORLD_KEY,
@@ -55,6 +57,26 @@ class MemoryStorageEvents {
     return this.listeners.size;
   }
 }
+
+test("browser-primary loads hydrate the Rust journal while preserving the compatibility document", async () => {
+  const storage = new MemoryStorage();
+  const adapter = new MemoryPersistenceAdapterV1();
+  const persistence = new WorldPersistenceCoordinatorV1(adapter, () => 1_500);
+  const worlds = new WorldStorage(storage, { now: () => 1_500, idFactory: () => "journal-world", persistenceCoordinator: persistence });
+  const created = worlds.createWorld({ name: "Journal World", save: save("JOURNAL") });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  await worlds.flushPersistence();
+
+  const key = `${WORLD_DATA_PREFIX}${created.value.id}`;
+  const compatibility = JSON.parse(storage.getItem(key)!) as { save: WorldSave };
+  compatibility.save.health = 1;
+  storage.setItem(key, JSON.stringify(compatibility));
+  const loaded = await worlds.loadWorldAsync(created.value.id, false);
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.ok && loaded.value.save.health, 10, "the committed journal is the browser-primary save authority");
+  assert.equal(JSON.parse(storage.getItem(key)!).save.health, 1, "read-only hydration must leave the protected compatibility source untouched");
+});
 
 test("runtime autosaves reuse trusted document metadata instead of reparsing the previous save", () => {
   const storage = new MemoryStorage();

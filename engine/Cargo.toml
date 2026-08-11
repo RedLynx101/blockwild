@@ -3,6 +3,11 @@ members = [
   "crates/blockwild-types",
   "crates/blockwild-protocol",
   "crates/blockwild-world",
+  "crates/blockwild-simulation",
+  "crates/blockwild-entity",
+  "crates/blockwild-persistence",
+  "crates/blockwild-gameplay",
+  "crates/blockwild-network",
   "crates/blockwild-engine",
   "crates/blockwild-render",
   "crates/blockwild-wasm",
@@ -21,6 +26,11 @@ repository = "https://github.com/RedLynx101/blockwild"
 blockwild-types = { path = "crates/blockwild-types" }
 blockwild-protocol = { path = "crates/blockwild-protocol" }
 blockwild-world = { path = "crates/blockwild-world" }
+blockwild-simulation = { path = "crates/blockwild-simulation" }
+blockwild-entity = { path = "crates/blockwild-entity" }
+blockwild-persistence = { path = "crates/blockwild-persistence" }
+blockwild-gameplay = { path = "crates/blockwild-gameplay" }
+blockwild-network = { path = "crates/blockwild-network" }
 blockwild-engine = { path = "crates/blockwild-engine" }
 blockwild-render = { path = "crates/blockwild-render" }
 wasm-bindgen = "=0.2.127"

@@ -1,0 +1,845 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use blockwild_types::{CanonicalHash, CanonicalHasher};
+
+use crate::{MAX_ITEM_STACK, Rejection, RejectionCode, ResourceDelta, validate_id, write_option_str, write_option_u64};
+
+pub type ItemCode = u32;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ContainerKind {
+    Player,
+    Equipment,
+    Container,
+    Machine,
+    Waygrid,
+    CardforgeCase,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ContainerKey {
+    pub kind: ContainerKind,
+    pub id: String,
+    pub owner_id: Option<String>,
+}
+
+impl ContainerKey {
+    #[must_use]
+    pub fn player(id: impl Into<String>) -> Self {
+        let id = id.into();
+        Self {
+            kind: ContainerKind::Player,
+            owner_id: Some(id.clone()),
+            id,
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Rejection> {
+        validate_id("container", &self.id)?;
+        if let Some(owner_id) = &self.owner_id {
+            validate_id("container owner", owner_id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        hasher.write_u16(self.kind as u16);
+        hasher.write_str(&self.id);
+        write_option_str(hasher, self.owner_id.as_deref());
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ItemStack {
+    pub item_code: ItemCode,
+    pub count: u32,
+    pub durability_millionths: Option<u32>,
+    pub metadata_hash: CanonicalHash,
+}
+
+impl ItemStack {
+    #[must_use]
+    pub const fn simple(item_code: ItemCode, count: u32) -> Self {
+        Self {
+            item_code,
+            count,
+            durability_millionths: None,
+            metadata_hash: CanonicalHash([0; 16]),
+        }
+    }
+
+    pub fn validate(&self, max_stack: u32) -> Result<(), Rejection> {
+        if self.item_code == 0 || self.count == 0 || self.count > MAX_ITEM_STACK || self.count > max_stack {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "item stack is outside its declared bounds",
+            ));
+        }
+        if self.durability_millionths.is_some_and(|value| value > 1_000_000) {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "durability must be between zero and one million millionths",
+            ));
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn compatible_with(&self, other: &Self) -> bool {
+        self.item_code == other.item_code
+            && self.durability_millionths == other.durability_millionths
+            && self.metadata_hash == other.metadata_hash
+    }
+
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        hasher.write_u32(self.item_code);
+        hasher.write_u32(self.count);
+        write_option_u64(hasher, self.durability_millionths.map(u64::from));
+        hasher.write_bytes(self.metadata_hash.as_bytes());
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ItemDefinition {
+    pub code: ItemCode,
+    pub content_id: String,
+    pub max_stack: u32,
+    pub tags: BTreeSet<String>,
+}
+
+impl ItemDefinition {
+    pub fn validate(&self) -> Result<(), Rejection> {
+        validate_id("item content", &self.content_id)?;
+        if self.code == 0 || self.max_stack == 0 || self.max_stack > MAX_ITEM_STACK {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "item definition has invalid code or stack limit",
+            ));
+        }
+        for tag in &self.tags {
+            validate_id("item tag", tag)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Container {
+    pub key: ContainerKey,
+    pub revision: u64,
+    pub slots: Vec<Option<ItemStack>>,
+    pub equipment_tags: Vec<Option<String>>,
+}
+
+impl Container {
+    #[must_use]
+    pub fn new(key: ContainerKey, slots: usize) -> Self {
+        Self {
+            key,
+            revision: 0,
+            slots: vec![None; slots],
+            equipment_tags: vec![None; slots],
+        }
+    }
+
+    pub fn validate(&self, items: &BTreeMap<ItemCode, ItemDefinition>) -> Result<(), Rejection> {
+        self.key.validate()?;
+        if self.slots.is_empty() || self.slots.len() > usize::from(u16::MAX) {
+            return Err(Rejection::new(
+                RejectionCode::Capacity,
+                "container slot count is outside protocol bounds",
+            ));
+        }
+        if self.equipment_tags.len() != self.slots.len() {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "equipment tag layout does not match slots",
+            ));
+        }
+        for (slot_index, stack) in self.slots.iter().enumerate() {
+            let Some(stack) = stack else { continue };
+            let definition = items
+                .get(&stack.item_code)
+                .ok_or_else(|| Rejection::new(RejectionCode::InvalidCommand, "stack references an unknown item"))?;
+            stack.validate(definition.max_stack)?;
+            if let Some(required_tag) = &self.equipment_tags[slot_index]
+                && !definition.tags.contains(required_tag)
+            {
+                return Err(Rejection::new(
+                    RejectionCode::RulesRejected,
+                    "item is not legal for the equipment slot",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        self.key.hash_into(hasher);
+        hasher.write_u64(self.revision);
+        hasher.write_u64(self.slots.len() as u64);
+        for (index, stack) in self.slots.iter().enumerate() {
+            write_option_str(hasher, self.equipment_tags[index].as_deref());
+            match stack {
+                Some(stack) => {
+                    hasher.write_u16(1);
+                    stack.hash_into(hasher);
+                }
+                None => hasher.write_u16(0),
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SlotRef {
+    pub container: ContainerKey,
+    pub slot: u16,
+    pub expected_container_revision: Option<u64>,
+}
+
+impl SlotRef {
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        self.container.hash_into(hasher);
+        hasher.write_u16(self.slot);
+        write_option_u64(hasher, self.expected_container_revision);
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpectedStack {
+    pub item_code: ItemCode,
+    pub metadata_hash: CanonicalHash,
+    pub minimum_count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferCommand {
+    pub from: SlotRef,
+    pub to: SlotRef,
+    pub count: u32,
+    pub expected: Option<ExpectedStack>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Ingredient {
+    pub item_code: ItemCode,
+    pub metadata_hash: Option<CanonicalHash>,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Recipe {
+    pub recipe_id: String,
+    pub station_tag: Option<String>,
+    pub inputs: Vec<Ingredient>,
+    pub outputs: Vec<ItemStack>,
+    pub ticks: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CraftCommand {
+    pub recipe_id: String,
+    pub quantity: u16,
+    pub station_id: Option<String>,
+    pub source: ContainerKey,
+    pub destination: ContainerKey,
+    pub expected_source_revision: Option<u64>,
+    pub expected_destination_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FurnaceState {
+    pub furnace_id: String,
+    pub revision: u64,
+    pub recipe_id: String,
+    pub source: ContainerKey,
+    pub destination: ContainerKey,
+    pub progress_ticks: u64,
+    pub fuel_ticks: u64,
+    pub last_tick: u64,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FurnaceAdvanceCommand {
+    pub furnace_id: String,
+    pub expected_revision: u64,
+    pub to_tick: u64,
+    pub fuel_item: Option<Ingredient>,
+    pub fuel_ticks_per_item: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InventoryCommand {
+    Transfer(TransferCommand),
+    Craft(CraftCommand),
+    AdvanceFurnace(FurnaceAdvanceCommand),
+}
+
+impl InventoryCommand {
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        match self {
+            Self::Transfer(command) => {
+                hasher.write_u16(0);
+                command.from.hash_into(hasher);
+                command.to.hash_into(hasher);
+                hasher.write_u32(command.count);
+                match &command.expected {
+                    Some(expected) => {
+                        hasher.write_u16(1);
+                        hasher.write_u32(expected.item_code);
+                        hasher.write_bytes(expected.metadata_hash.as_bytes());
+                        hasher.write_u32(expected.minimum_count);
+                    }
+                    None => hasher.write_u16(0),
+                }
+            }
+            Self::Craft(command) => {
+                hasher.write_u16(1);
+                hasher.write_str(&command.recipe_id);
+                hasher.write_u16(command.quantity);
+                write_option_str(hasher, command.station_id.as_deref());
+                command.source.hash_into(hasher);
+                command.destination.hash_into(hasher);
+                write_option_u64(hasher, command.expected_source_revision);
+                write_option_u64(hasher, command.expected_destination_revision);
+            }
+            Self::AdvanceFurnace(command) => {
+                hasher.write_u16(2);
+                hasher.write_str(&command.furnace_id);
+                hasher.write_u64(command.expected_revision);
+                hasher.write_u64(command.to_tick);
+                match &command.fuel_item {
+                    Some(fuel) => {
+                        hasher.write_u16(1);
+                        hash_ingredient(fuel, hasher);
+                    }
+                    None => hasher.write_u16(0),
+                }
+                hasher.write_u32(command.fuel_ticks_per_item);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InventoryState {
+    pub items: BTreeMap<ItemCode, ItemDefinition>,
+    pub containers: BTreeMap<ContainerKey, Container>,
+    pub recipes: BTreeMap<String, Recipe>,
+    pub furnaces: BTreeMap<String, FurnaceState>,
+}
+
+impl InventoryState {
+    pub fn register_item(&mut self, item: ItemDefinition) -> Result<(), Rejection> {
+        item.validate()?;
+        if self.items.insert(item.code, item).is_some() {
+            return Err(Rejection::new(RejectionCode::Conflict, "duplicate item code"));
+        }
+        Ok(())
+    }
+
+    pub fn insert_container(&mut self, container: Container) -> Result<(), Rejection> {
+        container.validate(&self.items)?;
+        if self.containers.insert(container.key.clone(), container).is_some() {
+            return Err(Rejection::new(RejectionCode::Conflict, "duplicate container"));
+        }
+        Ok(())
+    }
+
+    pub fn register_recipe(&mut self, recipe: Recipe) -> Result<(), Rejection> {
+        validate_id("recipe", &recipe.recipe_id)?;
+        if recipe.inputs.is_empty() || recipe.outputs.is_empty() || recipe.ticks == 0 {
+            return Err(Rejection::new(RejectionCode::InvalidCommand, "recipe is incomplete"));
+        }
+        for input in &recipe.inputs {
+            if input.count == 0 || !self.items.contains_key(&input.item_code) {
+                return Err(Rejection::new(RejectionCode::InvalidCommand, "recipe input is invalid"));
+            }
+        }
+        for output in &recipe.outputs {
+            let definition = self
+                .items
+                .get(&output.item_code)
+                .ok_or_else(|| Rejection::new(RejectionCode::InvalidCommand, "recipe output item is unknown"))?;
+            output.validate(definition.max_stack)?;
+        }
+        if self.recipes.insert(recipe.recipe_id.clone(), recipe).is_some() {
+            return Err(Rejection::new(RejectionCode::Conflict, "duplicate recipe"));
+        }
+        Ok(())
+    }
+
+    pub fn transfer(&mut self, command: &TransferCommand) -> Result<Vec<ResourceDelta>, Rejection> {
+        if command.count == 0 || command.from.container == command.to.container && command.from.slot == command.to.slot
+        {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "transfer is empty or self-referential",
+            ));
+        }
+        let source = self
+            .containers
+            .get(&command.from.container)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "source container does not exist"))?;
+        check_container_revision(source, command.from.expected_container_revision)?;
+        let source_stack = source
+            .slots
+            .get(usize::from(command.from.slot))
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "source slot is outside container"))?
+            .as_ref()
+            .ok_or_else(|| Rejection::new(RejectionCode::InsufficientResource, "source slot is empty"))?
+            .clone();
+        if source_stack.count < command.count {
+            return Err(Rejection::new(
+                RejectionCode::InsufficientResource,
+                "source stack is too small",
+            ));
+        }
+        if let Some(expected) = &command.expected
+            && (expected.item_code != source_stack.item_code
+                || expected.metadata_hash != source_stack.metadata_hash
+                || source_stack.count < expected.minimum_count)
+        {
+            return Err(Rejection::new(RejectionCode::Conflict, "source stack changed"));
+        }
+        let destination = self
+            .containers
+            .get(&command.to.container)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "destination container does not exist"))?;
+        check_container_revision(destination, command.to.expected_container_revision)?;
+        let destination_stack = destination
+            .slots
+            .get(usize::from(command.to.slot))
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "destination slot is outside container"))?
+            .clone();
+        if destination_stack
+            .as_ref()
+            .is_some_and(|stack| !stack.compatible_with(&source_stack))
+        {
+            return Err(Rejection::new(
+                RejectionCode::RulesRejected,
+                "destination stack is incompatible",
+            ));
+        }
+        let definition = self
+            .items
+            .get(&source_stack.item_code)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidCommand, "source item definition is missing"))?;
+        let existing = destination_stack.as_ref().map_or(0, |stack| stack.count);
+        if existing
+            .checked_add(command.count)
+            .is_none_or(|count| count > definition.max_stack)
+        {
+            return Err(Rejection::new(
+                RejectionCode::Capacity,
+                "destination stack cannot hold transfer",
+            ));
+        }
+        if let Some(required_tag) = &destination.equipment_tags[usize::from(command.to.slot)]
+            && !definition.tags.contains(required_tag)
+        {
+            return Err(Rejection::new(
+                RejectionCode::RulesRejected,
+                "item is illegal for equipment slot",
+            ));
+        }
+
+        self.mutate_slot(&command.from, |slot| {
+            let stack = slot.as_mut().expect("validated source stack");
+            stack.count -= command.count;
+            if stack.count == 0 {
+                *slot = None;
+            }
+        });
+        self.mutate_slot(&command.to, |slot| match slot {
+            Some(stack) => stack.count += command.count,
+            None => {
+                let mut moved = source_stack.clone();
+                moved.count = command.count;
+                *slot = Some(moved);
+            }
+        });
+        Ok(Vec::new())
+    }
+
+    pub fn craft(&mut self, command: &CraftCommand) -> Result<Vec<ResourceDelta>, Rejection> {
+        if command.quantity == 0 {
+            return Err(Rejection::new(RejectionCode::InvalidCommand, "craft quantity is zero"));
+        }
+        let recipe = self
+            .recipes
+            .get(&command.recipe_id)
+            .cloned()
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "recipe does not exist"))?;
+        if recipe.station_tag.is_some() && command.station_id.is_none() {
+            return Err(Rejection::new(
+                RejectionCode::RulesRejected,
+                "recipe requires a station",
+            ));
+        }
+        let source = self
+            .containers
+            .get(&command.source)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "craft source does not exist"))?;
+        check_container_revision(source, command.expected_source_revision)?;
+        let destination = self
+            .containers
+            .get(&command.destination)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "craft destination does not exist"))?;
+        check_container_revision(destination, command.expected_destination_revision)?;
+
+        let mut staged = self.clone();
+        let mut deltas = Vec::new();
+        for ingredient in &recipe.inputs {
+            let count = ingredient
+                .count
+                .checked_mul(u32::from(command.quantity))
+                .ok_or_else(|| Rejection::new(RejectionCode::Capacity, "craft input count overflow"))?;
+            staged.remove_matching(&command.source, ingredient, count)?;
+            deltas.push(ResourceDelta {
+                item_code: ingredient.item_code,
+                metadata_hash: ingredient.metadata_hash.unwrap_or_default(),
+                amount: -i64::from(count),
+                reason: format!("craft:{}", recipe.recipe_id),
+            });
+        }
+        for output in &recipe.outputs {
+            let count = output
+                .count
+                .checked_mul(u32::from(command.quantity))
+                .ok_or_else(|| Rejection::new(RejectionCode::Capacity, "craft output count overflow"))?;
+            let mut created = output.clone();
+            created.count = count;
+            staged.add_stack(&command.destination, created.clone())?;
+            deltas.push(ResourceDelta {
+                item_code: created.item_code,
+                metadata_hash: created.metadata_hash,
+                amount: i64::from(count),
+                reason: format!("craft:{}", recipe.recipe_id),
+            });
+        }
+        *self = staged;
+        Ok(deltas)
+    }
+
+    pub fn advance_furnace(&mut self, command: &FurnaceAdvanceCommand) -> Result<Vec<ResourceDelta>, Rejection> {
+        let mut furnace = self
+            .furnaces
+            .get(&command.furnace_id)
+            .cloned()
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "furnace does not exist"))?;
+        if furnace.revision != command.expected_revision {
+            return Err(Rejection::new(
+                RejectionCode::StaleRevision,
+                "furnace revision is stale",
+            ));
+        }
+        if command.to_tick < furnace.last_tick {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "furnace cannot move backward in time",
+            ));
+        }
+        let recipe = self
+            .recipes
+            .get(&furnace.recipe_id)
+            .cloned()
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "furnace recipe is missing"))?;
+        let elapsed = command.to_tick - furnace.last_tick;
+        let mut deltas = Vec::new();
+        if furnace.active && furnace.fuel_ticks < elapsed {
+            let needed = elapsed - furnace.fuel_ticks;
+            let fuel = command
+                .fuel_item
+                .as_ref()
+                .ok_or_else(|| Rejection::new(RejectionCode::InsufficientResource, "furnace requires fuel"))?;
+            if command.fuel_ticks_per_item == 0 {
+                return Err(Rejection::new(RejectionCode::InvalidCommand, "fuel duration is zero"));
+            }
+            let items = needed.div_ceil(u64::from(command.fuel_ticks_per_item));
+            let items = u32::try_from(items)
+                .map_err(|_| Rejection::new(RejectionCode::Capacity, "fuel request is too large"))?;
+            self.remove_matching(&furnace.source, fuel, items)?;
+            furnace.fuel_ticks = furnace
+                .fuel_ticks
+                .saturating_add(u64::from(items) * u64::from(command.fuel_ticks_per_item));
+            deltas.push(ResourceDelta {
+                item_code: fuel.item_code,
+                metadata_hash: fuel.metadata_hash.unwrap_or_default(),
+                amount: -i64::from(items),
+                reason: "furnace:fuel".into(),
+            });
+        }
+        let active_ticks = elapsed.min(furnace.fuel_ticks);
+        furnace.fuel_ticks -= active_ticks;
+        furnace.progress_ticks = furnace.progress_ticks.saturating_add(active_ticks);
+        let cycles = furnace.progress_ticks / u64::from(recipe.ticks);
+        if cycles > 0 {
+            let cycles_u32 = u32::try_from(cycles)
+                .map_err(|_| Rejection::new(RejectionCode::Capacity, "furnace cycle count is too large"))?;
+            let mut staged = self.clone();
+            for input in &recipe.inputs {
+                let count = input
+                    .count
+                    .checked_mul(cycles_u32)
+                    .ok_or_else(|| Rejection::new(RejectionCode::Capacity, "furnace input overflow"))?;
+                staged.remove_matching(&furnace.source, input, count)?;
+                deltas.push(ResourceDelta {
+                    item_code: input.item_code,
+                    metadata_hash: input.metadata_hash.unwrap_or_default(),
+                    amount: -i64::from(count),
+                    reason: format!("furnace:{}", recipe.recipe_id),
+                });
+            }
+            for output in &recipe.outputs {
+                let count = output
+                    .count
+                    .checked_mul(cycles_u32)
+                    .ok_or_else(|| Rejection::new(RejectionCode::Capacity, "furnace output overflow"))?;
+                let mut created = output.clone();
+                created.count = count;
+                staged.add_stack(&furnace.destination, created.clone())?;
+                deltas.push(ResourceDelta {
+                    item_code: created.item_code,
+                    metadata_hash: created.metadata_hash,
+                    amount: i64::from(count),
+                    reason: format!("furnace:{}", recipe.recipe_id),
+                });
+            }
+            *self = staged;
+            furnace.progress_ticks %= u64::from(recipe.ticks);
+        }
+        furnace.last_tick = command.to_tick;
+        furnace.revision = furnace.revision.wrapping_add(1);
+        self.furnaces.insert(command.furnace_id.clone(), furnace);
+        Ok(deltas)
+    }
+
+    pub(crate) fn consume_owned_item(
+        &mut self,
+        owner_id: &str,
+        item_code: ItemCode,
+        count: u32,
+        reason: &str,
+    ) -> Result<ResourceDelta, Rejection> {
+        let key = self
+            .containers
+            .keys()
+            .find(|key| key.kind == ContainerKind::Player && key.owner_id.as_deref() == Some(owner_id))
+            .cloned()
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "player inventory does not exist"))?;
+        self.remove_matching(
+            &key,
+            &Ingredient {
+                item_code,
+                metadata_hash: None,
+                count,
+            },
+            count,
+        )?;
+        Ok(ResourceDelta {
+            item_code,
+            metadata_hash: CanonicalHash::default(),
+            amount: -i64::from(count),
+            reason: reason.to_owned(),
+        })
+    }
+
+    pub(crate) fn grant_owned_item(
+        &mut self,
+        owner_id: &str,
+        item_code: ItemCode,
+        metadata_hash: CanonicalHash,
+        count: u32,
+    ) -> Result<(), Rejection> {
+        let key = self
+            .containers
+            .keys()
+            .find(|key| key.kind == ContainerKind::Player && key.owner_id.as_deref() == Some(owner_id))
+            .cloned()
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "player inventory does not exist"))?;
+        self.add_stack(
+            &key,
+            ItemStack {
+                item_code,
+                count,
+                durability_millionths: None,
+                metadata_hash,
+            },
+        )
+    }
+
+    pub(crate) fn resource_totals(&self) -> BTreeMap<(ItemCode, CanonicalHash), i128> {
+        let mut totals = BTreeMap::new();
+        for stack in self
+            .containers
+            .values()
+            .flat_map(|container| container.slots.iter().flatten())
+        {
+            *totals.entry((stack.item_code, stack.metadata_hash)).or_default() += i128::from(stack.count);
+        }
+        totals
+    }
+
+    fn mutate_slot(&mut self, reference: &SlotRef, mutate: impl FnOnce(&mut Option<ItemStack>)) {
+        let container = self
+            .containers
+            .get_mut(&reference.container)
+            .expect("validated container");
+        mutate(&mut container.slots[usize::from(reference.slot)]);
+        container.revision = container.revision.wrapping_add(1);
+    }
+
+    fn remove_matching(
+        &mut self,
+        key: &ContainerKey,
+        ingredient: &Ingredient,
+        mut count: u32,
+    ) -> Result<(), Rejection> {
+        let container = self
+            .containers
+            .get_mut(key)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "container does not exist"))?;
+        let available: u64 = container
+            .slots
+            .iter()
+            .flatten()
+            .filter(|stack| {
+                stack.item_code == ingredient.item_code
+                    && ingredient.metadata_hash.is_none_or(|hash| hash == stack.metadata_hash)
+            })
+            .map(|stack| u64::from(stack.count))
+            .sum();
+        if available < u64::from(count) {
+            return Err(Rejection::new(
+                RejectionCode::InsufficientResource,
+                "container lacks recipe resources",
+            ));
+        }
+        for slot in &mut container.slots {
+            let Some(stack) = slot else { continue };
+            if stack.item_code != ingredient.item_code
+                || ingredient.metadata_hash.is_some_and(|hash| hash != stack.metadata_hash)
+            {
+                continue;
+            }
+            let removed = count.min(stack.count);
+            stack.count -= removed;
+            count -= removed;
+            if stack.count == 0 {
+                *slot = None;
+            }
+            if count == 0 {
+                break;
+            }
+        }
+        container.revision = container.revision.wrapping_add(1);
+        Ok(())
+    }
+
+    fn add_stack(&mut self, key: &ContainerKey, mut stack: ItemStack) -> Result<(), Rejection> {
+        let definition = self
+            .items
+            .get(&stack.item_code)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidCommand, "item definition is missing"))?
+            .clone();
+        let container = self
+            .containers
+            .get_mut(key)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "container does not exist"))?;
+        for existing in container.slots.iter_mut().flatten() {
+            if existing.compatible_with(&stack) && existing.count < definition.max_stack {
+                let moved = stack.count.min(definition.max_stack - existing.count);
+                existing.count += moved;
+                stack.count -= moved;
+                if stack.count == 0 {
+                    container.revision = container.revision.wrapping_add(1);
+                    return Ok(());
+                }
+            }
+        }
+        for slot in &mut container.slots {
+            if slot.is_none() {
+                let moved = stack.count.min(definition.max_stack);
+                let mut part = stack.clone();
+                part.count = moved;
+                *slot = Some(part);
+                stack.count -= moved;
+                if stack.count == 0 {
+                    container.revision = container.revision.wrapping_add(1);
+                    return Ok(());
+                }
+            }
+        }
+        Err(Rejection::new(
+            RejectionCode::Capacity,
+            "container has insufficient output space",
+        ))
+    }
+
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        hasher.write_u64(self.items.len() as u64);
+        for item in self.items.values() {
+            hasher.write_u32(item.code);
+            hasher.write_str(&item.content_id);
+            hasher.write_u32(item.max_stack);
+            for tag in &item.tags {
+                hasher.write_str(tag);
+            }
+        }
+        hasher.write_u64(self.recipes.len() as u64);
+        for recipe in self.recipes.values() {
+            hasher.write_str(&recipe.recipe_id);
+            write_option_str(hasher, recipe.station_tag.as_deref());
+            hasher.write_u64(recipe.inputs.len() as u64);
+            for input in &recipe.inputs {
+                hash_ingredient(input, hasher);
+            }
+            hasher.write_u64(recipe.outputs.len() as u64);
+            for output in &recipe.outputs {
+                output.hash_into(hasher);
+            }
+            hasher.write_u32(recipe.ticks);
+        }
+        hasher.write_u64(self.containers.len() as u64);
+        for container in self.containers.values() {
+            container.hash_into(hasher);
+        }
+        hasher.write_u64(self.furnaces.len() as u64);
+        for furnace in self.furnaces.values() {
+            hasher.write_str(&furnace.furnace_id);
+            hasher.write_u64(furnace.revision);
+            hasher.write_str(&furnace.recipe_id);
+            furnace.source.hash_into(hasher);
+            furnace.destination.hash_into(hasher);
+            hasher.write_u64(furnace.progress_ticks);
+            hasher.write_u64(furnace.fuel_ticks);
+            hasher.write_u64(furnace.last_tick);
+            hasher.write_u16(u16::from(furnace.active));
+        }
+    }
+}
+
+fn check_container_revision(container: &Container, expected: Option<u64>) -> Result<(), Rejection> {
+    if expected.is_some_and(|revision| revision != container.revision) {
+        return Err(Rejection::new(
+            RejectionCode::StaleRevision,
+            "container revision is stale",
+        ));
+    }
+    Ok(())
+}
+
+fn hash_ingredient(ingredient: &Ingredient, hasher: &mut CanonicalHasher) {
+    hasher.write_u32(ingredient.item_code);
+    match ingredient.metadata_hash {
+        Some(hash) => {
+            hasher.write_u16(1);
+            hasher.write_bytes(hash.as_bytes());
+        }
+        None => hasher.write_u16(0),
+    }
+    hasher.write_u32(ingredient.count);
+}

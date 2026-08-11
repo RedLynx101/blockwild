@@ -2870,11 +2870,11 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     showToast("WASD move · Space jump/swim · Shift crouch · Ctrl sprint · V camera · Left harvest/attack · Right use/build · E inventory · Esc menu", 8500);
   };
 
-  const playWorld = (worldId: string) => {
+  const playWorld = async (worldId: string) => {
     const engine = engineRef.current;
     const storage = worldStorageRef.current;
     if (!engine || !storage) return;
-    const loaded = storage.loadWorld(worldId);
+    const loaded = await storage.loadWorldAsync(worldId);
     if (!loaded.ok) {
       setWorldNotice(loaded.error.message);
       return;
@@ -2897,7 +2897,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   };
 
   const continueWorld = () => {
-    if (selectedWorldId) playWorld(selectedWorldId);
+    if (selectedWorldId) void playWorld(selectedWorldId);
     else beginNewWorld();
   };
 
@@ -4439,7 +4439,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
                       key={world.id}
                       className={`world-catalog-card ${world.id === selectedWorldId ? "selected" : ""}`}
                       onClick={() => selectWorld(world)}
-                      onDoubleClick={() => playWorld(world.id)}
+                      onDoubleClick={() => void playWorld(world.id)}
                     >
                       <span className="world-thumbnail" aria-hidden="true"><i /><b>{world.mode === "builder" ? "◆" : "▲"}</b></span>
                       <span className="world-card-copy"><strong>{world.name}</strong><small>Seed {world.seed}</small><small>{formatWorldDate(world.lastPlayedAt)} · {formatPlayTime(world.playTimeMs)}</small><small>Last saved in v{world.lastSavedGameVersion}</small></span>

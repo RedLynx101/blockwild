@@ -104,6 +104,8 @@ test("engine lab stays unlinked and route-local", () => {
   assert.doesNotMatch(root, /engine-lab|rust-engine-service|rust-render-smoke/);
   assert.doesNotMatch(wiki, /engine-lab|rust-engine-service|rust-render-smoke/);
   assert.match(route, /import\("\.\.\/game\/rust-engine-service"\)/);
+  assert.match(route, /import\("\.\.\/game\/indexeddb-persistence-adapter"\)/);
+  assert.match(route, /atomicConflictRejected/u);
   assert.match(route, /render_engine_lab_to_text/);
   assert.match(route, /data-testid="engine-smoke-canvas"/);
   assert.match(route, /data-testid="engine-three-oracle-canvas"/);

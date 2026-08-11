@@ -11,6 +11,8 @@ import {
   type WorldOriginPreference,
 } from "./settlement-index";
 import { LEGACY_GAME_VERSION, normalizeGameVersion } from "./version";
+import { IndexedDbPersistenceAdapterV1 } from "./indexeddb-persistence-adapter";
+import { WorldPersistenceCoordinatorV1 } from "./world-persistence-coordinator";
 
 export const WORLD_CATALOG_VERSION = 1;
 export const WORLD_EXPORT_VERSION = 1;
@@ -143,6 +145,8 @@ export type WorldStorageDependencies = {
   idFactory?: () => string;
   /** Injectable for storage-event regression tests; defaults to the browser window. */
   storageEventTarget?: StorageEventTarget | null;
+  /** Injectable journal coordinator; null keeps the synchronous compatibility path. */
+  persistenceCoordinator?: WorldPersistenceCoordinatorV1 | null;
 };
 
 type StorageEventTarget = {
@@ -160,6 +164,15 @@ type StorageRevisionState = { catalog: number; documents: Map<string, number> };
  * for multiple WorldStorage instances sharing one Storage object.
  */
 const STORAGE_REVISIONS = new WeakMap<Storage, StorageRevisionState>();
+let DEFAULT_PERSISTENCE_COORDINATOR: WorldPersistenceCoordinatorV1 | null | undefined;
+
+function defaultPersistenceCoordinator() {
+  if (DEFAULT_PERSISTENCE_COORDINATOR !== undefined) return DEFAULT_PERSISTENCE_COORDINATOR;
+  DEFAULT_PERSISTENCE_COORDINATOR = typeof indexedDB === "undefined"
+    ? null
+    : new WorldPersistenceCoordinatorV1(new IndexedDbPersistenceAdapterV1(indexedDB));
+  return DEFAULT_PERSISTENCE_COORDINATOR;
+}
 
 function revisionsFor(storage: Storage | null) {
   if (!storage) return null;
@@ -441,6 +454,7 @@ export class WorldStorage {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly storageEventTarget: StorageEventTarget | null;
+  private readonly persistence: WorldPersistenceCoordinatorV1 | null;
   private catalog: WorldCatalog = emptyCatalog();
   private catalogStored = false;
   private observedCatalogRevision = 0;
@@ -483,6 +497,7 @@ export class WorldStorage {
     this.storageEventTarget = dependencies.storageEventTarget === undefined
       ? this.defaultStorageEventTarget()
       : dependencies.storageEventTarget;
+    this.persistence = dependencies.persistenceCoordinator === undefined ? defaultPersistenceCoordinator() : dependencies.persistenceCoordinator;
     this.readCatalog();
     this.observedCatalogRevision = revisionsFor(this.storage)?.catalog ?? 0;
     this.migrateLegacySave();
@@ -493,6 +508,8 @@ export class WorldStorage {
     this.storageEventTarget?.removeEventListener("storage", this.handleStorageEvent);
     this.trustedDocumentShells.clear();
   }
+
+  async flushPersistence() { await this.persistence?.flush(); }
 
   get ownershipNotice() {
     return WORLD_OWNERSHIP_NOTICE;
@@ -562,6 +579,48 @@ export class WorldStorage {
     const committed = this.commitDocument(document, nextCatalog);
     if (!committed.ok) return ok(loaded.value, [committed.error]);
     return ok(cloneJson(document));
+  }
+
+  /** Hydrate the Rust journal before falling back to the protected browser source. */
+  async loadWorldAsync(id: string, touch = true): Promise<WorldStorageResult<StoredWorld>> {
+    const legacy = this.readDocument(id);
+    if (!legacy.ok || !this.persistence) return touch && legacy.ok ? this.loadWorld(id, true) : legacy;
+    let save = legacy.value.save;
+    const warnings: WorldStorageIssue[] = [];
+    try {
+      const journal = await this.persistence.readWorld(id);
+      if (journal) save = journal;
+      else {
+        const raw = this.storage?.getItem(this.dataKey(id));
+        if (!raw) throw new Error("legacy world source is unavailable");
+        await this.persistence.migrateLegacyWorld({
+          worldId: id,
+          sourceKey: this.dataKey(id),
+          sourcePayload: new TextEncoder().encode(raw),
+          sourceFormat: "blockwild-world-v2",
+          save,
+        });
+      }
+    } catch (error) {
+      const issue: WorldStorageIssue = {
+        code: "unavailable",
+        message: `The Rust journal could not be hydrated; the protected browser backup was used. ${error instanceof Error ? error.message : "Persistence unavailable."}`,
+        key: this.dataKey(id),
+      };
+      this.diagnostics.push(issue);
+      warnings.push(issue);
+    }
+    if (!touch) return ok({ ...legacy.value, save }, warnings.length ? warnings : undefined);
+    const now = this.now();
+    const metadata = { ...legacy.value.metadata, seed: save.seed, mode: save.mode, lastPlayedAt: now };
+    const document: StoredWorld = { ...legacy.value, metadata, save };
+    const nextCatalog = this.copyCatalog({
+      activeWorldId: id,
+      worlds: this.catalog.worlds.map((entry) => entry.id === id ? metadata : entry),
+    });
+    const committed = this.commitDocument(document, nextCatalog);
+    if (!committed.ok) warnings.push(committed.error);
+    return ok(cloneJson(document), warnings.length ? warnings : undefined);
   }
 
   saveWorld(id: string, input: SaveWorldInput): WorldStorageResult<WorldMetadata> {
@@ -677,6 +736,9 @@ export class WorldStorage {
     }
     try {
       this.storage?.removeItem(this.dataKey(id));
+      void this.persistence?.deleteWorld(id).catch((error) => {
+        this.diagnostics.push({ code: "unavailable", message: `The world catalog entry was removed, but its Rust journal cleanup is pending. ${error instanceof Error ? error.message : "Persistence unavailable."}`, key: this.dataKey(id) });
+      });
       return ok({ ...metadata });
     } catch (error) {
       return ok({ ...metadata }, [classifyStorageError(error, this.dataKey(id))]);
@@ -948,6 +1010,7 @@ export class WorldStorage {
       this.observedCatalogRevision = revisions.catalog;
       this.catalogDirty = false;
       this.rememberDocumentShell(document, revisions.documents.get(document.metadata.id) ?? 0);
+      this.schedulePersistence(document);
       return ok(true);
     } catch (error) {
       try {
@@ -961,6 +1024,17 @@ export class WorldStorage {
       }
       return { ok: false, error: classifyStorageError(error, key) };
     }
+  }
+
+  private schedulePersistence(document: StoredWorld) {
+    if (!this.persistence) return;
+    void this.persistence.persistWorld(document.metadata.id, document.save).catch((error) => {
+      this.diagnostics.push({
+        code: "unavailable",
+        message: `The Rust world journal could not commit; the local compatibility backup remains intact. ${error instanceof Error ? error.message : "Persistence unavailable."}`,
+        key: this.dataKey(document.metadata.id),
+      });
+    });
   }
 
   private rememberDocumentShell(document: StoredWorld, revision = documentRevision(this.storage, document.metadata.id)) {

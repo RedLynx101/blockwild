@@ -11,6 +11,7 @@ blockwild-types.workspace = true
 blockwild-protocol.workspace = true
 blockwild-engine.workspace = true
 blockwild-render.workspace = true
+blockwild-persistence.workspace = true
 
 [[bin]]
 name = "blockwild-tools"
@@ -18,4 +19,3 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
-

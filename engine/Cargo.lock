@@ -68,6 +68,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockwild-entity"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
+]
+
+[[package]]
+name = "blockwild-gameplay"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
+]
+
+[[package]]
+name = "blockwild-network"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
+]
+
+[[package]]
+name = "blockwild-persistence"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
+]
+
+[[package]]
 name = "blockwild-protocol"
 version = "0.1.0"
 dependencies = [
@@ -85,10 +113,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockwild-simulation"
+version = "0.1.0"
+dependencies = [
+ "blockwild-types",
+]
+
+[[package]]
 name = "blockwild-tools"
 version = "0.1.0"
 dependencies = [
  "blockwild-engine",
+ "blockwild-persistence",
  "blockwild-protocol",
  "blockwild-render",
  "blockwild-types",
