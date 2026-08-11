@@ -6,7 +6,7 @@ use crate::{
     AcceptedReceipt, ActorGrant, AuthorityIdentity, CardforgeCommand, CardforgeState, CombatCommand, CombatState,
     ContainerKey, Domain, GameplayActor, GameplayBatch, GameplayCommand, GameplayEvent, GameplayReceipt,
     GameplayRevision, IDEMPOTENCY_WINDOW, InventoryCommand, InventoryState, MachineCommand, MachineStateSet,
-    OpaquePayload, ProgressionState, Rejection, RejectionCode, ResourceDelta, Scope, StatDelta, WorldKey,
+    OpaquePayload, ProgressionState, Rejection, RejectionCode, ResourceDelta, Scope, StatDelta, WorldKey, validate_id,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,9 +83,21 @@ pub struct ReplayEntry {
 }
 
 #[derive(Clone, Debug)]
-struct IdempotencyEntry {
-    command_hash: CanonicalHash,
-    receipt: AcceptedReceipt,
+pub(crate) struct IdempotencyEntry {
+    pub(crate) command_hash: CanonicalHash,
+    pub(crate) receipt: AcceptedReceipt,
+}
+
+/// Crate-private transfer object used by the persistence codec. Keeping this
+/// type private to the crate prevents adapters from mutating authority internals
+/// while still allowing an exact, decode-then-install restore.
+#[derive(Clone, Debug)]
+pub(crate) struct GameplayAuthoritySnapshotParts {
+    pub(crate) state: GameplayState,
+    pub(crate) grants: BTreeMap<String, ActorGrant>,
+    pub(crate) idempotency: BTreeMap<(String, String), IdempotencyEntry>,
+    pub(crate) idempotency_order: VecDeque<(String, String)>,
+    pub(crate) replay: Vec<ReplayEntry>,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +146,162 @@ impl GameplayAuthority {
             hasher.write_bytes(entry.receipt_hash.as_bytes());
         }
         hasher.finish()
+    }
+
+    pub(crate) fn snapshot_parts(&self) -> GameplayAuthoritySnapshotParts {
+        GameplayAuthoritySnapshotParts {
+            state: self.state.clone(),
+            grants: self.grants.clone(),
+            idempotency: self.idempotency.clone(),
+            idempotency_order: self.idempotency_order.clone(),
+            replay: self.replay.clone(),
+        }
+    }
+
+    pub(crate) fn from_snapshot_parts(parts: GameplayAuthoritySnapshotParts) -> Result<Self, Rejection> {
+        if parts.idempotency.len() > IDEMPOTENCY_WINDOW || parts.idempotency_order.len() > IDEMPOTENCY_WINDOW {
+            return Err(Rejection::new(
+                RejectionCode::Capacity,
+                "snapshot idempotency window exceeds authority bounds",
+            ));
+        }
+        if parts.idempotency.len() != parts.idempotency_order.len() {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "snapshot idempotency map and order disagree",
+            ));
+        }
+
+        let mut ordered_keys = BTreeSet::new();
+        for key in &parts.idempotency_order {
+            validate_id("snapshot idempotency actor", &key.0)?;
+            validate_id("snapshot idempotency key", &key.1)?;
+            if !ordered_keys.insert(key.clone()) || !parts.idempotency.contains_key(key) {
+                return Err(Rejection::new(
+                    RejectionCode::InvalidCommand,
+                    "snapshot idempotency order is not a unique map permutation",
+                ));
+            }
+        }
+
+        for (actor_id, grant) in &parts.grants {
+            validate_id("snapshot actor grant", actor_id)?;
+            if grant.scopes.is_empty() {
+                return Err(Rejection::new(
+                    RejectionCode::Unauthorized,
+                    "snapshot actor grant has no scopes",
+                ));
+            }
+            if grant.player_id.is_some_and(|id| id.packed() == 0) || grant.entity_id.is_some_and(|id| id.packed() == 0)
+            {
+                return Err(Rejection::new(
+                    RejectionCode::Unauthorized,
+                    "snapshot actor grant contains a reserved zero identity",
+                ));
+            }
+            match grant.role {
+                crate::ActorRole::System if grant.player_id.is_some() => {
+                    return Err(Rejection::new(
+                        RejectionCode::Unauthorized,
+                        "snapshot system grant cannot impersonate a player",
+                    ));
+                }
+                crate::ActorRole::Guest | crate::ActorRole::Agent if grant.player_id.is_none() => {
+                    return Err(Rejection::new(
+                        RejectionCode::Unauthorized,
+                        "snapshot guest and agent grants require a player",
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        let state_hash = parts.state.state_hash();
+        if let Some(last) = parts.replay.last()
+            && (last.sequence != parts.state.revision.sequence || last.after_hash != state_hash)
+        {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "snapshot replay tail does not identify the restored state",
+            ));
+        }
+        if parts
+            .replay
+            .windows(2)
+            .any(|entries| entries[0].sequence >= entries[1].sequence)
+        {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "snapshot replay sequence is not strictly increasing",
+            ));
+        }
+        for replay in &parts.replay {
+            validate_id("snapshot replay actor", &replay.actor_id)?;
+            validate_id("snapshot replay idempotency key", &replay.idempotency_key)?;
+            if replay.sequence == 0 || replay.sequence > parts.state.revision.sequence {
+                return Err(Rejection::new(
+                    RejectionCode::InvalidCommand,
+                    "snapshot replay sequence is outside the restored revision",
+                ));
+            }
+        }
+
+        for ((actor_id, idempotency_key), entry) in &parts.idempotency {
+            validate_id("snapshot idempotency actor", actor_id)?;
+            validate_id("snapshot idempotency key", idempotency_key)?;
+            let receipt = &entry.receipt;
+            validate_id("snapshot receipt batch", &receipt.batch_id)?;
+            if receipt.before.world != parts.state.world || receipt.after.world != parts.state.world {
+                return Err(Rejection::new(
+                    RejectionCode::WrongWorld,
+                    "snapshot receipt targets another world",
+                ));
+            }
+            for event in &receipt.events {
+                event.validate()?;
+                validate_id("snapshot event actor", &event.actor_id)?;
+            }
+            for delta in &receipt.stat_deltas {
+                validate_id("snapshot stat record", &delta.record_id)?;
+                validate_id("snapshot stat", &delta.stat_id)?;
+            }
+            let expected_receipt_hash = receipt_hash(
+                &receipt.batch_id,
+                &receipt.before,
+                &receipt.after,
+                &receipt.touched_domains,
+                &receipt.resource_deltas,
+                &receipt.stat_deltas,
+                &receipt.events,
+            );
+            if receipt.receipt_hash != expected_receipt_hash {
+                return Err(Rejection::new(
+                    RejectionCode::InvalidCommand,
+                    "snapshot receipt hash is invalid",
+                ));
+            }
+            if !parts.replay.iter().any(|replay| {
+                replay.actor_id == *actor_id
+                    && replay.idempotency_key == *idempotency_key
+                    && replay.command_hash == entry.command_hash
+                    && replay.before_hash == receipt.before.state_hash
+                    && replay.after_hash == receipt.after.state_hash
+                    && replay.receipt_hash == receipt.receipt_hash
+            }) {
+                return Err(Rejection::new(
+                    RejectionCode::InvalidCommand,
+                    "snapshot idempotency receipt is absent from replay",
+                ));
+            }
+        }
+
+        Ok(Self {
+            state: parts.state,
+            grants: parts.grants,
+            idempotency: parts.idempotency,
+            idempotency_order: parts.idempotency_order,
+            replay: parts.replay,
+        })
     }
 
     pub fn apply_batch(&mut self, batch: &GameplayBatch) -> GameplayReceipt {

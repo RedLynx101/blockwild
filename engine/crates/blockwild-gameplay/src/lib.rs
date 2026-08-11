@@ -13,6 +13,7 @@ mod inventory;
 mod machines;
 mod metadata_store;
 mod progression;
+mod snapshot;
 
 pub use authority::{GameplayAuthority, GameplayState, ReplayEntry};
 pub use cardforge::*;
@@ -24,6 +25,7 @@ pub use inventory::*;
 pub use machines::*;
 pub use metadata_store::*;
 pub use progression::*;
+pub use snapshot::*;
 
 #[cfg(test)]
 mod tests;
