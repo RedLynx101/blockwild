@@ -20,6 +20,7 @@ test("Rust migration completion audit emits a bounded, machine-readable release 
   assert.ok(Array.isArray(report.staticThreeCompatibilityImports));
   assert.ok(Array.isArray(report.legacyAuthoritySymbols));
   assert.ok(Array.isArray(report.missingWasmExports));
+  assert.deepEqual(report.missingWasmExports, []);
   assert.equal(report.checks.strictScriptPresent, true);
   assert.equal(report.checks.rustTestDiscoveryPresent, true);
   assert.equal(report.checks.basicRenderProductionOff, true);

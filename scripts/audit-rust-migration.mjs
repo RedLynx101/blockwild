@@ -30,6 +30,13 @@ async function filesBelow(root) {
   return found;
 }
 
+async function joinedTextBelow(root, extension) {
+  const files = (await filesBelow(root))
+    .filter((file) => file.endsWith(extension))
+    .sort((left, right) => left.localeCompare(right));
+  return (await Promise.all(files.map((file) => text(file)))).join("\n");
+}
+
 function relative(file) {
   return path.relative(ROOT, file).replaceAll(path.sep, "/");
 }
@@ -67,7 +74,7 @@ async function audit() {
     text(path.join(ROOT, "app", "game", "VoxelGame.tsx")),
     text(path.join(ROOT, "app", "game", "engine.ts")),
     text(path.join(ROOT, "app", "game", "world.ts")),
-    text(path.join(ROOT, "engine", "crates", "blockwild-wasm", "src", "lib.rs")),
+    joinedTextBelow(path.join(ROOT, "engine", "crates", "blockwild-wasm", "src"), ".rs"),
     text(path.join(ROOT, "app", "game", "performance.ts")),
     text(path.join(ROOT, "scripts", "run-rust-engine-tests.mjs")),
   ]);
