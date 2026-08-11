@@ -1,0 +1,11 @@
+{
+  "generator": "blockwild-gameplay GameplayAuthority::encode_snapshot",
+  "schema": 1,
+  "bytes": 322,
+  "universe": "univers-é-🌌",
+  "location": "Talon/希望",
+  "opaqueExtensionHex": "0080ff0709c3a9",
+  "stateHash": "7196b1334b1570e8c83a571e907d2503",
+  "replayHash": "e0d4bfb094faaa0e10517128aa5ce8fd",
+  "snapshotHash": "7741b5cdf790d26e10287c462fc05768"
+}
