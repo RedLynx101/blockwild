@@ -3,6 +3,7 @@
 
 mod agent;
 mod authority;
+mod browser_runtime;
 mod contract;
 mod fixture;
 mod interest;
@@ -11,6 +12,7 @@ mod wire;
 
 pub use agent::*;
 pub use authority::*;
+pub use browser_runtime::*;
 pub use contract::*;
 pub use fixture::*;
 pub use interest::*;
