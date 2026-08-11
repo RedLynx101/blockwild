@@ -86,6 +86,23 @@ await cp(path.join(ROOT, "tests", "fixtures", "rust-engine", "r11-renderer", "ca
 await cp(path.join(ROOT, "tests", "fixtures", "rust-engine", "r11-renderer", "canonical-frame.bwrf"), path.join(BINDGEN, "canonical-frame.bwrf"));
 await cp(path.join(MATRIX_FIXTURES, "live-resources.bwrd"), path.join(BINDGEN, "live-resources.bwrd"));
 await cp(path.join(MATRIX_FIXTURES, "live-frame.bwrf"), path.join(BINDGEN, "live-frame.bwrf"));
+for (const name of await readdir(MATRIX_FIXTURES)) {
+  if (!/^(?:[a-z0-9-]+-(?:resources\.bwrd|frame\.bwrf)|matrix\.json)$/u.test(name)) continue;
+  await cp(path.join(MATRIX_FIXTURES, name), path.join(BINDGEN, name));
+}
+const matrixManifest = JSON.parse(await readFile(path.join(MATRIX_FIXTURES, "matrix.json"), "utf8"));
+if (matrixManifest.schema !== 1 || !Array.isArray(matrixManifest.scenes) || matrixManifest.scenes.length !== 7) {
+  throw new Error("renderer visual matrix manifest is incomplete");
+}
+const matrixSceneNames = new Set();
+const matrixScenes = matrixManifest.scenes.map((scene) => {
+  if (typeof scene?.name !== "string" || !/^[a-z0-9-]+$/u.test(scene.name) || typeof scene.purpose !== "string") {
+    throw new Error("renderer visual matrix scene identity is unsafe");
+  }
+  if (matrixSceneNames.has(scene.name)) throw new Error(`renderer visual matrix scene ${scene.name} is duplicated`);
+  matrixSceneNames.add(scene.name);
+  return scene;
+});
 
 const files = await filesUnder(BINDGEN);
 const hash = await digestFiles(BINDGEN, files);
@@ -131,6 +148,15 @@ const next = {
     frameFixture: `${hash}/canonical-frame.bwrf`,
     liveResourceFixture: `${hash}/live-resources.bwrd`,
     liveFrameFixture: `${hash}/live-frame.bwrf`,
+    visualMatrix: {
+      manifest: `${hash}/matrix.json`,
+      scenes: matrixScenes.map((scene) => ({
+        name: scene.name,
+        purpose: scene.purpose,
+        resourceFixture: `${hash}/${scene.name}-resources.bwrd`,
+        frameFixture: `${hash}/${scene.name}-frame.bwrf`,
+      })),
+    },
     coldStartBudget,
     files: fileRecords,
   },

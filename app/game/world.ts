@@ -598,8 +598,198 @@ function legendarySitePalette(encounterId: LegendaryEncounterId) {
   return { floor: BlockId.BoiledSugarbrick, accent: BlockId.CandywoodLog, light: BlockId.Glowstone } as const;
 }
 
-type WorldRenderLayer = Exclude<RenderLayer, "none"> | "water" | "glass";
-const WORLD_RENDER_LAYERS = ["opaque", "cutout", "emissive", "translucentSolid", "water", "transparent", "glass"] as const satisfies readonly WorldRenderLayer[];
+export type WorldRenderLayer = Exclude<RenderLayer, "none"> | "water" | "glass";
+export const WORLD_RENDER_LAYERS = ["opaque", "cutout", "emissive", "translucentSolid", "water", "transparent", "glass"] as const satisfies readonly WorldRenderLayer[];
+
+export type RendererTerrainPageR11 = Readonly<{
+  key: string;
+  revision: number;
+  source: "section" | "combined";
+  section: number | null;
+  layer: WorldRenderLayer;
+  translation: readonly [number, number, number];
+  bounds: Readonly<{ minimum: readonly [number, number, number]; maximum: readonly [number, number, number] }>;
+  geometry: TerrainSectionGeometry;
+  byteLength: number;
+}>;
+
+export type RendererTerrainSnapshotR11 = Readonly<{
+  schema: 1;
+  revision: number;
+  atlas: RendererTerrainAtlasR11;
+  lighting: RendererTerrainLightingR11;
+  pages: readonly RendererTerrainPageR11[];
+  selectedChunks: number;
+  availablePages: number;
+  bytes: number;
+  truncated: boolean;
+}>;
+
+export type RendererTerrainAtlasR11 = Readonly<{
+  revision: number;
+  width: number;
+  height: number;
+  rgba8: Uint8Array;
+}>;
+
+export type RendererTerrainLightingR11 = Readonly<{
+  skyRgb8: readonly [number, number, number];
+  skyIntensity: number;
+  sunRgb8: readonly [number, number, number];
+  sunDirection: readonly [number, number, number];
+  sunIntensity: number;
+  blockIntensity: number;
+  minimumAmbient: number;
+  waterPhase: number;
+  held: RendererTerrainPointLightR11;
+  machine: RendererTerrainPointLightR11;
+}>;
+
+export type RendererTerrainPointLightR11 = Readonly<{
+  position: readonly [number, number, number];
+  colorRgb8: readonly [number, number, number];
+  intensity: number;
+  radius: number;
+}>;
+
+export class RendererTerrainRevisionClockR11 {
+  private currentRevision = 0;
+  private readonly pageRevisions = new Map<string, number>();
+
+  get revision() { return this.currentRevision; }
+
+  changed() {
+    this.currentRevision = Math.min(Number.MAX_SAFE_INTEGER, this.currentRevision + 1);
+    return this.currentRevision;
+  }
+
+  nextPage(key: string) {
+    const revision = Math.min(0xffff_ffff, (this.pageRevisions.get(key) ?? 0) + 1);
+    this.pageRevisions.set(key, revision);
+    this.changed();
+    return revision;
+  }
+}
+
+/**
+ * Renderer-neutral, immutable terrain pages captured at mesh production time.
+ * The store never reads Three geometry, scene state, materials, or voxels.
+ */
+export class RendererTerrainPageStoreR11 {
+  private readonly sections = new Map<number, Partial<Record<WorldRenderLayer, RendererTerrainPageR11>>>();
+  private readonly combined: Partial<Record<WorldRenderLayer, RendererTerrainPageR11>> = {};
+
+  constructor(
+    private readonly chunkKey: string,
+    private readonly chunkX: number,
+    private readonly chunkZ: number,
+    private readonly clock: RendererTerrainRevisionClockR11,
+  ) {}
+
+  installSection(section: number, layer: WorldRenderLayer, source: TerrainSectionGeometry) {
+    const key = `${this.chunkKey}:section:${section}:${layer}`;
+    const pages = this.sections.get(section) ?? {};
+    pages[layer] = rendererTerrainPageR11(key, this.clock.nextPage(key), "section", section, layer, this.chunkX, this.chunkZ, source);
+    this.sections.set(section, pages);
+  }
+
+  installCombined(layer: WorldRenderLayer, source: TerrainSectionGeometry | null) {
+    if (!source) { this.removeCombined(layer); return; }
+    const key = `${this.chunkKey}:combined:${layer}`;
+    this.combined[layer] = rendererTerrainPageR11(key, this.clock.nextPage(key), "combined", null, layer, this.chunkX, this.chunkZ, source);
+  }
+
+  updateSectionLights(section: number, layer: WorldRenderLayer, lights: Uint8Array) {
+    const current = this.sections.get(section)?.[layer];
+    if (!current || lights.length !== current.geometry.lights.length) return false;
+    this.installSection(section, layer, { ...current.geometry, lights });
+    return true;
+  }
+
+  sectionPage(section: number, layer: WorldRenderLayer) { return this.sections.get(section)?.[layer] ?? null; }
+
+  sectionPages(layer: WorldRenderLayer) {
+    const pages: RendererTerrainPageR11[] = [];
+    for (const section of [...this.sections.keys()].sort((left, right) => left - right)) {
+      const page = this.sections.get(section)?.[layer];
+      if (page) pages.push(page);
+    }
+    return Object.freeze(pages);
+  }
+
+  removeSection(section: number) {
+    if (!this.sections.delete(section)) return false;
+    this.clock.changed();
+    return true;
+  }
+
+  removeCombined(layer: WorldRenderLayer) {
+    if (!this.combined[layer]) return false;
+    delete this.combined[layer];
+    this.clock.changed();
+    return true;
+  }
+
+  pages() {
+    const result: RendererTerrainPageR11[] = [];
+    const orderedSections = [...this.sections.keys()].sort((left, right) => left - right);
+    for (const layer of WORLD_RENDER_LAYERS) {
+      const combined = this.combined[layer];
+      if (combined) { result.push(combined); continue; }
+      for (const section of orderedSections) {
+        const page = this.sections.get(section)?.[layer];
+        if (page) result.push(page);
+      }
+    }
+    return Object.freeze(result);
+  }
+
+  clear() {
+    if (this.sections.size === 0 && WORLD_RENDER_LAYERS.every((layer) => !this.combined[layer])) return false;
+    this.sections.clear();
+    for (const layer of WORLD_RENDER_LAYERS) delete this.combined[layer];
+    this.clock.changed();
+    return true;
+  }
+}
+
+function rendererTerrainPageR11(
+  key: string,
+  revision: number,
+  source: RendererTerrainPageR11["source"],
+  section: number | null,
+  layer: WorldRenderLayer,
+  chunkX: number,
+  chunkZ: number,
+  input: TerrainSectionGeometry,
+): RendererTerrainPageR11 {
+  if (!input.positions.length || input.positions.length % 3 !== 0) throw new TypeError("renderer terrain positions are invalid");
+  const geometry: TerrainSectionGeometry = Object.freeze({
+    positions: input.positions.slice(), normals: input.normals.slice(), colors: input.colors.slice(), lights: input.lights.slice(),
+    emissions: input.emissions.slice(), occlusions: input.occlusions.slice(), uvs: input.uvs.slice(), indices: input.indices.slice(),
+  });
+  const minimum: [number, number, number] = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  const maximum: [number, number, number] = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
+  for (let offset = 0; offset < geometry.positions.length; offset += 3) for (let axis = 0; axis < 3; axis += 1) {
+    minimum[axis] = Math.min(minimum[axis], geometry.positions[offset + axis]);
+    maximum[axis] = Math.max(maximum[axis], geometry.positions[offset + axis]);
+  }
+  const byteLength = Object.values(geometry).reduce((total, value) => total + value.byteLength, 0);
+  return Object.freeze({
+    key, revision, source, section, layer,
+    translation: Object.freeze([chunkX * CHUNK_SIZE, 0, chunkZ * CHUNK_SIZE] as const),
+    bounds: Object.freeze({ minimum: Object.freeze(minimum), maximum: Object.freeze(maximum) }),
+    geometry, byteLength,
+  });
+}
+
+/** Clone only at an ownership-transfer boundary; registry pages stay resident. */
+export function cloneRendererTerrainGeometryForTransferR11(input: TerrainSectionGeometry): TerrainSectionGeometry {
+  return {
+    positions: input.positions.slice(), normals: input.normals.slice(), colors: input.colors.slice(), lights: input.lights.slice(),
+    emissions: input.emissions.slice(), occlusions: input.occlusions.slice(), uvs: input.uvs.slice(), indices: input.indices.slice(),
+  };
+}
 export type RustTerrainMesherMode = "off" | "shadow" | "promote";
 const configuredRustTerrainMode = typeof process === "undefined"
   ? undefined
@@ -664,9 +854,12 @@ export type Chunk = {
   heightmap: Int16Array;
   biomes: Uint8Array;
   group: THREE.Group;
+  presentationVisible: boolean;
   sections: Map<number, ChunkMeshes>;
   /** One submitted mesh per material layer; section geometries remain CPU-editable. */
   combinedMeshes: ChunkMeshes;
+  /** Immutable renderer-neutral pages captured before Three presentation. */
+  rendererTerrain: RendererTerrainPageStoreR11;
   dirty: Set<number>;
   sectionBlockCounts: Uint16Array;
   /** Highest full opaque cube in each column, maintained independently from terrain height. */
@@ -1719,7 +1912,7 @@ function shadeColor(hex: string, amount: number) {
   return rgbToHex(r + amount, g + amount, b + amount);
 }
 
-export function createBlockAtlas() {
+export function createBlockAtlasSurfaceR11() {
   const tile = 16;
   const grid = ATLAS_GRID;
   const canvas = document.createElement("canvas");
@@ -2951,6 +3144,10 @@ export function createBlockAtlas() {
     }
   }
   for (const [x, y] of [[3, 8], [8, 5], [10, 6], [12, 10]] as Array<[number, number]>) pixel(DREAMCAP_TILE, x, y, "#e5d5ff");
+  return canvas;
+}
+
+export function createBlockAtlas(canvas = createBlockAtlasSurfaceR11()) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -3004,6 +3201,7 @@ export class ChunkWorld {
   invalidatedCombinedMeshes = 0;
   terrainBufferPipeline = new TerrainBufferPipeline();
   terrainGenerationPipeline = new TerrainGenerationPipeline();
+  private readonly rendererTerrainClock = new RendererTerrainRevisionClockR11();
   private readonly rustTerrainMode: RustTerrainMesherMode;
   private readonly rustTerrainMesher: RustTerrainMesherBackend | null;
   private readonly rustWorldAuthority: RustWorldAuthorityRuntimeR4V1;
@@ -3126,6 +3324,15 @@ export class ChunkWorld {
   playerSection = sectionForY(0);
   frame = 0;
   atlas: THREE.Texture;
+  private readonly rendererTerrainAtlas: RendererTerrainAtlasR11;
+  private rendererTerrainLighting: RendererTerrainLightingR11 = Object.freeze({
+    skyRgb8: [124, 184, 255] as const, skyIntensity: 0.82,
+    sunRgb8: [255, 224, 157] as const, sunDirection: [0.45, 0.8, 0.32] as const, sunIntensity: 0.28,
+    blockIntensity: 1.35, minimumAmbient: 0.028,
+    waterPhase: 0,
+    held: Object.freeze({ position: [0, 0, 0] as const, colorRgb8: [255, 116, 40] as const, intensity: 0, radius: 0 }),
+    machine: Object.freeze({ position: [0, 0, 0] as const, colorRgb8: [255, 133, 49] as const, intensity: 0, radius: 0 }),
+  });
   materials: Record<WorldRenderLayer, THREE.Material>;
   lightEngine: VoxelLightEngine;
   private readonly lightingUniforms: VoxelLightingUniforms = {
@@ -3167,9 +3374,21 @@ export class ChunkWorld {
     rustWorldAuthorityMode?: RustWorldAuthorityModeR4V1;
   }> = {}) {
     this.rustTerrainMode = options.rustTerrainMode ?? DEFAULT_RUST_TERRAIN_MESHER_MODE;
-    this.atlas = typeof document === "undefined"
-      ? new THREE.DataTexture(new Uint8Array([127, 127, 127, 255]), 1, 1, THREE.RGBAFormat)
-      : createBlockAtlas();
+    const atlasSurface = typeof document === "undefined" ? null : createBlockAtlasSurfaceR11();
+    if (atlasSurface) {
+      const context = atlasSurface.getContext("2d", { alpha: true });
+      if (!context) throw new Error("Canvas texture pixels are unavailable.");
+      this.rendererTerrainAtlas = Object.freeze({
+        revision: 1,
+        width: atlasSurface.width,
+        height: atlasSurface.height,
+        rgba8: Uint8Array.from(context.getImageData(0, 0, atlasSurface.width, atlasSurface.height).data),
+      });
+      this.atlas = createBlockAtlas(atlasSurface);
+    } else {
+      this.rendererTerrainAtlas = Object.freeze({ revision: 1, width: 1, height: 1, rgba8: new Uint8Array([127, 127, 127, 255]) });
+      this.atlas = new THREE.DataTexture(this.rendererTerrainAtlas.rgba8, 1, 1, THREE.RGBAFormat);
+    }
     this.atlas.needsUpdate = true;
     this.materials = {
       opaque: createVoxelWorldMaterial(this.atlas, this.lightingUniforms),
@@ -3665,6 +3884,20 @@ export class ChunkWorld {
     this.lightingUniforms.voxelSunIntensity.value = Math.max(0, environment.sunIntensity);
     this.lightingUniforms.voxelBlockIntensity.value = Math.max(0, environment.blockIntensity ?? 1.35);
     this.lightingUniforms.voxelMinimumAmbient.value = Math.max(0, environment.minimumAmbient ?? 0.028);
+    const byte = (value: number) => Math.round(clamp(value, 0, 1) * 255);
+    const sky = this.lightingUniforms.voxelSkyColor.value;
+    const sun = this.lightingUniforms.voxelSunColor.value;
+    const direction = this.lightingUniforms.voxelSunDirection.value;
+    this.rendererTerrainLighting = Object.freeze({
+      ...this.rendererTerrainLighting,
+      skyRgb8: [byte(sky.r), byte(sky.g), byte(sky.b)] as const,
+      skyIntensity: this.lightingUniforms.voxelSkyIntensity.value,
+      sunRgb8: [byte(sun.r), byte(sun.g), byte(sun.b)] as const,
+      sunDirection: [direction.x, direction.y, direction.z] as const,
+      sunIntensity: this.lightingUniforms.voxelSunIntensity.value,
+      blockIntensity: this.lightingUniforms.voxelBlockIntensity.value,
+      minimumAmbient: this.lightingUniforms.voxelMinimumAmbient.value,
+    });
   }
 
   /** Advances a shader uniform; no canvas redraw or full-atlas GPU upload occurs. */
@@ -3673,6 +3906,10 @@ export class ChunkWorld {
     if (frame === this.waterAnimationFrame) return;
     this.waterAnimationFrame = frame;
     this.lightingUniforms.voxelWaterPhase.value = (frame % 16) / 16;
+    this.rendererTerrainLighting = Object.freeze({
+      ...this.rendererTerrainLighting,
+      waterPhase: this.lightingUniforms.voxelWaterPhase.value,
+    });
   }
 
   setRenderDistance(distance: number) {
@@ -4198,7 +4435,7 @@ export class ChunkWorld {
           this.generationQueued.add(key);
           this.generationEnqueuedAt.set(key, performance.now());
         } else if (chunk && chunkWithinStreamingRadius(dx, dz, this.renderDistance, radialStreaming)) {
-          chunk.group.visible = true;
+          this.setChunkPresentationVisible(chunk, true);
           if (!chunk.lightInitialized) this.queueLightInitialization(key);
           else if (this.chunkLightPresentationReady(key)) for (let section = 0; section < SECTION_COUNT; section += 1) {
             if (this.seamPresentationPending.has(`${key}:${section}`)) continue;
@@ -4226,7 +4463,7 @@ export class ChunkWorld {
       const offsetX = chunk.cx - cx;
       const offsetZ = chunk.cz - cz;
       if (!chunkWithinStreamingRadius(offsetX, offsetZ, retainRadius, radialStreaming)) this.unloadChunk(key);
-      else chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
+      else this.setChunkPresentationVisible(chunk, chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming));
     }
     this.reprioritizeLightInitialization();
     if (this.activeMeshTask && !this.chunks.get(this.activeMeshTask.key)?.group.visible) this.activeMeshTask = null;
@@ -4358,7 +4595,12 @@ export class ChunkWorld {
     const offsetX = chunk.cx - this.playerChunkX;
     const offsetZ = chunk.cz - this.playerChunkZ;
     const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
-    chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
+    this.setChunkPresentationVisible(chunk, chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming));
+  }
+
+  private setChunkPresentationVisible(chunk: Chunk, visible: boolean) {
+    chunk.presentationVisible = visible;
+    chunk.group.visible = visible;
   }
 
   private chunkLightPresentationReady(key: string) {
@@ -4448,8 +4690,10 @@ export class ChunkWorld {
       heightmap: data.heightmap,
       biomes: data.biomes,
       group: new THREE.Group(),
+      presentationVisible: false,
       sections: new Map(),
       combinedMeshes: {},
+      rendererTerrain: new RendererTerrainPageStoreR11(data.key, data.cx, data.cz, this.rendererTerrainClock),
       dirty: new Set(),
       sectionBlockCounts: data.sectionBlockCounts,
       skyTops: data.skyTops,
@@ -4633,8 +4877,10 @@ export class ChunkWorld {
           heightmap: completed.heightmap,
           biomes: completed.biomes,
           group: new THREE.Group(),
+          presentationVisible: false,
           sections: new Map(),
           combinedMeshes: {},
+          rendererTerrain: new RendererTerrainPageStoreR11(completed.key, completed.cx, completed.cz, this.rendererTerrainClock),
           dirty: new Set(),
           sectionBlockCounts: completed.sectionBlockCounts,
           skyTops: completed.skyTops,
@@ -5098,6 +5344,7 @@ export class ChunkWorld {
       chunk.group.remove(mesh);
       this.disposeTerrainGeometry(mesh.geometry);
       delete chunk.combinedMeshes[layer];
+      chunk.rendererTerrain.removeCombined(layer);
       invalidatedLayers.push(layer);
     }
     if (!invalidatedLayers.length) return;
@@ -5162,25 +5409,6 @@ export class ChunkWorld {
     object.matrixWorldAutoUpdate = false;
   }
 
-  private terrainSectionGeometry(geometry: THREE.BufferGeometry): TerrainSectionGeometry {
-    const attribute = <T extends THREE.TypedArray>(name: string) => {
-      const array = (geometry.getAttribute(name) as unknown as { array: T }).array;
-      return array.slice() as T;
-    };
-    const rawIndex = geometry.getIndex()?.array;
-    const indices = rawIndex instanceof Uint32Array ? rawIndex.slice() : new Uint16Array(rawIndex ?? []);
-    return {
-      positions: attribute<Float32Array>("position"),
-      normals: attribute<Int8Array>("normal"),
-      colors: attribute<Uint8Array>("color"),
-      lights: attribute<Uint8Array>("voxelLight"),
-      emissions: attribute<Uint8Array>("voxelEmission"),
-      occlusions: attribute<Uint8Array>("voxelOcclusion"),
-      uvs: attribute<Uint16Array>("uv"),
-      indices,
-    };
-  }
-
   private registerTerrainGeometry(geometry: THREE.BufferGeometry) {
     let bytes = geometry.getIndex()?.array.byteLength ?? 0;
     for (const attribute of Object.values(geometry.attributes)) {
@@ -5207,8 +5435,10 @@ export class ChunkWorld {
       chunk.group.remove(old);
       this.disposeTerrainGeometry(old.geometry);
       delete chunk.combinedMeshes[layer];
+      chunk.rendererTerrain.removeCombined(layer);
     }
     if (!payload) {
+      chunk.rendererTerrain.removeCombined(layer);
       for (const section of chunk.sections.values()) if (section[layer]) section[layer]!.visible = true;
       return;
     }
@@ -5228,6 +5458,7 @@ export class ChunkWorld {
     chunk.group.add(mesh);
     this.freezeTerrainTransform(mesh);
     chunk.combinedMeshes[layer] = mesh;
+    chunk.rendererTerrain.installCombined(layer, payload);
     for (const section of chunk.sections.values()) if (section[layer]) section[layer]!.visible = false;
   }
 
@@ -5279,11 +5510,8 @@ export class ChunkWorld {
         this.consolidationQueue.push(next);
         continue;
       }
-      const parts: TerrainSectionGeometry[] = [];
-      for (const section of chunk.sections.values()) {
-        const mesh = section[next.layer];
-        if (mesh) parts.push(this.terrainSectionGeometry(mesh.geometry));
-      }
+      const parts = chunk.rendererTerrain.sectionPages(next.layer)
+        .map((page) => cloneRendererTerrainGeometryForTransferR11(page.geometry));
       const revision = this.consolidationRevision.get(queueKey) ?? 0;
       dirtyLayers.delete(next.layer);
       if (!dirtyLayers.size) this.consolidationDirtyLayers.delete(next.key);
@@ -5427,21 +5655,22 @@ export class ChunkWorld {
     const updatedLayers: WorldRenderLayer[] = [];
     for (const layer of WORLD_RENDER_LAYERS) {
       const mesh = meshes[layer];
-      if (!mesh) continue;
-      const position = mesh.geometry.getAttribute("position");
-      const normal = mesh.geometry.getAttribute("normal");
-      if (!position || !normal) continue;
-      const lights = new Uint8Array(position.count * 4);
-      for (let index = 0; index < position.count; index += 1) {
+      const rendererPage = chunk.rendererTerrain.sectionPage(section, layer);
+      if (!mesh || !rendererPage) continue;
+      const { positions, normals } = rendererPage.geometry;
+      const vertexCount = positions.length / 3;
+      const lights = new Uint8Array(vertexCount * 4);
+      for (let index = 0; index < vertexCount; index += 1) {
         const sampled = this.surfaceLightAt(
-          chunk.cx * CHUNK_SIZE + position.getX(index),
-          position.getY(index),
-          chunk.cz * CHUNK_SIZE + position.getZ(index),
-          normal.getX(index), normal.getY(index), normal.getZ(index),
+          chunk.cx * CHUNK_SIZE + positions[index * 3],
+          positions[index * 3 + 1],
+          chunk.cz * CHUNK_SIZE + positions[index * 3 + 2],
+          normals[index * 3] / 127, normals[index * 3 + 1] / 127, normals[index * 3 + 2] / 127,
         );
         for (let channel = 0; channel < 4; channel += 1) lights[index * 4 + channel] = Math.round(clamp(sampled[channel] / MAX_LIGHT_LEVEL, 0, 1) * 255);
       }
       mesh.geometry.setAttribute("voxelLight", new THREE.BufferAttribute(lights, 4, true));
+      chunk.rendererTerrain.updateSectionLights(section, layer, lights);
       updatedLayers.push(layer);
     }
     return updatedLayers;
@@ -5718,8 +5947,10 @@ export class ChunkWorld {
       heightmap: new Int16Array(CHUNK_SIZE * CHUNK_SIZE),
       biomes: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
       group: new THREE.Group(),
+      presentationVisible: false,
       sections: new Map(),
       combinedMeshes: {},
+      rendererTerrain: new RendererTerrainPageStoreR11(key, cx, cz, this.rendererTerrainClock),
       dirty: new Set(),
       sectionBlockCounts: new Uint16Array(SECTION_COUNT),
       skyTops: new Int16Array(CHUNK_SIZE * CHUNK_SIZE).fill(MIN_Y - 1),
@@ -7267,6 +7498,17 @@ export class ChunkWorld {
     this.lightingUniforms.voxelHeldLightColor.value.copy(light.color);
     this.lightingUniforms.voxelHeldLightIntensity.value = Math.max(0, light.intensity);
     this.lightingUniforms.voxelHeldLightRadius.value = Math.max(0, light.radius);
+    const color = this.lightingUniforms.voxelHeldLightColor.value;
+    const byte = (value: number) => Math.round(clamp(value, 0, 1) * 255);
+    this.rendererTerrainLighting = Object.freeze({
+      ...this.rendererTerrainLighting,
+      held: Object.freeze({
+        position: [light.position.x, light.position.y, light.position.z] as const,
+        colorRgb8: [byte(color.r), byte(color.g), byte(color.b)] as const,
+        intensity: this.lightingUniforms.voxelHeldLightIntensity.value,
+        radius: this.lightingUniforms.voxelHeldLightRadius.value,
+      }),
+    });
   }
 
   setMachineLight(light: VoxelMachineLight) {
@@ -7274,6 +7516,17 @@ export class ChunkWorld {
     this.lightingUniforms.voxelMachineLightColor.value.copy(light.color);
     this.lightingUniforms.voxelMachineLightIntensity.value = Math.max(0, light.intensity);
     this.lightingUniforms.voxelMachineLightRadius.value = Math.max(0, light.radius);
+    const color = this.lightingUniforms.voxelMachineLightColor.value;
+    const byte = (value: number) => Math.round(clamp(value, 0, 1) * 255);
+    this.rendererTerrainLighting = Object.freeze({
+      ...this.rendererTerrainLighting,
+      machine: Object.freeze({
+        position: [light.position.x, light.position.y, light.position.z] as const,
+        colorRgb8: [byte(color.r), byte(color.g), byte(color.b)] as const,
+        intensity: this.lightingUniforms.voxelMachineLightIntensity.value,
+        radius: this.lightingUniforms.voxelMachineLightRadius.value,
+      }),
+    });
   }
 
   private settlementTerrainSampler(sample: (x: number, z: number) => ColumnSample = (x, z) => this.sampleColumn(x, z)): SettlementTerrainSampler {
@@ -8757,28 +9010,40 @@ export class ChunkWorld {
       this.disposeTerrainGeometry(mesh.geometry);
     }
     const nextMeshes: ChunkMeshes = {};
+    chunk.rendererTerrain.removeSection(section);
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
     for (const span of packet.layers) {
       const vertexEnd = span.vertexStart + span.vertexCount;
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(packet.streams.positions.slice(span.vertexStart * 3, vertexEnd * 3), 3));
-      geometry.setAttribute("normal", new THREE.BufferAttribute(packet.streams.normals.slice(span.vertexStart * 3, vertexEnd * 3), 3, true));
-      geometry.setAttribute("color", new THREE.BufferAttribute(packet.streams.colors.slice(span.vertexStart * 3, vertexEnd * 3), 3, true));
-      geometry.setAttribute("voxelLight", new THREE.BufferAttribute(packet.streams.lights.slice(span.vertexStart * 4, vertexEnd * 4), 4, true));
-      geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(packet.streams.emissions.slice(span.vertexStart, vertexEnd), 1, true));
-      geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(packet.streams.occlusions.slice(span.vertexStart, vertexEnd), 1, true));
-      geometry.setAttribute("uv", new THREE.BufferAttribute(packet.streams.uvs.slice(span.vertexStart * 2, vertexEnd * 2), 2, true));
       const sourceIndices = packet.streams.indices.slice(span.indexStart, span.indexStart + span.indexCount);
       const localIndices = span.vertexCount > 0xffff ? new Uint32Array(sourceIndices.length) : new Uint16Array(sourceIndices.length);
       for (let index = 0; index < sourceIndices.length; index += 1) localIndices[index] = sourceIndices[index] - span.vertexStart;
-      geometry.setIndex(new THREE.BufferAttribute(localIndices, 1));
+      const rendererGeometry: TerrainSectionGeometry = {
+        positions: packet.streams.positions.slice(span.vertexStart * 3, vertexEnd * 3),
+        normals: packet.streams.normals.slice(span.vertexStart * 3, vertexEnd * 3),
+        colors: packet.streams.colors.slice(span.vertexStart * 3, vertexEnd * 3),
+        lights: packet.streams.lights.slice(span.vertexStart * 4, vertexEnd * 4),
+        emissions: packet.streams.emissions.slice(span.vertexStart, vertexEnd),
+        occlusions: packet.streams.occlusions.slice(span.vertexStart, vertexEnd),
+        uvs: packet.streams.uvs.slice(span.vertexStart * 2, vertexEnd * 2),
+        indices: localIndices,
+      };
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(rendererGeometry.positions, 3));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(rendererGeometry.normals, 3, true));
+      geometry.setAttribute("color", new THREE.BufferAttribute(rendererGeometry.colors, 3, true));
+      geometry.setAttribute("voxelLight", new THREE.BufferAttribute(rendererGeometry.lights, 4, true));
+      geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(rendererGeometry.emissions, 1, true));
+      geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(rendererGeometry.occlusions, 1, true));
+      geometry.setAttribute("uv", new THREE.BufferAttribute(rendererGeometry.uvs, 2, true));
+      geometry.setIndex(new THREE.BufferAttribute(rendererGeometry.indices, 1));
       this.registerTerrainGeometry(geometry);
       geometry.boundingSphere = new THREE.Sphere(
         new THREE.Vector3((CHUNK_SIZE - 1) / 2, (startY + endY) / 2, (CHUNK_SIZE - 1) / 2),
         Math.sqrt(2 * (CHUNK_SIZE / 2) ** 2 + ((endY - startY + 1) / 2) ** 2),
       );
       const layer = span.layer as WorldRenderLayer;
+      chunk.rendererTerrain.installSection(section, layer, rendererGeometry);
       const mesh = new THREE.Mesh(geometry, this.materials[layer]);
       mesh.renderOrder = worldRenderOrder(layer);
       mesh.visible = true;
@@ -8817,6 +9082,7 @@ export class ChunkWorld {
     }
     if (chunk.sectionBlockCounts[section] === 0) {
       if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
+      chunk.rendererTerrain.removeSection(section);
       chunk.sections.set(section, {});
       chunk.dirty.delete(section);
       this.queueChunkConsolidation(chunk, oldLayers);
@@ -9700,6 +9966,7 @@ export class ChunkWorld {
         chunk.group.remove(combined);
         this.disposeTerrainGeometry(combined.geometry);
         delete chunk.combinedMeshes[layer];
+        chunk.rendererTerrain.removeCombined(layer);
         invalidatedLayers.push(layer);
       }
       for (const meshes of chunk.sections.values()) {
@@ -9708,18 +9975,30 @@ export class ChunkWorld {
       this.invalidatedCombinedMeshes += invalidatedLayers.length;
     }
     const nextMeshes: ChunkMeshes = {};
+    chunk.rendererTerrain.removeSection(section);
     for (const layer of WORLD_RENDER_LAYERS) {
       const bucket = buckets[layer];
       if (!bucket.positions.length) continue;
+      const rendererGeometry: TerrainSectionGeometry = {
+        positions: Float32Array.from(bucket.positions),
+        normals: packSnorm8(bucket.normals),
+        colors: packColorUnorm8(bucket.colors),
+        lights: packLightUnorm8(bucket.lights),
+        emissions: packScalarUnorm8(bucket.emissions),
+        occlusions: packScalarUnorm8(bucket.occlusions),
+        uvs: packUnorm16(bucket.uvs),
+        indices: bucket.positions.length / 3 > 0xffff ? Uint32Array.from(bucket.indices) : Uint16Array.from(bucket.indices),
+      };
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
-      geometry.setAttribute("normal", new THREE.BufferAttribute(packSnorm8(bucket.normals), 3, true));
-      geometry.setAttribute("color", new THREE.BufferAttribute(packColorUnorm8(bucket.colors), 3, true));
-      geometry.setAttribute("voxelLight", new THREE.BufferAttribute(packLightUnorm8(bucket.lights), 4, true));
-      geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(packScalarUnorm8(bucket.emissions), 1, true));
-      geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(packScalarUnorm8(bucket.occlusions), 1, true));
-      geometry.setAttribute("uv", new THREE.BufferAttribute(packUnorm16(bucket.uvs), 2, true));
-      geometry.setIndex(bucket.indices);
+      geometry.setAttribute("position", new THREE.BufferAttribute(rendererGeometry.positions, 3));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(rendererGeometry.normals, 3, true));
+      geometry.setAttribute("color", new THREE.BufferAttribute(rendererGeometry.colors, 3, true));
+      geometry.setAttribute("voxelLight", new THREE.BufferAttribute(rendererGeometry.lights, 4, true));
+      geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(rendererGeometry.emissions, 1, true));
+      geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(rendererGeometry.occlusions, 1, true));
+      geometry.setAttribute("uv", new THREE.BufferAttribute(rendererGeometry.uvs, 2, true));
+      geometry.setIndex(new THREE.BufferAttribute(rendererGeometry.indices, 1));
+      chunk.rendererTerrain.installSection(section, layer, rendererGeometry);
       this.registerTerrainGeometry(geometry);
       const centerY = (startY + endY) / 2;
       geometry.boundingSphere = new THREE.Sphere(
@@ -9820,6 +10099,7 @@ export class ChunkWorld {
     }
     for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) this.disposeTerrainGeometry(mesh.geometry);
     for (const mesh of Object.values(chunk.combinedMeshes)) if (mesh) this.disposeTerrainGeometry(mesh.geometry);
+    chunk.rendererTerrain.clear();
     this.consolidationDirtyLayers.delete(key);
     for (const layer of WORLD_RENDER_LAYERS) {
       const queueKey = `${key}:${layer}`;
@@ -10066,6 +10346,57 @@ export class ChunkWorld {
       if (this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey)) continue;
       this.queueMesh(key, section);
     }
+  }
+
+  /**
+   * Bounded presentation snapshot over immutable terrain pages. This reads no
+   * Three scene/geometry/material state and performs no voxel lookup.
+   */
+  rendererTerrainSnapshotR11(
+    cameraX: number,
+    cameraZ: number,
+    options: Readonly<{ maxChunks?: number; maxPages?: number; maxBytes?: number }> = {},
+  ): RendererTerrainSnapshotR11 {
+    if (!Number.isFinite(cameraX) || !Number.isFinite(cameraZ)) throw new TypeError("renderer terrain camera position is invalid");
+    const bounded = (value: number | undefined, fallback: number, maximum: number, label: string) => {
+      const resolved = value ?? fallback;
+      if (!Number.isInteger(resolved) || resolved <= 0 || resolved > maximum) throw new RangeError(`${label} is outside its bounded range`);
+      return resolved;
+    };
+    const maxChunks = bounded(options.maxChunks, 64, 256, "renderer terrain chunk budget");
+    const maxPages = bounded(options.maxPages, 512, 2_048, "renderer terrain page budget");
+    const maxBytes = bounded(options.maxBytes, 64 * 1024 * 1024, 128 * 1024 * 1024, "renderer terrain byte budget");
+    const candidates = [...this.chunks.values()]
+      .filter((chunk) => chunk.presentationVisible)
+      .sort((left, right) => {
+        const leftX = left.cx * CHUNK_SIZE + CHUNK_SIZE / 2 - cameraX;
+        const leftZ = left.cz * CHUNK_SIZE + CHUNK_SIZE / 2 - cameraZ;
+        const rightX = right.cx * CHUNK_SIZE + CHUNK_SIZE / 2 - cameraX;
+        const rightZ = right.cz * CHUNK_SIZE + CHUNK_SIZE / 2 - cameraZ;
+        return leftX * leftX + leftZ * leftZ - rightX * rightX - rightZ * rightZ || left.key.localeCompare(right.key);
+      });
+    const selected = candidates.slice(0, maxChunks);
+    const pages: RendererTerrainPageR11[] = [];
+    let availablePages = 0;
+    let bytes = 0;
+    let truncated = candidates.length > selected.length;
+    for (const chunk of selected) for (const page of chunk.rendererTerrain.pages()) {
+      availablePages += 1;
+      if (pages.length >= maxPages || bytes + page.byteLength > maxBytes) { truncated = true; continue; }
+      pages.push(page);
+      bytes += page.byteLength;
+    }
+    return Object.freeze({
+      schema: 1 as const,
+      revision: this.rendererTerrainClock.revision,
+      atlas: this.rendererTerrainAtlas,
+      lighting: this.rendererTerrainLighting,
+      pages: Object.freeze(pages),
+      selectedChunks: selected.length,
+      availablePages,
+      bytes,
+      truncated,
+    });
   }
 
   private installRustTerrainR2BrowserHarness() {

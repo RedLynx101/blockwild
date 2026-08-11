@@ -3,9 +3,10 @@ import { RustRendererServiceR11, supportsRustRendererWorkerR11, type RustRendere
 
 export type RendererBackendR11 = Readonly<{
   kind: "rust-webgpu";
-  resources(batch: RenderResourceBatchV2): void;
-  frame(frame: RenderFrameV2): boolean;
+  resources(batch: RenderResourceBatchV2 | Uint8Array): void;
+  frame(frame: RenderFrameV2 | Uint8Array): boolean;
   resize(width: number, height: number): void;
+  requestRecovery(reason?: string): void;
   dispose(): void;
   diagnostics(): ReturnType<RustRendererServiceR11["snapshot"]>;
 }>;
@@ -39,9 +40,10 @@ export function createRustRendererBackendR11(options: Readonly<{
   service.start(options.canvas.transferControlToOffscreen(), options.artifact, options.epoch, options.width, options.height);
   return Object.freeze({
     kind: "rust-webgpu" as const,
-    resources: (batch: RenderResourceBatchV2) => service.applyResources(batch),
-    frame: (frame: RenderFrameV2) => service.present(frame),
+    resources: (batch: RenderResourceBatchV2 | Uint8Array) => service.applyResources(batch),
+    frame: (frame: RenderFrameV2 | Uint8Array) => service.present(frame),
     resize: (width: number, height: number) => service.resize(width, height),
+    requestRecovery: (reason?: string) => service.requestRecovery(reason),
     dispose: () => service.stop(),
     diagnostics: () => service.snapshot(),
   });

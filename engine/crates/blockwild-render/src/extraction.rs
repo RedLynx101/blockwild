@@ -19,6 +19,8 @@ pub const RENDER_MAX_PARTICLES_V2: usize = 262_144;
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RenderResourceId(pub u64);
 
+pub const BLOCK_ATLAS_TEXTURE_ID_V2: RenderResourceId = RenderResourceId(4_095);
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RenderTransformV2 {
     pub translation: [f32; 3],
@@ -279,6 +281,69 @@ impl RenderGeometryV2 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
+pub enum RenderTextureColorSpaceV2 {
+    Linear = 0,
+    Srgb = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderTextureFilterV2 {
+    Nearest = 0,
+    Linear = 1,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderTextureV2 {
+    pub id: RenderResourceId,
+    pub revision: u32,
+    pub width: u32,
+    pub height: u32,
+    pub color_space: RenderTextureColorSpaceV2,
+    pub filter: RenderTextureFilterV2,
+    pub rgba8: Vec<u8>,
+}
+
+impl RenderTextureV2 {
+    #[must_use]
+    pub fn byte_length(&self) -> usize {
+        self.rgba8.len()
+    }
+
+    fn validate(&self) -> Result<(), RenderExtractionError> {
+        let expected = usize::try_from(self.width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(self.height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(4));
+        if self.id.0 == 0
+            || self.width == 0
+            || self.height == 0
+            || self.width > 4_096
+            || self.height > 4_096
+            || expected != Some(self.rgba8.len())
+        {
+            return Err(RenderExtractionError::InvalidRecord("texture record is invalid"));
+        }
+        Ok(())
+    }
+
+    fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        hasher.write_u64(self.id.0);
+        hasher.write_u32(self.revision);
+        hasher.write_u32(self.width);
+        hasher.write_u32(self.height);
+        hasher.write_u16(self.color_space as u16);
+        hasher.write_u16(self.filter as u16);
+        hasher.write_bytes(&self.rgba8);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum RenderInstanceDomainV2 {
     Terrain = 0,
     Creature = 1,
@@ -336,6 +401,8 @@ pub enum RenderResourceOperationKindV2 {
     UpsertGeometry = 1,
     RemoveMaterial = 2,
     RemoveGeometry = 3,
+    UpsertTexture = 4,
+    RemoveTexture = 5,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -344,6 +411,8 @@ pub enum RenderResourceOperationV2 {
     UpsertGeometry(RenderGeometryV2),
     RemoveMaterial(RenderResourceId),
     RemoveGeometry(RenderResourceId),
+    UpsertTexture(RenderTextureV2),
+    RemoveTexture(RenderResourceId),
 }
 
 impl RenderResourceOperationV2 {
@@ -353,6 +422,8 @@ impl RenderResourceOperationV2 {
             Self::UpsertGeometry(_) => RenderResourceOperationKindV2::UpsertGeometry,
             Self::RemoveMaterial(_) => RenderResourceOperationKindV2::RemoveMaterial,
             Self::RemoveGeometry(_) => RenderResourceOperationKindV2::RemoveGeometry,
+            Self::UpsertTexture(_) => RenderResourceOperationKindV2::UpsertTexture,
+            Self::RemoveTexture(_) => RenderResourceOperationKindV2::RemoveTexture,
         }
     }
 
@@ -360,7 +431,8 @@ impl RenderResourceOperationV2 {
         match self {
             Self::UpsertMaterial(value) => value.id,
             Self::UpsertGeometry(value) => value.id,
-            Self::RemoveMaterial(value) | Self::RemoveGeometry(value) => *value,
+            Self::UpsertTexture(value) => value.id,
+            Self::RemoveMaterial(value) | Self::RemoveGeometry(value) | Self::RemoveTexture(value) => *value,
         }
     }
 
@@ -368,10 +440,11 @@ impl RenderResourceOperationV2 {
         match self {
             Self::UpsertMaterial(value) => value.validate(),
             Self::UpsertGeometry(value) => value.validate(),
-            Self::RemoveMaterial(value) | Self::RemoveGeometry(value) if value.0 == 0 => {
+            Self::UpsertTexture(value) => value.validate(),
+            Self::RemoveMaterial(value) | Self::RemoveGeometry(value) | Self::RemoveTexture(value) if value.0 == 0 => {
                 Err(RenderExtractionError::InvalidRecord("removed resource id is zero"))
             }
-            Self::RemoveMaterial(_) | Self::RemoveGeometry(_) => Ok(()),
+            Self::RemoveMaterial(_) | Self::RemoveGeometry(_) | Self::RemoveTexture(_) => Ok(()),
         }
     }
 
@@ -380,7 +453,10 @@ impl RenderResourceOperationV2 {
         match self {
             Self::UpsertMaterial(value) => value.hash_into(hasher),
             Self::UpsertGeometry(value) => value.hash_into(hasher),
-            Self::RemoveMaterial(value) | Self::RemoveGeometry(value) => hasher.write_u64(value.0),
+            Self::UpsertTexture(value) => value.hash_into(hasher),
+            Self::RemoveMaterial(value) | Self::RemoveGeometry(value) | Self::RemoveTexture(value) => {
+                hasher.write_u64(value.0)
+            }
         }
     }
 }
@@ -491,6 +567,71 @@ impl RenderCameraV2 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderPointLightV2 {
+    pub position: [f32; 3],
+    pub color_rgb8: [u8; 3],
+    pub intensity: f32,
+    pub radius: f32,
+}
+
+impl RenderPointLightV2 {
+    fn validate(&self) -> Result<(), RenderExtractionError> {
+        if self.position.into_iter().any(|value| !value.is_finite())
+            || !self.intensity.is_finite()
+            || !self.radius.is_finite()
+            || self.intensity < 0.0
+            || self.radius < 0.0
+        {
+            return Err(RenderExtractionError::InvalidRecord("point light record is invalid"));
+        }
+        Ok(())
+    }
+
+    fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        for value in self.position {
+            hasher.write_u32(canonical_f32(value).to_bits());
+        }
+        hasher.write_bytes(&self.color_rgb8);
+        hasher.write_u32(canonical_f32(self.intensity).to_bits());
+        hasher.write_u32(canonical_f32(self.radius).to_bits());
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderLightingExtensionV2 {
+    pub block_intensity: f32,
+    pub minimum_ambient: f32,
+    pub water_phase: f32,
+    pub held: RenderPointLightV2,
+    pub machine: RenderPointLightV2,
+}
+
+impl RenderLightingExtensionV2 {
+    fn validate(&self) -> Result<(), RenderExtractionError> {
+        if !self.block_intensity.is_finite()
+            || !self.minimum_ambient.is_finite()
+            || !self.water_phase.is_finite()
+            || self.block_intensity < 0.0
+            || self.minimum_ambient < 0.0
+            || !(0.0..=1.0).contains(&self.water_phase)
+        {
+            return Err(RenderExtractionError::InvalidRecord("lighting extension is invalid"));
+        }
+        self.held.validate()?;
+        self.machine.validate()
+    }
+
+    fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        hasher.write_u16(0x4c31);
+        for value in [self.block_intensity, self.minimum_ambient, self.water_phase] {
+            hasher.write_u32(canonical_f32(value).to_bits());
+        }
+        self.held.hash_into(hasher);
+        self.machine.hash_into(hasher);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderEnvironmentV2 {
     pub clear_rgba8: [u8; 4],
     pub ambient_rgb8: [u8; 3],
@@ -503,6 +644,7 @@ pub struct RenderEnvironmentV2 {
     pub fog_far: f32,
     pub underwater: f32,
     pub cave_occlusion: f32,
+    pub lighting: Option<RenderLightingExtensionV2>,
 }
 
 impl RenderEnvironmentV2 {
@@ -526,6 +668,9 @@ impl RenderEnvironmentV2 {
         {
             return Err(RenderExtractionError::InvalidRecord("environment record is invalid"));
         }
+        if let Some(lighting) = self.lighting {
+            lighting.validate()?;
+        }
         Ok(())
     }
 
@@ -541,6 +686,9 @@ impl RenderEnvironmentV2 {
         hasher.write_bytes(&self.fog_rgb8);
         for value in [self.fog_near, self.fog_far, self.underwater, self.cave_occlusion] {
             hasher.write_u32(canonical_f32(value).to_bits());
+        }
+        if let Some(lighting) = self.lighting {
+            lighting.hash_into(hasher);
         }
     }
 }
@@ -794,6 +942,7 @@ mod tests {
             fog_far: 192.0,
             underwater: 0.0,
             cave_occlusion: 0.0,
+            lighting: None,
         }
     }
 

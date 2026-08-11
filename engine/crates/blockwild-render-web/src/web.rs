@@ -8,6 +8,7 @@ pub struct WasmRenderSurfaceV2 {
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    surface_view_format: wgpu::TextureFormat,
     renderer: WgpuSceneRendererV2,
     surface_device: wgpu::Device,
     present_queue: wgpu::Queue,
@@ -29,12 +30,21 @@ pub async fn create_blockwild_renderer(
     let surface = instance
         .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas))
         .map_err(js_error)?;
-    let (config, renderer, surface_device, present_queue, adapter_name, adapter_backend, timestamp_query_supported) =
-        create_device_and_renderer(&instance, &surface, width, height).await?;
+    let (
+        config,
+        surface_view_format,
+        renderer,
+        surface_device,
+        present_queue,
+        adapter_name,
+        adapter_backend,
+        timestamp_query_supported,
+    ) = create_device_and_renderer(&instance, &surface, width, height).await?;
     Ok(WasmRenderSurfaceV2 {
         instance,
         surface,
         config,
+        surface_view_format,
         renderer,
         surface_device,
         present_queue,
@@ -80,7 +90,11 @@ impl WasmRenderSurfaceV2 {
                 return Err(JsValue::from_str("WebGPU surface validation failed"));
             }
         };
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Blockwild sRGB presentation view"),
+            format: Some(self.surface_view_format),
+            ..Default::default()
+        });
         let started = web_time_micros();
         let diagnostics = self.renderer.render_to_view(&frame, &view).map_err(js_error)?;
         self.present_queue.present(output);
@@ -102,9 +116,18 @@ impl WasmRenderSurfaceV2 {
     }
 
     pub async fn recover(&mut self) -> Result<String, JsValue> {
-        let (config, renderer, surface_device, present_queue, adapter_name, adapter_backend, timestamp_query_supported) =
-            create_device_and_renderer(&self.instance, &self.surface, self.config.width, self.config.height).await?;
+        let (
+            config,
+            surface_view_format,
+            renderer,
+            surface_device,
+            present_queue,
+            adapter_name,
+            adapter_backend,
+            timestamp_query_supported,
+        ) = create_device_and_renderer(&self.instance, &self.surface, self.config.width, self.config.height).await?;
         self.config = config;
+        self.surface_view_format = surface_view_format;
         self.renderer = renderer;
         self.surface_device = surface_device;
         self.present_queue = present_queue;
@@ -127,6 +150,7 @@ async fn create_device_and_renderer(
 ) -> Result<
     (
         wgpu::SurfaceConfiguration,
+        wgpu::TextureFormat,
         WgpuSceneRendererV2,
         wgpu::Device,
         wgpu::Queue,
@@ -161,25 +185,26 @@ async fn create_device_and_renderer(
         .await
         .map_err(js_error)?;
     let capabilities = surface.get_capabilities(&adapter);
-    let color_format = capabilities
-        .formats
-        .iter()
-        .copied()
-        .find(wgpu::TextureFormat::is_srgb)
-        .or_else(|| capabilities.formats.first().copied())
-        .ok_or_else(|| JsValue::from_str("WebGPU surface has no supported format"))?;
+    let directly_supported_srgb = capabilities.formats.iter().copied().find(wgpu::TextureFormat::is_srgb);
     let mut config = surface
         .get_default_config(&adapter, width, height)
         .ok_or_else(|| JsValue::from_str("WebGPU surface is unsupported by the adapter"))?;
-    config.format = color_format;
+    if let Some(format) = directly_supported_srgb {
+        config.format = format;
+    }
+    let surface_view_format = config.format.add_srgb_suffix();
+    if surface_view_format != config.format && !config.view_formats.contains(&surface_view_format) {
+        config.view_formats.push(surface_view_format);
+    }
     config.desired_maximum_frame_latency = 2;
     surface.configure(&device, &config);
     let surface_device = device.clone();
     let present_queue = queue.clone();
     let renderer =
-        WgpuSceneRendererV2::from_device(device, queue, info, width, height, color_format).map_err(js_error)?;
+        WgpuSceneRendererV2::from_device(device, queue, info, width, height, surface_view_format).map_err(js_error)?;
     Ok((
         config,
+        surface_view_format,
         renderer,
         surface_device,
         present_queue,

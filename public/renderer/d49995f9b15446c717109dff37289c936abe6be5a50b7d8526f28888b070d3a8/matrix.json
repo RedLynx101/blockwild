@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "renderer": "blockwild-wgpu-r11",
+  "fixturesOnly": true,
+  "scenes": [
+    {"name":"overworld-day","purpose":"Dense streamed terrain, flora, river transparency, current creatures, player rig, weather particles, and emission.","width":640,"height":360,"instances":1000,"particles":72,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}},
+    {"name":"night-weather","purpose":"Night sky, celestial body, fire, emissive fauna, flying dragon, rain, and transparent ordering.","width":640,"height":360,"instances":964,"particles":150,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}},
+    {"name":"living-cave","purpose":"Cave topology, darkness contrast, bioluminescent ecology, machinery, golem and hostile creature silhouettes.","width":640,"height":360,"instances":1100,"particles":90,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}},
+    {"name":"underwater-ice","purpose":"Underwater fog, ice-water adjacency, kelp continuity, bubbles, aquatic creatures, caustic and glass-like materials.","width":640,"height":360,"instances":767,"particles":140,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}},
+    {"name":"settlement-machinery","purpose":"Settlement density, architecture, glass, current player and NPC rigs, held tools, storage, block-damage overlays and powered utility models.","width":640,"height":360,"instances":655,"particles":84,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}},
+    {"name":"bestiary-cardforge","purpose":"Production Bestiary and Cardforge specimen lineup with current authored models, glass, emission and silhouette separation.","width":640,"height":360,"instances":372,"particles":0,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}},
+    {"name":"celestial-effects","purpose":"Sky and celestial shading, flying dragons, projectile and item domains, particles, animation and additive emission.","width":640,"height":360,"instances":659,"particles":220,"drawCalls":0,"culled":0,"rgbaBytes":0,"policy":{"perChannelTolerance":3,"maxMismatchedPixels":460}}
+  ]
+}

@@ -33,6 +33,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut records = Vec::with_capacity(scenes.len());
     for scene in &scenes {
+        fs::write(
+            output.join(format!("{}-resources.bwrd", scene.name)),
+            encode_render_resource_batch_v2(&scene.resources)?,
+        )?;
+        fs::write(
+            output.join(format!("{}-frame.bwrf", scene.name)),
+            encode_render_frame_v2(&scene.frame)?,
+        )?;
         let mut record = SceneRecord {
             name: scene.name.clone(),
             purpose: scene.purpose.clone(),

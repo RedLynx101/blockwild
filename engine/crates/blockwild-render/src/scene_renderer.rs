@@ -16,16 +16,17 @@ use std::time::Duration;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    FrameAdmissionV2, PreparedFrameSummaryV2, RenderBlendModeV2, RenderExtractionError, RenderFrameInputV2,
-    RenderFrameV2, RenderGeometryKindV2, RenderGeometryV2, RenderInstanceDomainV2, RenderInstanceV2, RenderMaterialV2,
-    RenderResourceBatchV2, RenderResourceId, RenderResourceOperationV2, RenderResourceStoreV2, RenderShadingModelV2,
+    BLOCK_ATLAS_TEXTURE_ID_V2, FrameAdmissionV2, PreparedFrameSummaryV2, RenderBlendModeV2, RenderExtractionError,
+    RenderFrameInputV2, RenderFrameV2, RenderGeometryKindV2, RenderGeometryV2, RenderInstanceDomainV2,
+    RenderInstanceV2, RenderMaterialV2, RenderResourceBatchV2, RenderResourceId, RenderResourceOperationV2,
+    RenderResourceStoreV2, RenderShadingModelV2, RenderTextureColorSpaceV2, RenderTextureFilterV2, RenderTextureV2,
     RenderTransformV2,
 };
 
 const SCENE_SHADER: &str = include_str!("scene.wgsl");
 const OFFSCREEN_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
-const GPU_VERTEX_FLOATS: usize = 17;
+const GPU_VERTEX_FLOATS: usize = 18;
 const GPU_VERTEX_STRIDE: u64 = (GPU_VERTEX_FLOATS * size_of::<f32>()) as u64;
 const GPU_INSTANCE_FLOATS: usize = 20;
 const GPU_INSTANCE_STRIDE: u64 = (GPU_INSTANCE_FLOATS * size_of::<f32>()) as u64;
@@ -87,6 +88,12 @@ struct GpuMaterial {
     depth_write: bool,
 }
 
+struct GpuTexture {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct PipelineKey {
     blend: u8,
@@ -116,6 +123,8 @@ pub struct WgpuSceneRendererV2 {
     pipelines: BTreeMap<PipelineKey, wgpu::RenderPipeline>,
     geometries: BTreeMap<RenderResourceId, GpuGeometry>,
     materials: BTreeMap<RenderResourceId, GpuMaterial>,
+    textures: BTreeMap<RenderResourceId, GpuTexture>,
+    fallback_texture: GpuTexture,
     resources: RenderResourceStoreV2,
     submitted_frames: u64,
     uploaded_geometry_bytes: u64,
@@ -242,6 +251,7 @@ pub fn canonical_integrated_scene_v2(
             fog_far: 64.0,
             underwater: 0.0,
             cave_occlusion: 0.0,
+            lighting: None,
         },
         instances: vec![
             make_instance(100, 1, [0.0, -0.92, 0.0], [4.4, 0.36, 3.8], 0),
@@ -451,16 +461,34 @@ impl WgpuSceneRendererV2 {
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Blockwild scene material layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Blockwild scene pipeline layout"),
@@ -473,7 +501,7 @@ impl WgpuSceneRendererV2 {
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Blockwild scene camera uniform"),
-            size: 160,
+            size: 240,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -498,6 +526,19 @@ impl WgpuSceneRendererV2 {
             }],
         });
         let (target, depth, depth_view, readback) = create_targets(&device, width, height, color_format);
+        let fallback_texture = create_gpu_texture(
+            &device,
+            &queue,
+            &RenderTextureV2 {
+                id: BLOCK_ATLAS_TEXTURE_ID_V2,
+                revision: 0,
+                width: 1,
+                height: 1,
+                color_space: RenderTextureColorSpaceV2::Srgb,
+                filter: RenderTextureFilterV2::Nearest,
+                rgba8: vec![255; 4],
+            },
+        );
         Ok(Self {
             device,
             queue,
@@ -520,6 +561,8 @@ impl WgpuSceneRendererV2 {
             pipelines: BTreeMap::new(),
             geometries: BTreeMap::new(),
             materials: BTreeMap::new(),
+            textures: BTreeMap::new(),
+            fallback_texture,
             resources: RenderResourceStoreV2::default(),
             submitted_frames: 0,
             uploaded_geometry_bytes: 0,
@@ -550,7 +593,10 @@ impl WgpuSceneRendererV2 {
         if batch.operations.iter().any(|operation| match operation {
             RenderResourceOperationV2::UpsertGeometry(value) => value.id == PARTICLE_GEOMETRY_ID_V2,
             RenderResourceOperationV2::RemoveGeometry(value) => *value == PARTICLE_GEOMETRY_ID_V2,
-            RenderResourceOperationV2::UpsertMaterial(_) | RenderResourceOperationV2::RemoveMaterial(_) => false,
+            RenderResourceOperationV2::UpsertMaterial(_)
+            | RenderResourceOperationV2::RemoveMaterial(_)
+            | RenderResourceOperationV2::UpsertTexture(_)
+            | RenderResourceOperationV2::RemoveTexture(_) => false,
         }) {
             return Err(RenderExtractionError::InvalidRecord(
                 "resource batch uses the renderer-reserved particle geometry id",
@@ -560,16 +606,43 @@ impl WgpuSceneRendererV2 {
         if !applied {
             return Ok(false);
         }
+        let atlas_changed = batch.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                RenderResourceOperationV2::UpsertTexture(value) if value.id == BLOCK_ATLAS_TEXTURE_ID_V2
+            ) || matches!(operation, RenderResourceOperationV2::RemoveTexture(id) if *id == BLOCK_ATLAS_TEXTURE_ID_V2)
+        });
         for operation in &batch.operations {
             match operation {
                 RenderResourceOperationV2::UpsertGeometry(value) => self.upload_geometry(value)?,
-                RenderResourceOperationV2::UpsertMaterial(value) => self.upload_material(value),
                 RenderResourceOperationV2::RemoveGeometry(id) => {
                     self.geometries.remove(id);
                 }
-                RenderResourceOperationV2::RemoveMaterial(id) => {
-                    self.materials.remove(id);
+                RenderResourceOperationV2::UpsertTexture(value) => {
+                    self.textures
+                        .insert(value.id, create_gpu_texture(&self.device, &self.queue, value));
                 }
+                RenderResourceOperationV2::RemoveTexture(id) => {
+                    self.textures.remove(id);
+                }
+                RenderResourceOperationV2::UpsertMaterial(_) | RenderResourceOperationV2::RemoveMaterial(_) => {}
+            }
+        }
+        if atlas_changed {
+            let materials = self.resources.materials().cloned().collect::<Vec<_>>();
+            for material in &materials {
+                self.upload_material(material);
+            }
+        } else {
+            for operation in &batch.operations {
+                if let RenderResourceOperationV2::UpsertMaterial(value) = operation {
+                    self.upload_material(value);
+                }
+            }
+        }
+        for operation in &batch.operations {
+            if let RenderResourceOperationV2::RemoveMaterial(id) = operation {
+                self.materials.remove(id);
             }
         }
         Ok(true)
@@ -602,7 +675,13 @@ impl WgpuSceneRendererV2 {
     }
 
     fn upload_material(&mut self, material: &RenderMaterialV2) {
-        let bytes = material_uniform_bytes(material);
+        let real_atlas = material.atlas_tile.is_some() && self.textures.contains_key(&BLOCK_ATLAS_TEXTURE_ID_V2);
+        let texture = if real_atlas {
+            self.textures.get(&BLOCK_ATLAS_TEXTURE_ID_V2).expect("atlas checked")
+        } else {
+            &self.fallback_texture
+        };
+        let bytes = material_uniform_bytes(material, real_atlas);
         let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Blockwild scene material uniform"),
             contents: &bytes,
@@ -611,10 +690,20 @@ impl WgpuSceneRendererV2 {
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blockwild scene material bind group"),
             layout: &self.material_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                },
+            ],
         });
         self.materials.insert(
             material.id,
@@ -1242,13 +1331,14 @@ fn create_pipeline(
 }
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         0 => Float32x3,
         1 => Float32x3,
         2 => Float32x4,
         3 => Float32x4,
         4 => Float32,
-        5 => Float32x2
+        5 => Float32x2,
+        6 => Float32
     ];
     wgpu::VertexBufferLayout {
         array_stride: GPU_VERTEX_STRIDE,
@@ -1259,11 +1349,11 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
 
 fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
     const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-        6 => Float32x4,
         7 => Float32x4,
         8 => Float32x4,
         9 => Float32x4,
-        10 => Float32x4
+        10 => Float32x4,
+        11 => Float32x4
     ];
     wgpu::VertexBufferLayout {
         array_stride: GPU_INSTANCE_STRIDE,
@@ -1307,11 +1397,15 @@ fn interleave_vertices(geometry: &RenderGeometryV2) -> Result<Vec<u8>, RenderExt
             let value = geometry.uvs.get(index * 2 + component).copied().unwrap_or_default();
             push_f32(&mut bytes, f32::from(value) / f32::from(u16::MAX));
         }
+        push_f32(
+            &mut bytes,
+            f32::from(geometry.occlusions.get(index).copied().unwrap_or(255)) / 255.0,
+        );
     }
     Ok(bytes)
 }
 
-fn material_uniform_bytes(material: &RenderMaterialV2) -> Vec<u8> {
+fn material_uniform_bytes(material: &RenderMaterialV2, real_atlas: bool) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(64);
     for value in material.base_color_rgba8 {
         push_f32(&mut bytes, f32::from(value) / 255.0);
@@ -1326,13 +1420,73 @@ fn material_uniform_bytes(material: &RenderMaterialV2) -> Vec<u8> {
     push_f32(&mut bytes, material.shading as u8 as f32);
     push_f32(&mut bytes, material.blend as u8 as f32);
     push_f32(&mut bytes, material.atlas_tile.map_or(-1.0, f32::from));
-    push_f32(&mut bytes, f32::from(u8::from(material.double_sided)));
+    push_f32(&mut bytes, f32::from(u8::from(real_atlas)));
     push_f32(&mut bytes, f32::from(u8::from(material.depth_write)));
     bytes
 }
 
+fn create_gpu_texture(device: &wgpu::Device, queue: &wgpu::Queue, source: &RenderTextureV2) -> GpuTexture {
+    let format = match source.color_space {
+        RenderTextureColorSpaceV2::Linear => wgpu::TextureFormat::Rgba8Unorm,
+        RenderTextureColorSpaceV2::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Blockwild extraction texture"),
+        size: wgpu::Extent3d {
+            width: source.width,
+            height: source.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &source.rgba8,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(source.width * 4),
+            rows_per_image: Some(source.height),
+        },
+        wgpu::Extent3d {
+            width: source.width,
+            height: source.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let filter = match source.filter {
+        RenderTextureFilterV2::Nearest => wgpu::FilterMode::Nearest,
+        RenderTextureFilterV2::Linear => wgpu::FilterMode::Linear,
+    };
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Blockwild extraction texture sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: filter,
+        min_filter: filter,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    GpuTexture {
+        _texture: texture,
+        view,
+        sampler,
+    }
+}
+
 fn camera_uniform_bytes(frame: &RenderFrameV2) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(160);
+    let mut bytes = Vec::with_capacity(240);
     let view_projection = camera_view_projection(frame);
     for value in view_projection {
         push_f32(&mut bytes, value);
@@ -1361,6 +1515,33 @@ fn camera_uniform_bytes(frame: &RenderFrameV2) -> Vec<u8> {
     push_f32(&mut bytes, frame.environment.underwater);
     push_f32(&mut bytes, frame.environment.cave_occlusion);
     push_f32(&mut bytes, frame.animation_time_micros as f32 / 1_000_000.0);
+    let lighting = frame.environment.lighting;
+    push_f32(&mut bytes, lighting.map_or(1.35, |value| value.block_intensity));
+    push_f32(
+        &mut bytes,
+        lighting.map_or(
+            if frame.environment.underwater > 0.5 {
+                0.035
+            } else {
+                0.026
+            },
+            |value| value.minimum_ambient,
+        ),
+    );
+    push_f32(&mut bytes, lighting.map_or(0.0, |value| value.water_phase));
+    push_f32(&mut bytes, 0.0);
+    for light in [lighting.map(|value| value.held), lighting.map(|value| value.machine)] {
+        let position = light.map_or([0.0; 3], |value| value.position);
+        for value in position {
+            push_f32(&mut bytes, value);
+        }
+        push_f32(&mut bytes, light.map_or(0.0, |value| value.radius));
+        let color = light.map_or([0; 3], |value| value.color_rgb8);
+        for value in color {
+            push_f32(&mut bytes, f32::from(value) / 255.0);
+        }
+        push_f32(&mut bytes, light.map_or(0.0, |value| value.intensity));
+    }
     bytes
 }
 
@@ -1593,7 +1774,9 @@ const fn padded_bytes_per_row(width: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RenderBoundsV2, RenderGeometryKindV2, RenderTransformV2};
+    use crate::{
+        RenderBoundsV2, RenderGeometryKindV2, RenderLightingExtensionV2, RenderPointLightV2, RenderTransformV2,
+    };
 
     #[test]
     fn matrix_hierarchy_preserves_parent_translation() {
@@ -1642,6 +1825,49 @@ mod tests {
             indices: vec![0],
         };
         assert_eq!(interleave_vertices(&geometry).unwrap().len() as u64, GPU_VERTEX_STRIDE);
+    }
+
+    #[test]
+    fn camera_uniform_packs_exact_dynamic_terrain_lighting() {
+        let (_, source) = canonical_integrated_scene_v2(640, 360).unwrap();
+        let mut environment = source.environment;
+        environment.lighting = Some(RenderLightingExtensionV2 {
+            block_intensity: 1.35,
+            minimum_ambient: 0.026,
+            water_phase: 0.375,
+            held: RenderPointLightV2 {
+                position: [1.0, 2.0, 3.0],
+                color_rgb8: [255, 116, 40],
+                intensity: 0.72,
+                radius: 9.0,
+            },
+            machine: RenderPointLightV2 {
+                position: [-4.0, 5.0, 6.0],
+                color_rgb8: [255, 133, 49],
+                intensity: 0.42,
+                radius: 7.5,
+            },
+        });
+        let frame = RenderFrameV2::create(RenderFrameInputV2 {
+            epoch: source.epoch,
+            frame_sequence: source.frame_sequence + 1,
+            simulation_tick: source.simulation_tick,
+            animation_time_micros: source.animation_time_micros,
+            resource_revision: source.resource_revision,
+            camera: source.camera,
+            environment,
+            instances: source.instances,
+            particles: source.particles,
+        })
+        .unwrap();
+        let bytes = camera_uniform_bytes(&frame);
+        let read = |offset: usize| f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+        assert_eq!(bytes.len(), 240);
+        assert_eq!([read(160), read(164), read(168)], [1.35, 0.026, 0.375]);
+        assert_eq!([read(176), read(180), read(184), read(188)], [1.0, 2.0, 3.0, 9.0]);
+        assert_eq!([read(208), read(212), read(216), read(220)], [-4.0, 5.0, 6.0, 7.5]);
+        assert!((read(204) - 0.72).abs() < f32::EPSILON);
+        assert!((read(236) - 0.42).abs() < f32::EPSILON);
     }
 
     #[test]

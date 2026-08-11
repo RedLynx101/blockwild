@@ -419,7 +419,10 @@ fn operation_resource_id(operation: &RenderResourceOperationV2) -> u64 {
     match operation {
         RenderResourceOperationV2::UpsertMaterial(value) => value.id.0,
         RenderResourceOperationV2::UpsertGeometry(value) => value.id.0,
-        RenderResourceOperationV2::RemoveMaterial(value) | RenderResourceOperationV2::RemoveGeometry(value) => value.0,
+        RenderResourceOperationV2::UpsertTexture(value) => value.id.0,
+        RenderResourceOperationV2::RemoveMaterial(value)
+        | RenderResourceOperationV2::RemoveGeometry(value)
+        | RenderResourceOperationV2::RemoveTexture(value) => value.0,
     }
 }
 
@@ -454,6 +457,7 @@ fn day_environment() -> RenderEnvironmentV2 {
         fog_far: 90.0,
         underwater: 0.0,
         cave_occlusion: 0.0,
+        lighting: None,
     }
 }
 
@@ -790,6 +794,7 @@ fn cave_scene(
         fog_far: 44.0,
         underwater: 0.0,
         cave_occlusion: 0.52,
+        lighting: None,
     };
     builder.finish(
         "living-cave",
@@ -916,6 +921,7 @@ fn underwater_scene(
         fog_far: 32.0,
         underwater: 0.76,
         cave_occlusion: 0.05,
+        lighting: None,
     };
     builder.finish("underwater-ice", "Underwater fog, ice-water adjacency, kelp continuity, bubbles, aquatic creatures, caustic and glass-like materials.", camera(viewport, [0.0, 2.9, 11.2], -0.11), environment, 1_750_000)
 }
@@ -1238,6 +1244,7 @@ fn celestial_scene(
         fog_far: 110.0,
         underwater: 0.0,
         cave_occlusion: 0.0,
+        lighting: None,
     };
     builder.finish("celestial-effects", "Sky and celestial shading, flying dragons, projectile and item domains, particles, animation and additive emission.", camera(viewport, [0.0, 3.3, 11.8], -0.12), environment, 2_100_000)
 }

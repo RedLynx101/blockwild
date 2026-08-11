@@ -10,7 +10,7 @@ use blockwild_types::CanonicalHash;
 
 use crate::{
     RenderBlendModeV2, RenderExtractionError, RenderFrameV2, RenderGeometryV2, RenderMaterialV2, RenderResourceBatchV2,
-    RenderResourceId, RenderResourceOperationV2,
+    RenderResourceId, RenderResourceOperationV2, RenderTextureV2,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -20,7 +20,9 @@ pub struct RenderStoreDiagnosticsV2 {
     pub last_frame_sequence: u64,
     pub material_count: u32,
     pub geometry_count: u32,
+    pub texture_count: u32,
     pub geometry_bytes: u64,
+    pub texture_bytes: u64,
     pub accepted_resource_batches: u64,
     pub duplicate_resource_batches: u64,
     pub accepted_frames: u64,
@@ -51,6 +53,7 @@ pub struct RenderResourceStoreV2 {
     last_frame_sequence: u64,
     materials: BTreeMap<RenderResourceId, RenderMaterialV2>,
     geometries: BTreeMap<RenderResourceId, RenderGeometryV2>,
+    textures: BTreeMap<RenderResourceId, RenderTextureV2>,
     diagnostics: RenderStoreDiagnosticsV2,
 }
 
@@ -66,6 +69,15 @@ impl RenderResourceStoreV2 {
     }
 
     #[must_use]
+    pub fn texture(&self, id: RenderResourceId) -> Option<&RenderTextureV2> {
+        self.textures.get(&id)
+    }
+
+    pub fn materials(&self) -> impl Iterator<Item = &RenderMaterialV2> {
+        self.materials.values()
+    }
+
+    #[must_use]
     pub const fn diagnostics(&self) -> RenderStoreDiagnosticsV2 {
         self.diagnostics
     }
@@ -77,6 +89,7 @@ impl RenderResourceStoreV2 {
         self.last_frame_sequence = 0;
         self.materials.clear();
         self.geometries.clear();
+        self.textures.clear();
         self.refresh_diagnostics();
     }
 
@@ -123,6 +136,12 @@ impl RenderResourceStoreV2 {
                 RenderResourceOperationV2::RemoveGeometry(id) => {
                     self.geometries.remove(id);
                 }
+                RenderResourceOperationV2::UpsertTexture(value) => {
+                    self.textures.insert(value.id, value.clone());
+                }
+                RenderResourceOperationV2::RemoveTexture(id) => {
+                    self.textures.remove(id);
+                }
             }
         }
         self.resource_revision = batch.revision;
@@ -135,10 +154,11 @@ impl RenderResourceStoreV2 {
     fn preflight(&self, batch: &RenderResourceBatchV2) -> Result<(), RenderExtractionError> {
         let mut material_ids = self.materials.keys().copied().collect::<BTreeSet<_>>();
         let mut geometry_ids = self.geometries.keys().copied().collect::<BTreeSet<_>>();
+        let mut texture_ids = self.textures.keys().copied().collect::<BTreeSet<_>>();
         for operation in &batch.operations {
             match operation {
                 RenderResourceOperationV2::UpsertMaterial(value) => {
-                    if geometry_ids.contains(&value.id) {
+                    if geometry_ids.contains(&value.id) || texture_ids.contains(&value.id) {
                         return Err(RenderExtractionError::ResourceKindConflict(value.id.0));
                     }
                     if self
@@ -151,7 +171,7 @@ impl RenderResourceStoreV2 {
                     material_ids.insert(value.id);
                 }
                 RenderResourceOperationV2::UpsertGeometry(value) => {
-                    if material_ids.contains(&value.id) {
+                    if material_ids.contains(&value.id) || texture_ids.contains(&value.id) {
                         return Err(RenderExtractionError::ResourceKindConflict(value.id.0));
                     }
                     if self
@@ -169,9 +189,28 @@ impl RenderResourceStoreV2 {
                 RenderResourceOperationV2::RemoveGeometry(id) => {
                     geometry_ids.remove(id);
                 }
+                RenderResourceOperationV2::UpsertTexture(value) => {
+                    if material_ids.contains(&value.id) || geometry_ids.contains(&value.id) {
+                        return Err(RenderExtractionError::ResourceKindConflict(value.id.0));
+                    }
+                    if self
+                        .textures
+                        .get(&value.id)
+                        .is_some_and(|current| value.revision <= current.revision)
+                    {
+                        return Err(RenderExtractionError::ResourceRevisionConflict(value.id.0));
+                    }
+                    texture_ids.insert(value.id);
+                }
+                RenderResourceOperationV2::RemoveTexture(id) => {
+                    texture_ids.remove(id);
+                }
             }
         }
-        if material_ids.intersection(&geometry_ids).next().is_some() {
+        if material_ids.intersection(&geometry_ids).next().is_some()
+            || material_ids.intersection(&texture_ids).next().is_some()
+            || geometry_ids.intersection(&texture_ids).next().is_some()
+        {
             return Err(RenderExtractionError::InvalidRecord("resource id spaces overlap"));
         }
         Ok(())
@@ -233,8 +272,14 @@ impl RenderResourceStoreV2 {
         self.diagnostics.last_frame_sequence = self.last_frame_sequence;
         self.diagnostics.material_count = u32::try_from(self.materials.len()).unwrap_or(u32::MAX);
         self.diagnostics.geometry_count = u32::try_from(self.geometries.len()).unwrap_or(u32::MAX);
+        self.diagnostics.texture_count = u32::try_from(self.textures.len()).unwrap_or(u32::MAX);
         self.diagnostics.geometry_bytes = self
             .geometries
+            .values()
+            .map(|value| u64::try_from(value.byte_length()).unwrap_or(u64::MAX))
+            .sum();
+        self.diagnostics.texture_bytes = self
+            .textures
             .values()
             .map(|value| u64::try_from(value.byte_length()).unwrap_or(u64::MAX))
             .sum();
@@ -245,8 +290,9 @@ impl RenderResourceStoreV2 {
 mod tests {
     use super::*;
     use crate::{
-        RenderBoundsV2, RenderCameraV2, RenderEnvironmentV2, RenderFrameInputV2, RenderGeometryKindV2,
-        RenderInstanceDomainV2, RenderInstanceV2, RenderShadingModelV2, RenderTransformV2,
+        BLOCK_ATLAS_TEXTURE_ID_V2, RenderBoundsV2, RenderCameraV2, RenderEnvironmentV2, RenderFrameInputV2,
+        RenderGeometryKindV2, RenderInstanceDomainV2, RenderInstanceV2, RenderShadingModelV2,
+        RenderTextureColorSpaceV2, RenderTextureFilterV2, RenderTransformV2,
     };
 
     fn material(id: u64, revision: u32, blend: RenderBlendModeV2) -> RenderMaterialV2 {
@@ -314,6 +360,7 @@ mod tests {
                 fog_far: 256.0,
                 underwater: 0.0,
                 cave_occlusion: 0.0,
+                lighting: None,
             },
             instances: vec![RenderInstanceV2 {
                 stable_id: 11,
@@ -330,6 +377,29 @@ mod tests {
             particles: Vec::new(),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn textures_are_revisioned_owned_resources() {
+        let mut store = RenderResourceStoreV2::default();
+        let texture = RenderTextureV2 {
+            id: BLOCK_ATLAS_TEXTURE_ID_V2,
+            revision: 1,
+            width: 1,
+            height: 1,
+            color_space: RenderTextureColorSpaceV2::Srgb,
+            filter: RenderTextureFilterV2::Nearest,
+            rgba8: vec![10, 20, 30, 255],
+        };
+        store
+            .apply_resource_batch(
+                &RenderResourceBatchV2::create(1, 1, vec![RenderResourceOperationV2::UpsertTexture(texture.clone())])
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(store.texture(BLOCK_ATLAS_TEXTURE_ID_V2), Some(&texture));
+        assert_eq!(store.diagnostics().texture_count, 1);
+        assert_eq!(store.diagnostics().texture_bytes, 4);
     }
 
     #[test]

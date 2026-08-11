@@ -5,13 +5,15 @@ use blockwild_types::CanonicalHash;
 use crate::{
     RENDER_EXTRACTION_SCHEMA_V2, RenderBlendModeV2, RenderBoundsV2, RenderCameraV2, RenderEnvironmentV2,
     RenderExtractionError, RenderFrameInputV2, RenderFrameV2, RenderGeometryKindV2, RenderGeometryV2,
-    RenderInstanceDomainV2, RenderInstanceV2, RenderMaterialV2, RenderParticleV2, RenderResourceBatchV2,
-    RenderResourceId, RenderResourceOperationV2, RenderShadingModelV2, RenderTransformV2,
+    RenderInstanceDomainV2, RenderInstanceV2, RenderLightingExtensionV2, RenderMaterialV2, RenderParticleV2,
+    RenderPointLightV2, RenderResourceBatchV2, RenderResourceId, RenderResourceOperationV2, RenderShadingModelV2,
+    RenderTextureColorSpaceV2, RenderTextureFilterV2, RenderTextureV2, RenderTransformV2,
 };
 
 const RESOURCE_MAGIC: [u8; 4] = *b"BWRD";
 const FRAME_MAGIC: [u8; 4] = *b"BWRF";
 const MAX_WIRE_BYTES: usize = 256 * 1024 * 1024;
+const FRAME_WIRE_LIGHTING_EXTENSION_V2: u16 = 1;
 
 pub fn encode_render_resource_batch_v2(value: &RenderResourceBatchV2) -> Result<Vec<u8>, RenderExtractionError> {
     value.validate()?;
@@ -39,6 +41,14 @@ pub fn encode_render_resource_batch_v2(value: &RenderResourceBatchV2) -> Result<
             }
             RenderResourceOperationV2::RemoveGeometry(id) => {
                 writer.u8(3);
+                writer.u64(id.0);
+            }
+            RenderResourceOperationV2::UpsertTexture(texture) => {
+                writer.u8(4);
+                writer.texture(texture)?;
+            }
+            RenderResourceOperationV2::RemoveTexture(id) => {
+                writer.u8(5);
                 writer.u64(id.0);
             }
         }
@@ -69,6 +79,8 @@ pub fn decode_render_resource_batch_v2(bytes: &[u8]) -> Result<RenderResourceBat
             1 => RenderResourceOperationV2::UpsertGeometry(reader.geometry()?),
             2 => RenderResourceOperationV2::RemoveMaterial(RenderResourceId(reader.u64()?)),
             3 => RenderResourceOperationV2::RemoveGeometry(RenderResourceId(reader.u64()?)),
+            4 => RenderResourceOperationV2::UpsertTexture(reader.texture()?),
+            5 => RenderResourceOperationV2::RemoveTexture(RenderResourceId(reader.u64()?)),
             _ => {
                 return Err(RenderExtractionError::InvalidRecord(
                     "unknown render resource operation",
@@ -89,7 +101,7 @@ pub fn encode_render_frame_v2(value: &RenderFrameV2) -> Result<Vec<u8>, RenderEx
     let mut writer = Writer::new();
     writer.bytes_raw(&FRAME_MAGIC);
     writer.u16(value.schema);
-    writer.u16(0);
+    writer.u16(u16::from(value.environment.lighting.is_some()) * FRAME_WIRE_LIGHTING_EXTENSION_V2);
     writer.u64(value.epoch);
     writer.u64(value.frame_sequence);
     writer.u64(value.simulation_tick);
@@ -98,6 +110,9 @@ pub fn encode_render_frame_v2(value: &RenderFrameV2) -> Result<Vec<u8>, RenderEx
     writer.hash(value.frame_hash);
     writer.camera(value.camera);
     writer.environment(value.environment);
+    if let Some(lighting) = value.environment.lighting {
+        writer.lighting(lighting);
+    }
     writer.u32(length_u32(value.instances.len(), "instance count")?);
     for instance in &value.instances {
         writer.instance(instance);
@@ -116,10 +131,9 @@ pub fn decode_render_frame_v2(bytes: &[u8]) -> Result<RenderFrameV2, RenderExtra
     if schema != RENDER_EXTRACTION_SCHEMA_V2 {
         return Err(RenderExtractionError::UnsupportedSchema(schema));
     }
-    if reader.u16()? != 0 {
-        return Err(RenderExtractionError::InvalidRecord(
-            "frame wire reserved bits are nonzero",
-        ));
+    let wire_flags = reader.u16()?;
+    if wire_flags & !FRAME_WIRE_LIGHTING_EXTENSION_V2 != 0 {
+        return Err(RenderExtractionError::InvalidRecord("frame wire flags are invalid"));
     }
     let epoch = reader.u64()?;
     let frame_sequence = reader.u64()?;
@@ -128,7 +142,10 @@ pub fn decode_render_frame_v2(bytes: &[u8]) -> Result<RenderFrameV2, RenderExtra
     let resource_revision = reader.u64()?;
     let expected_hash = reader.hash()?;
     let camera = reader.camera()?;
-    let environment = reader.environment()?;
+    let mut environment = reader.environment()?;
+    if wire_flags & FRAME_WIRE_LIGHTING_EXTENSION_V2 != 0 {
+        environment.lighting = Some(reader.lighting()?);
+    }
     let instance_count = reader.length("instance count")?;
     let mut instances = Vec::with_capacity(instance_count);
     for _ in 0..instance_count {
@@ -243,6 +260,17 @@ impl Writer {
         Ok(())
     }
 
+    fn texture(&mut self, value: &RenderTextureV2) -> Result<(), RenderExtractionError> {
+        self.u64(value.id.0);
+        self.u32(value.revision);
+        self.u32(value.width);
+        self.u32(value.height);
+        self.u8(value.color_space as u8);
+        self.u8(value.filter as u8);
+        self.u16(0);
+        self.u8s(&value.rgba8)
+    }
+
     fn f32s(&mut self, values: &[f32]) -> Result<(), RenderExtractionError> {
         self.u32(length_u32(values.len(), "f32 stream length")?);
         for value in values {
@@ -304,6 +332,25 @@ impl Writer {
         self.f32(value.fog_far);
         self.f32(value.underwater);
         self.f32(value.cave_occlusion);
+    }
+
+    fn point_light(&mut self, value: RenderPointLightV2) {
+        for component in value.position {
+            self.f32(component);
+        }
+        self.bytes_raw(&value.color_rgb8);
+        self.u8(0);
+        self.f32(value.intensity);
+        self.f32(value.radius);
+    }
+
+    fn lighting(&mut self, value: RenderLightingExtensionV2) {
+        self.f32(value.block_intensity);
+        self.f32(value.minimum_ambient);
+        self.f32(value.water_phase);
+        self.f32(0.0);
+        self.point_light(value.held);
+        self.point_light(value.machine);
     }
 
     fn transform(&mut self, value: RenderTransformV2) {
@@ -502,6 +549,37 @@ impl<'a> Reader<'a> {
         })
     }
 
+    fn texture(&mut self) -> Result<RenderTextureV2, RenderExtractionError> {
+        let id = RenderResourceId(self.u64()?);
+        let revision = self.u32()?;
+        let width = self.u32()?;
+        let height = self.u32()?;
+        let color_space = match self.u8()? {
+            0 => RenderTextureColorSpaceV2::Linear,
+            1 => RenderTextureColorSpaceV2::Srgb,
+            _ => return Err(RenderExtractionError::InvalidRecord("unknown texture color space")),
+        };
+        let filter = match self.u8()? {
+            0 => RenderTextureFilterV2::Nearest,
+            1 => RenderTextureFilterV2::Linear,
+            _ => return Err(RenderExtractionError::InvalidRecord("unknown texture filter")),
+        };
+        if self.u16()? != 0 {
+            return Err(RenderExtractionError::InvalidRecord(
+                "texture reserved bits are nonzero",
+            ));
+        }
+        Ok(RenderTextureV2 {
+            id,
+            revision,
+            width,
+            height,
+            color_space,
+            filter,
+            rgba8: self.u8s()?,
+        })
+    }
+
     fn f32s(&mut self) -> Result<Vec<f32>, RenderExtractionError> {
         let length = self.length("f32 stream length")?;
         (0..length).map(|_| self.f32()).collect()
@@ -551,6 +629,41 @@ impl<'a> Reader<'a> {
             fog_far: self.f32()?,
             underwater: self.f32()?,
             cave_occlusion: self.f32()?,
+            lighting: None,
+        })
+    }
+
+    fn point_light(&mut self) -> Result<RenderPointLightV2, RenderExtractionError> {
+        let position = [self.f32()?, self.f32()?, self.f32()?];
+        let color_rgb8 = self.take(3)?.try_into().expect("exact length");
+        if self.u8()? != 0 {
+            return Err(RenderExtractionError::InvalidRecord(
+                "point light reserved byte is nonzero",
+            ));
+        }
+        Ok(RenderPointLightV2 {
+            position,
+            color_rgb8,
+            intensity: self.f32()?,
+            radius: self.f32()?,
+        })
+    }
+
+    fn lighting(&mut self) -> Result<RenderLightingExtensionV2, RenderExtractionError> {
+        let block_intensity = self.f32()?;
+        let minimum_ambient = self.f32()?;
+        let water_phase = self.f32()?;
+        if self.f32()? != 0.0 {
+            return Err(RenderExtractionError::InvalidRecord(
+                "lighting extension reserved value is nonzero",
+            ));
+        }
+        Ok(RenderLightingExtensionV2 {
+            block_intensity,
+            minimum_ambient,
+            water_phase,
+            held: self.point_light()?,
+            machine: self.point_light()?,
         })
     }
 
@@ -640,6 +753,18 @@ mod tests {
         }
     }
 
+    fn texture() -> RenderTextureV2 {
+        RenderTextureV2 {
+            id: crate::BLOCK_ATLAS_TEXTURE_ID_V2,
+            revision: 1,
+            width: 2,
+            height: 1,
+            color_space: RenderTextureColorSpaceV2::Srgb,
+            filter: RenderTextureFilterV2::Nearest,
+            rgba8: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        }
+    }
+
     fn frame() -> RenderFrameV2 {
         RenderFrameV2::create(RenderFrameInputV2 {
             epoch: 1,
@@ -667,6 +792,7 @@ mod tests {
                 fog_far: 100.0,
                 underwater: 0.0,
                 cave_occlusion: 0.0,
+                lighting: None,
             },
             instances: vec![RenderInstanceV2 {
                 stable_id: 8,
@@ -702,6 +828,7 @@ mod tests {
             7,
             vec![
                 RenderResourceOperationV2::UpsertMaterial(material()),
+                RenderResourceOperationV2::UpsertTexture(texture()),
                 RenderResourceOperationV2::RemoveGeometry(RenderResourceId(91)),
             ],
         )
@@ -720,6 +847,47 @@ mod tests {
         let bytes = encode_render_frame_v2(&expected).unwrap();
         let actual = decode_render_frame_v2(&bytes).unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn optional_lighting_extension_round_trips_exactly() {
+        let base = frame();
+        let mut environment = base.environment;
+        environment.lighting = Some(RenderLightingExtensionV2 {
+            block_intensity: 1.35,
+            minimum_ambient: 0.026,
+            water_phase: 0.375,
+            held: RenderPointLightV2 {
+                position: [1.0, 2.0, 3.0],
+                color_rgb8: [255, 116, 40],
+                intensity: 0.72,
+                radius: 9.0,
+            },
+            machine: RenderPointLightV2 {
+                position: [-4.0, 5.0, 6.0],
+                color_rgb8: [255, 133, 49],
+                intensity: 0.42,
+                radius: 7.5,
+            },
+        });
+        let expected = RenderFrameV2::create(RenderFrameInputV2 {
+            epoch: base.epoch,
+            frame_sequence: base.frame_sequence + 1,
+            simulation_tick: base.simulation_tick,
+            animation_time_micros: base.animation_time_micros,
+            resource_revision: base.resource_revision,
+            camera: base.camera,
+            environment,
+            instances: base.instances,
+            particles: base.particles,
+        })
+        .unwrap();
+        let bytes = encode_render_frame_v2(&expected).unwrap();
+        assert_eq!(
+            u16::from_le_bytes([bytes[6], bytes[7]]),
+            FRAME_WIRE_LIGHTING_EXTENSION_V2
+        );
+        assert_eq!(decode_render_frame_v2(&bytes).unwrap(), expected);
     }
 
     #[test]

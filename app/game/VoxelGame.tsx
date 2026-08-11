@@ -67,6 +67,12 @@ import {
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
 import { BASIC_RENDER_DISTANCE_ENABLED } from "./performance";
+import {
+  CLOSED_RENDERER_PROMOTION_GATES_R11,
+  RendererCutoverRuntimeR11,
+  RendererShellExtractionPublisherR11,
+  rendererRequestFromSearchR11,
+} from "./renderer-cutover-r11";
 import { WHEAT_MILL_CYCLE_SECONDS } from "./wheat-mill";
 import { createBlockAtlas } from "./world";
 import {
@@ -1968,6 +1974,7 @@ const RESOURCE_ASSET_AUDIT_ITEMS = new Set<ItemCode>([
 
 export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: boolean }>) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rendererShadowCanvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VoxelEngine | null>(null);
   const worldStorageRef = useRef<WorldStorage | null>(null);
   const characterStoreRef = useRef<CharacterProfileStore | null>(null);
@@ -2285,7 +2292,25 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const rendererShadowCanvas = rendererShadowCanvasRef.current;
+    if (!canvas || !rendererShadowCanvas) return;
+    const rendererRequest = agentMode ? "three" : rendererRequestFromSearchR11(window.location.search);
+    const rendererEpoch = BigInt(Date.now()) * BigInt(1_000) + BigInt(Math.floor(performance.now()) % 1_000);
+    const rendererCutover = new RendererCutoverRuntimeR11({
+      request: rendererRequest,
+      canvas: rendererShadowCanvas,
+      canvasRole: "shadow",
+      epoch: rendererEpoch,
+      width: Math.max(1, canvas.clientWidth || canvas.width),
+      height: Math.max(1, canvas.clientHeight || canvas.height),
+      allowWgpuShadow: rendererRequest === "wgpu-shadow",
+      allowWgpuPrimary: false,
+      promotionGates: CLOSED_RENDERER_PROMOTION_GATES_R11,
+    });
+    const renderExtraction = rendererCutover.needsExtraction
+      ? new RendererShellExtractionPublisherR11(rendererCutover, rendererEpoch)
+      : null;
+    void rendererCutover.start();
     let browserStorage: Storage | null = null;
     try { browserStorage = window.localStorage; } catch { /* WorldStorage reports browser storage unavailability. */ }
     const storage = new WorldStorage(browserStorage);
@@ -2368,8 +2393,13 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           });
         },
         onRendererState: (lost) => setWebglError(lost),
-      }, settings, { agentMode, agentTestAdmin: agentMode && new URLSearchParams(window.location.search).get("testAdmin") === "1" });
+      }, settings, {
+        agentMode,
+        agentTestAdmin: agentMode && new URLSearchParams(window.location.search).get("testAdmin") === "1",
+        renderExtraction: renderExtraction ?? undefined,
+      });
     } catch {
+      rendererCutover.stop();
       window.queueMicrotask(() => setWebglError(true));
       return;
     }
@@ -2385,6 +2415,9 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       advanceTime?: (milliseconds: number) => Promise<void>;
       blockwildAgent?: AgentBrowserBridge;
       set_game_key?: (code: string, down: boolean) => void;
+      render_renderer_cutover_to_text?: () => string;
+      request_renderer_recovery?: (reason?: string) => boolean;
+      freeze_renderer_evidence?: (frozen: boolean) => number | null;
     };
     automationWindow.render_game_to_text = () => engine.renderGameToText();
     automationWindow.set_game_key = (code, down) => engine.setVirtualKey(code, down);
@@ -2392,6 +2425,14 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       engine.advanceSimulation(milliseconds);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     };
+    automationWindow.render_renderer_cutover_to_text = () => JSON.stringify({
+      ...rendererCutover.diagnostics(),
+      producer: renderExtraction?.diagnostics() ?? null,
+      engineErrors: engine.renderExtractionErrors,
+      engineLastError: engine.renderExtractionLastError,
+    }, (_, value) => typeof value === "bigint" ? value.toString() : value);
+    automationWindow.request_renderer_recovery = (reason) => rendererCutover.requestRecovery(reason);
+    automationWindow.freeze_renderer_evidence = (frozen) => engine.setRendererEvidenceFreezeR11(frozen);
     if (agentMode) automationWindow.blockwildAgent = createAgentBrowserBridge({
       getStatus: () => {
         const state = engine.getMultiplayerState();
@@ -2533,6 +2574,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       window.clearTimeout(toastTimerRef.current);
       if (treeFallTimer !== undefined) window.clearTimeout(treeFallTimer);
       engine.dispose();
+      rendererCutover.stop();
       engineRef.current = null;
       worldStorageRef.current = null;
       characterStoreRef.current = null;
@@ -2540,6 +2582,9 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       delete automationWindow.advanceTime;
       delete automationWindow.blockwildAgent;
       delete automationWindow.set_game_key;
+      delete automationWindow.render_renderer_cutover_to_text;
+      delete automationWindow.request_renderer_recovery;
+      delete automationWindow.freeze_renderer_evidence;
     };
     // The engine owns its listeners for the lifetime of the canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4214,6 +4259,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       }}
     >
       <canvas ref={canvasRef} className="game-canvas" aria-label="Blockwild endless 3D game world" />
+      <canvas ref={rendererShadowCanvasRef} hidden aria-hidden="true" data-testid="renderer-wgpu-shadow-canvas" />
       <div className="sky-vignette" aria-hidden="true" />
       {agentMode && <aside className="agent-client-badge" aria-label="Lightweight companion client"><strong>COMPANION DRONE</strong><span>SEMANTIC CLIENT · RENDER 4 · SIM 3</span><small>Use <code>window.blockwildAgent</code> through the repository skill. Host approval is required.</small></aside>}
 

@@ -56,6 +56,7 @@ test("device recovery replays durable resource pages and not stale frame history
   fake.emit({ type: "replay-required", epoch: frame.epoch, reason: "device recreated" });
   assert.equal(fake.commands.filter((command) => command.type === "resources").length, 2);
   assert.equal(service.snapshot().replayedResourceBytes, 1097);
+  assert.equal(service.snapshot().lastError, null);
 });
 
 test("explicit recovery and resize commands preserve one deterministic replay source", async () => {
@@ -84,13 +85,33 @@ test("published renderer selection is content-addressed and rejects path substit
       module: `${hash}/renderer.js`, wasm: `${hash}/renderer_bg.wasm`,
       resourceFixture: `${hash}/canonical-resources.bwrd`, frameFixture: `${hash}/canonical-frame.bwrf`,
       liveResourceFixture: `${hash}/live-resources.bwrd`, liveFrameFixture: `${hash}/live-frame.bwrf`,
+      visualMatrix: {
+        manifest: `${hash}/matrix.json`,
+        scenes: Array.from({ length: 7 }, (_, index) => ({
+          name: `scene-${index}`,
+          purpose: `Scene ${index}`,
+          resourceFixture: `${hash}/scene-${index}-resources.bwrd`,
+          frameFixture: `${hash}/scene-${index}-frame.bwrf`,
+        })),
+      },
     },
   };
   const selected = await loadRustRendererArtifactR11({ fetcher: async () => Response.json(manifest) });
   assert.equal(selected.moduleUrl, `/renderer/${hash}/renderer.js`);
+  assert.equal(selected.visualMatrixScenes.length, 7);
   await assert.rejects(
     loadRustRendererArtifactR11({ fetcher: async () => Response.json({ ...manifest, runtime: { ...manifest.runtime, wasm: "../evil.wasm" } }) }),
     /content-addressed safely/,
+  );
+  const duplicatedScenes = manifest.runtime.visualMatrix.scenes.map((scene, index) => index === 6
+    ? { ...scene, name: manifest.runtime.visualMatrix.scenes[0]!.name }
+    : scene);
+  await assert.rejects(
+    loadRustRendererArtifactR11({ fetcher: async () => Response.json({
+      ...manifest,
+      runtime: { ...manifest.runtime, visualMatrix: { ...manifest.runtime.visualMatrix, scenes: duplicatedScenes } },
+    }) }),
+    /duplicated/,
   );
 });
 

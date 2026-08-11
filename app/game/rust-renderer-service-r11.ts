@@ -54,6 +54,13 @@ export type RustRendererArtifactR11 = Readonly<{
   frameFixtureUrl: string;
   liveResourceFixtureUrl: string;
   liveFrameFixtureUrl: string;
+  visualMatrixManifestUrl: string;
+  visualMatrixScenes: readonly Readonly<{
+    name: string;
+    purpose: string;
+    resourceFixtureUrl: string;
+    frameFixtureUrl: string;
+  }>[];
 }>;
 
 export async function loadRustRendererArtifactR11(options: Readonly<{
@@ -71,13 +78,31 @@ export async function loadRustRendererArtifactR11(options: Readonly<{
   if (runtime?.schema !== 1 || runtime.backend !== "wgpu-webgpu" || typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)) {
     throw new TypeError("renderer manifest has no valid WebGPU runtime");
   }
-  const pathValue = (key: string) => {
-    const value = runtime[key];
+  const safePathValue = (value: unknown, key: string) => {
     if (typeof value !== "string" || !value.startsWith(`${hash}/`) || value.includes("\\") || value.split("/").some((part) => !part || part === "." || part === "..")) {
       throw new TypeError(`renderer manifest ${key} is not content-addressed safely`);
     }
     return `${base}/${value}`;
   };
+  const pathValue = (key: string) => safePathValue(runtime[key], key);
+  const visualMatrix = runtime.visualMatrix as Record<string, unknown> | undefined;
+  const rawScenes = visualMatrix?.scenes;
+  if (!Array.isArray(rawScenes) || rawScenes.length !== 7) throw new TypeError("renderer manifest visualMatrix is incomplete");
+  const sceneNames = new Set<string>();
+  const visualMatrixScenes = rawScenes.map((raw, index) => {
+    const scene = raw as Record<string, unknown>;
+    if (typeof scene.name !== "string" || !/^[a-z0-9-]+$/u.test(scene.name) || typeof scene.purpose !== "string") {
+      throw new TypeError(`renderer manifest visualMatrix scene ${index} is invalid`);
+    }
+    if (sceneNames.has(scene.name)) throw new TypeError(`renderer manifest visualMatrix scene ${scene.name} is duplicated`);
+    sceneNames.add(scene.name);
+    return Object.freeze({
+      name: scene.name,
+      purpose: scene.purpose,
+      resourceFixtureUrl: safePathValue(scene.resourceFixture, `visualMatrix.scenes[${index}].resourceFixture`),
+      frameFixtureUrl: safePathValue(scene.frameFixture, `visualMatrix.scenes[${index}].frameFixture`),
+    });
+  });
   return Object.freeze({
     hash,
     moduleUrl: pathValue("module"),
@@ -86,6 +111,8 @@ export async function loadRustRendererArtifactR11(options: Readonly<{
     frameFixtureUrl: pathValue("frameFixture"),
     liveResourceFixtureUrl: pathValue("liveResourceFixture"),
     liveFrameFixtureUrl: pathValue("liveFrameFixture"),
+    visualMatrixManifestUrl: safePathValue(visualMatrix?.manifest, "visualMatrix.manifest"),
+    visualMatrixScenes: Object.freeze(visualMatrixScenes),
   });
 }
 
@@ -209,6 +236,7 @@ export class RustRendererServiceR11 {
       this.inFlight = false; this.diagnostics.state = "recovering"; this.diagnostics.lastError = event.reason; this.send({ type: "recover" });
     } else if (event.type === "replay-required") {
       this.diagnostics.state = "ready";
+      this.diagnostics.lastError = null;
       this.sentResourceRevision = BigInt(0);
       this.sendUnsentResources(true);
       this.flush();

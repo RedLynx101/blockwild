@@ -22,7 +22,7 @@
     "app/game/creature-lod-batcher.ts": { "family": "creature instance culling and LOD", "cases": ["overworld-day", "night-weather"], "state": "wgpu-culling-covered-lod-policy-pending" },
     "app/game/creature-rarity-visuals.ts": { "family": "rare creature emission and tint", "cases": ["night-weather", "bestiary-cardforge"], "state": "wgpu-covered-awaiting-compat-move" },
     "app/game/dragon-effects.ts": { "family": "dragon animation and particles", "cases": ["night-weather", "celestial-effects"], "state": "wgpu-covered-awaiting-compat-move" },
-    "app/game/engine.ts": { "family": "runtime extraction producer", "cases": ["overworld-day", "living-cave", "underwater-ice", "settlement-machinery"], "state": "runtime-integration-pending" },
+    "app/game/engine.ts": { "family": "runtime extraction producer", "cases": ["overworld-day", "living-cave", "underwater-ice", "settlement-machinery"], "state": "terrain-camera-environment-and-atlas-wired-entity-prop-item-particle-model-extraction-pending" },
     "app/game/fauna.ts": { "family": "fauna rendering", "cases": ["overworld-day", "underwater-ice"], "state": "wgpu-covered-awaiting-compat-move" },
     "app/game/held-items.ts": { "family": "held items", "cases": ["settlement-machinery", "celestial-effects"], "state": "wgpu-covered-awaiting-compat-move" },
     "app/game/living-bestiary-models.ts": { "family": "legendary and summon models", "cases": ["bestiary-cardforge", "celestial-effects"], "state": "wgpu-covered-awaiting-compat-move" },
@@ -32,16 +32,16 @@
     "app/game/shared-model-geometry.ts": { "family": "authored geometry pool", "cases": ["bestiary-cardforge", "settlement-machinery"], "state": "compiled-catalog-covered-awaiting-compat-move" },
     "app/game/tripo-creature-models.ts": { "family": "Tripo-derived authored creatures", "cases": ["living-cave", "bestiary-cardforge"], "state": "compiled-catalog-covered-awaiting-compat-move" },
     "app/game/visual-theme-audit.ts": { "family": "visual theme inspection", "cases": ["overworld-day", "bestiary-cardforge", "settlement-machinery"], "state": "native-gallery-covered-build-tool-move-pending" },
-    "app/game/VoxelGame.tsx": { "family": "canvas and renderer selection", "cases": ["overworld-day"], "state": "runtime-selector-pending" },
-    "app/game/world.ts": { "family": "world render extraction source", "cases": ["overworld-day", "living-cave", "underwater-ice"], "state": "runtime-integration-pending" }
+    "app/game/VoxelGame.tsx": { "family": "canvas and renderer selection", "cases": ["overworld-day"], "state": "runtime-selector-wired-primary-promotion-pending" },
+    "app/game/world.ts": { "family": "world render extraction source", "cases": ["overworld-day", "living-cave", "underwater-ice"], "state": "immutable-terrain-pages-and-authored-atlas-wired-full-runtime-parity-pending" }
   },
   "behaviorEvidence": {
-    "capabilityFallback": ["app/game/rust-renderer-backend-r11.ts", "app/game/rust-renderer-service-r11.ts"],
+    "capabilityFallback": ["app/game/renderer-cutover-r11.ts", "app/game/rust-renderer-backend-r11.ts", "app/game/rust-renderer-service-r11.ts"],
     "deviceLossAndRecreate": ["app/game/rust-renderer-worker-r11.ts", "tests/rust-renderer-service-r11.test.ts"],
     "canvasResizeAndFullscreen": ["engine/crates/blockwild-render-web/src/web.rs", "app/game/rust-renderer-worker-r11.ts", "app/renderer-lab/RendererLabClient.tsx"],
     "transparentOrdering": ["engine/crates/blockwild-render/src/scene_renderer.rs", "underwater-ice", "bestiary-cardforge"],
     "underwaterAndCaveFog": ["engine/crates/blockwild-render/src/scene.wgsl", "underwater-ice", "living-cave"],
     "resourceRevisionAndStaleFrame": ["engine/crates/blockwild-render/src/scene_store.rs", "tests/rust-renderer-service-r11.test.ts"],
-    "liveCanvas": ["app/renderer-lab/RendererLabClient.tsx", "public/renderer/manifest.json"]
+    "liveCanvas": ["app/game/VoxelGame.tsx", "app/game/renderer-cutover-r11.ts", "app/renderer-lab/RendererLabClient.tsx", "public/renderer/manifest.json"]
   }
 }

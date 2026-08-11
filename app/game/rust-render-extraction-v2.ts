@@ -13,11 +13,13 @@ export const RENDER_MAX_RESOURCE_OPERATIONS_V2 = 65_536;
 export const RENDER_MAX_INSTANCES_V2 = 262_144;
 export const RENDER_MAX_PARTICLES_V2 = 262_144;
 export const RENDER_MAX_WIRE_BYTES_V2 = 256 * 1024 * 1024;
+export const BLOCK_ATLAS_TEXTURE_ID_V2 = BigInt(4_095);
 
 const RESOURCE_MAGIC = new TextEncoder().encode("BWRD");
 const FRAME_MAGIC = new TextEncoder().encode("BWRF");
 const U64_ZERO = BigInt(0);
 const U64_MAX = BigInt("0xffffffffffffffff");
+const FRAME_WIRE_LIGHTING_EXTENSION_V2 = 1;
 
 export type Vec3V2 = readonly [number, number, number];
 export type QuatV2 = readonly [number, number, number, number];
@@ -56,11 +58,22 @@ export type RenderGeometryV2 = Readonly<{
   uvs: Uint16Array;
   indices: Uint32Array;
 }>;
+export type RenderTextureV2 = Readonly<{
+  id: bigint;
+  revision: number;
+  width: number;
+  height: number;
+  colorSpace: 0 | 1;
+  filter: 0 | 1;
+  rgba8: Uint8Array;
+}>;
 export type RenderResourceOperationV2 =
   | Readonly<{ kind: "upsert-material"; material: RenderMaterialV2 }>
   | Readonly<{ kind: "upsert-geometry"; geometry: RenderGeometryV2 }>
   | Readonly<{ kind: "remove-material"; id: bigint }>
-  | Readonly<{ kind: "remove-geometry"; id: bigint }>;
+  | Readonly<{ kind: "remove-geometry"; id: bigint }>
+  | Readonly<{ kind: "upsert-texture"; texture: RenderTextureV2 }>
+  | Readonly<{ kind: "remove-texture"; id: bigint }>;
 export type RenderResourceBatchV2 = Readonly<{
   schema: 2;
   epoch: bigint;
@@ -88,6 +101,20 @@ export type RenderEnvironmentV2 = Readonly<{
   fogFar: number;
   underwater: number;
   caveOcclusion: number;
+  lighting?: RenderLightingExtensionV2;
+}>;
+export type RenderPointLightV2 = Readonly<{
+  position: Vec3V2;
+  colorRgb8: Rgb8V2;
+  intensity: number;
+  radius: number;
+}>;
+export type RenderLightingExtensionV2 = Readonly<{
+  blockIntensity: number;
+  minimumAmbient: number;
+  waterPhase: number;
+  held: RenderPointLightV2;
+  machine: RenderPointLightV2;
 }>;
 export type RenderInstanceV2 = Readonly<{
   stableId: bigint;
@@ -172,7 +199,10 @@ function equalBytes(left: Uint8Array, right: Uint8Array) {
 
 function checkedTuple(value: readonly number[], size: number, label: string, byte = false) {
   invariant(value.length === size, `${label} has the wrong length`);
-  for (const item of value) byte ? u8(item, label) : finite(item, label);
+  for (const item of value) {
+    if (byte) u8(item, label);
+    else finite(item, label);
+  }
 }
 
 function validateTransform(value: RenderTransformV2) {
@@ -217,6 +247,16 @@ function validateGeometry(value: RenderGeometryV2) {
   invariant([...value.indices].every((index) => index < vertices), "geometry index is out of range");
 }
 
+function validateTexture(value: RenderTextureV2) {
+  invariant(uint64(value.id, "texture id") !== U64_ZERO, "texture id is zero");
+  u32(value.revision, "texture revision");
+  invariant(Number.isInteger(value.width) && value.width > 0 && value.width <= 4_096, "texture width is outside range");
+  invariant(Number.isInteger(value.height) && value.height > 0 && value.height <= 4_096, "texture height is outside range");
+  invariant(value.colorSpace === 0 || value.colorSpace === 1, "unknown texture color space");
+  invariant(value.filter === 0 || value.filter === 1, "unknown texture filter");
+  invariant(value.rgba8.length === value.width * value.height * 4, "texture RGBA stream is inconsistent");
+}
+
 function validateCamera(value: RenderCameraV2) {
   validateTransform({ translation: value.position, rotation: value.orientation, scale: [1, 1, 1] });
   invariant(value.verticalFovRadians > 0.01 && value.verticalFovRadians < 3.13, "camera FOV is invalid");
@@ -234,6 +274,17 @@ function validateEnvironment(value: RenderEnvironmentV2) {
   invariant(finite(value.sunIntensity, "sun intensity") >= 0, "sun intensity is negative");
   invariant(finite(value.fogNear, "fog near") >= 0 && finite(value.fogFar, "fog far") >= value.fogNear, "fog range is invalid");
   invariant(value.underwater >= 0 && value.underwater <= 1 && value.caveOcclusion >= 0 && value.caveOcclusion <= 1, "environment blend is invalid");
+  if (value.lighting) {
+    invariant(finite(value.lighting.blockIntensity, "block intensity") >= 0, "block intensity is negative");
+    invariant(finite(value.lighting.minimumAmbient, "minimum ambient") >= 0, "minimum ambient is negative");
+    invariant(finite(value.lighting.waterPhase, "water phase") >= 0 && value.lighting.waterPhase <= 1, "water phase is outside range");
+    for (const [label, light] of [["held", value.lighting.held], ["machine", value.lighting.machine]] as const) {
+      checkedTuple(light.position, 3, `${label} light position`);
+      checkedTuple(light.colorRgb8, 3, `${label} light color`, true);
+      invariant(finite(light.intensity, `${label} light intensity`) >= 0, `${label} light intensity is negative`);
+      invariant(finite(light.radius, `${label} light radius`) >= 0, `${label} light radius is negative`);
+    }
+  }
 }
 
 function validateInstance(value: RenderInstanceV2) {
@@ -287,6 +338,11 @@ function hashGeometry(hasher: TypeScriptCanonicalHasher, value: RenderGeometryV2
   for (const item of value.indices) hasher.writeU32(item);
 }
 
+function hashTexture(hasher: TypeScriptCanonicalHasher, value: RenderTextureV2) {
+  hasher.writeU64(value.id).writeU32(value.revision).writeU32(value.width).writeU32(value.height);
+  hasher.writeU16(value.colorSpace).writeU16(value.filter).writeBytes(value.rgba8);
+}
+
 function hashInstance(hasher: TypeScriptCanonicalHasher, value: RenderInstanceV2) {
   hasher.writeU64(value.stableId).writeU16(value.domain).writeU64(value.geometry).writeU64(value.material).writeU64(value.parent ?? U64_ZERO);
   hashTransform(hasher, value.transform);
@@ -303,10 +359,13 @@ export function renderResourceBatchHashV2(value: Omit<RenderResourceBatchV2, "ba
   const hasher = new TypeScriptCanonicalHasher("blockwild.render.resources.v2");
   hasher.writeU16(value.schema).writeU64(value.epoch).writeU64(value.revision).writeU64(value.operations.length);
   for (const operation of value.operations) {
-    const kind = operation.kind === "upsert-material" ? 0 : operation.kind === "upsert-geometry" ? 1 : operation.kind === "remove-material" ? 2 : 3;
+    const kind = operation.kind === "upsert-material" ? 0 : operation.kind === "upsert-geometry" ? 1
+      : operation.kind === "remove-material" ? 2 : operation.kind === "remove-geometry" ? 3
+        : operation.kind === "upsert-texture" ? 4 : 5;
     hasher.writeU16(kind);
     if (operation.kind === "upsert-material") hashMaterial(hasher, operation.material);
     else if (operation.kind === "upsert-geometry") hashGeometry(hasher, operation.geometry);
+    else if (operation.kind === "upsert-texture") hashTexture(hasher, operation.texture);
     else hasher.writeU64(operation.id);
   }
   return hasher.finish();
@@ -322,6 +381,16 @@ export function renderFrameHashV2(value: Omit<RenderFrameV2, "frameHash">) {
   for (const item of value.environment.sunDirection) hasher.writeU32(f32Bits(item));
   hasher.writeBytes(Uint8Array.from(value.environment.sunRgb8)).writeU32(f32Bits(value.environment.sunIntensity)).writeBytes(Uint8Array.from(value.environment.fogRgb8));
   for (const item of [value.environment.fogNear, value.environment.fogFar, value.environment.underwater, value.environment.caveOcclusion]) hasher.writeU32(f32Bits(item));
+  if (value.environment.lighting) {
+    const lighting = value.environment.lighting;
+    hasher.writeU16(0x4c31);
+    for (const item of [lighting.blockIntensity, lighting.minimumAmbient, lighting.waterPhase]) hasher.writeU32(f32Bits(item));
+    for (const light of [lighting.held, lighting.machine]) {
+      for (const item of light.position) hasher.writeU32(f32Bits(item));
+      hasher.writeBytes(Uint8Array.from(light.colorRgb8));
+      for (const item of [light.intensity, light.radius]) hasher.writeU32(f32Bits(item));
+    }
+  }
   const instances = [...value.instances].sort((left, right) => left.stableId < right.stableId ? -1 : left.stableId > right.stableId ? 1 : 0);
   hasher.writeU64(instances.length);
   for (const instance of instances) hashInstance(hasher, instance);
@@ -350,10 +419,15 @@ function validateResourceBatch(value: RenderResourceBatchV2, verifyHash = true) 
   invariant(value.operations.length <= RENDER_MAX_RESOURCE_OPERATIONS_V2, "too many resource operations");
   const touched = new Set<string>();
   for (const operation of value.operations) {
-    const tag = operation.kind === "upsert-material" ? 0 : operation.kind === "upsert-geometry" ? 1 : operation.kind === "remove-material" ? 2 : 3;
-    const id = operation.kind === "upsert-material" ? operation.material.id : operation.kind === "upsert-geometry" ? operation.geometry.id : operation.id;
+    const tag = operation.kind === "upsert-material" ? 0 : operation.kind === "upsert-geometry" ? 1
+      : operation.kind === "remove-material" ? 2 : operation.kind === "remove-geometry" ? 3
+        : operation.kind === "upsert-texture" ? 4 : 5;
+    const id = operation.kind === "upsert-material" ? operation.material.id
+      : operation.kind === "upsert-geometry" ? operation.geometry.id
+        : operation.kind === "upsert-texture" ? operation.texture.id : operation.id;
     if (operation.kind === "upsert-material") validateMaterial(operation.material);
     else if (operation.kind === "upsert-geometry") validateGeometry(operation.geometry);
+    else if (operation.kind === "upsert-texture") validateTexture(operation.texture);
     else invariant(uint64(operation.id, "removed resource id") !== U64_ZERO, "removed resource id is zero");
     const key = `${tag}:${id}`;
     invariant(!touched.has(key), "duplicate resource operation");
@@ -459,6 +533,11 @@ function writeGeometry(writer: Writer, value: RenderGeometryV2) {
   writer.stream(value.uvs, (item) => writer.u16(item)); writer.stream(value.indices, (item) => writer.u32(item));
 }
 
+function writeTexture(writer: Writer, value: RenderTextureV2) {
+  writer.u64(value.id); writer.u32(value.revision); writer.u32(value.width); writer.u32(value.height);
+  writer.u8(value.colorSpace); writer.u8(value.filter); writer.u16(0); writer.u32(value.rgba8.length); writer.raw(value.rgba8);
+}
+
 function readGeometry(reader: Reader): RenderGeometryV2 {
   const id = reader.u64(), revision = reader.u32(), kind = reader.u8(); invariant(kind <= 8, "unknown geometry kind"); invariant(reader.take(3).every((item) => item === 0), "geometry reserved bits are nonzero");
   const minimum = [reader.f32(), reader.f32(), reader.f32()] as const, maximum = [reader.f32(), reader.f32(), reader.f32()] as const;
@@ -471,6 +550,14 @@ function readGeometry(reader: Reader): RenderGeometryV2 {
   return { id, revision, kind: kind as RenderGeometryV2["kind"], bounds: { minimum, maximum }, positions, normals, colors, lights, emissions, occlusions, uvs, indices };
 }
 
+function readTexture(reader: Reader): RenderTextureV2 {
+  const id = reader.u64(), revision = reader.u32(), width = reader.u32(), height = reader.u32();
+  const colorSpace = reader.u8(), filter = reader.u8();
+  invariant(colorSpace <= 1 && filter <= 1 && reader.u16() === 0, "invalid texture header");
+  const rgba8 = Uint8Array.from(reader.take(reader.count("texture rgba8")));
+  return { id, revision, width, height, colorSpace: colorSpace as 0 | 1, filter: filter as 0 | 1, rgba8 };
+}
+
 function writeTransform(writer: Writer, value: RenderTransformV2) { for (const item of [...value.translation, ...value.rotation, ...value.scale]) writer.f32(item); }
 function readTransform(reader: Reader): RenderTransformV2 { return { translation: [reader.f32(), reader.f32(), reader.f32()], rotation: [reader.f32(), reader.f32(), reader.f32(), reader.f32()], scale: [reader.f32(), reader.f32(), reader.f32()] }; }
 
@@ -480,7 +567,8 @@ export function encodeRenderResourceBatchV2(value: RenderResourceBatchV2) {
   for (const operation of value.operations) {
     if (operation.kind === "upsert-material") { writer.u8(0); writeMaterial(writer, operation.material); }
     else if (operation.kind === "upsert-geometry") { writer.u8(1); writeGeometry(writer, operation.geometry); }
-    else { writer.u8(operation.kind === "remove-material" ? 2 : 3); writer.u64(operation.id); }
+    else if (operation.kind === "upsert-texture") { writer.u8(4); writeTexture(writer, operation.texture); }
+    else { writer.u8(operation.kind === "remove-material" ? 2 : operation.kind === "remove-geometry" ? 3 : 5); writer.u64(operation.id); }
   }
   return writer.finish();
 }
@@ -494,6 +582,8 @@ export function decodeRenderResourceBatchV2(bytes: Uint8Array): RenderResourceBa
     if (tag === 0) operations.push({ kind: "upsert-material", material: readMaterial(reader) });
     else if (tag === 1) operations.push({ kind: "upsert-geometry", geometry: readGeometry(reader) });
     else if (tag === 2 || tag === 3) operations.push({ kind: tag === 2 ? "remove-material" : "remove-geometry", id: reader.u64() });
+    else if (tag === 4) operations.push({ kind: "upsert-texture", texture: readTexture(reader) });
+    else if (tag === 5) operations.push({ kind: "remove-texture", id: reader.u64() });
     else throw new TypeError("unknown render resource operation");
   }
   reader.done(); const result: RenderResourceBatchV2 = { schema: 2, epoch, revision, operations, batchHash }; validateResourceBatch(result); return result;
@@ -504,9 +594,30 @@ function readCamera(reader: Reader): RenderCameraV2 { return { position: [reader
 function writeEnvironment(writer: Writer, value: RenderEnvironmentV2) { writer.raw(value.clearRgba8); writer.raw(value.ambientRgb8); writer.f32(value.ambientIntensity); for (const item of value.sunDirection) writer.f32(item); writer.raw(value.sunRgb8); writer.f32(value.sunIntensity); writer.raw(value.fogRgb8); for (const item of [value.fogNear, value.fogFar, value.underwater, value.caveOcclusion]) writer.f32(item); }
 function readEnvironment(reader: Reader): RenderEnvironmentV2 { const clearRgba8 = [...reader.take(4)] as [number, number, number, number], ambientRgb8 = [...reader.take(3)] as [number, number, number], ambientIntensity = reader.f32(), sunDirection = [reader.f32(), reader.f32(), reader.f32()] as const, sunRgb8 = [...reader.take(3)] as [number, number, number], sunIntensity = reader.f32(), fogRgb8 = [...reader.take(3)] as [number, number, number]; return { clearRgba8, ambientRgb8, ambientIntensity, sunDirection, sunRgb8, sunIntensity, fogRgb8, fogNear: reader.f32(), fogFar: reader.f32(), underwater: reader.f32(), caveOcclusion: reader.f32() }; }
 
+function writePointLight(writer: Writer, value: RenderPointLightV2) {
+  for (const item of value.position) writer.f32(item);
+  writer.raw(value.colorRgb8); writer.u8(0); writer.f32(value.intensity); writer.f32(value.radius);
+}
+function readPointLight(reader: Reader): RenderPointLightV2 {
+  const position = [reader.f32(), reader.f32(), reader.f32()] as const;
+  const colorRgb8 = [...reader.take(3)] as [number, number, number];
+  invariant(reader.u8() === 0, "point light reserved byte is nonzero");
+  return { position, colorRgb8, intensity: reader.f32(), radius: reader.f32() };
+}
+function writeLighting(writer: Writer, value: RenderLightingExtensionV2) {
+  writer.f32(value.blockIntensity); writer.f32(value.minimumAmbient); writer.f32(value.waterPhase); writer.f32(0);
+  writePointLight(writer, value.held); writePointLight(writer, value.machine);
+}
+function readLighting(reader: Reader): RenderLightingExtensionV2 {
+  const blockIntensity = reader.f32(), minimumAmbient = reader.f32(), waterPhase = reader.f32();
+  invariant(reader.f32() === 0, "lighting extension reserved value is nonzero");
+  return { blockIntensity, minimumAmbient, waterPhase, held: readPointLight(reader), machine: readPointLight(reader) };
+}
+
 export function encodeRenderFrameV2(value: RenderFrameV2) {
   validateFrame(value);
-  const writer = new Writer(); writer.raw(FRAME_MAGIC); writer.u16(2); writer.u16(0); writer.u64(value.epoch); writer.u64(value.frameSequence); writer.u64(value.simulationTick); writer.u64(value.animationTimeMicros); writer.u64(value.resourceRevision); writer.raw(value.frameHash); writeCamera(writer, value.camera); writeEnvironment(writer, value.environment); writer.u32(value.instances.length);
+  const wireFlags = value.environment.lighting ? FRAME_WIRE_LIGHTING_EXTENSION_V2 : 0;
+  const writer = new Writer(); writer.raw(FRAME_MAGIC); writer.u16(2); writer.u16(wireFlags); writer.u64(value.epoch); writer.u64(value.frameSequence); writer.u64(value.simulationTick); writer.u64(value.animationTimeMicros); writer.u64(value.resourceRevision); writer.raw(value.frameHash); writeCamera(writer, value.camera); writeEnvironment(writer, value.environment); if (value.environment.lighting) writeLighting(writer, value.environment.lighting); writer.u32(value.instances.length);
   for (const instance of value.instances) { writer.u64(instance.stableId); writer.u8(instance.domain); writer.raw([0, 0, 0]); writer.u64(instance.geometry); writer.u64(instance.material); writer.u64(instance.parent ?? U64_ZERO); writeTransform(writer, instance.transform); writer.raw(instance.tintRgba8); writer.u32(instance.visibilityMask); writer.i32(instance.sortKey); writer.u32(instance.animationFlags); }
   writer.u32(value.particles.length);
   for (const particle of value.particles) { writer.u64(particle.stableId); writer.u64(particle.material); for (const item of [...particle.position, ...particle.velocity, particle.size, particle.rotation]) writer.f32(item); writer.raw(particle.colorRgba8); writer.f32(particle.ageSeconds); writer.f32(particle.lifetimeSeconds); }
@@ -514,8 +625,8 @@ export function encodeRenderFrameV2(value: RenderFrameV2) {
 }
 
 export function decodeRenderFrameV2(bytes: Uint8Array): RenderFrameV2 {
-  const reader = new Reader(bytes); invariant(equalBytes(reader.take(4), FRAME_MAGIC), "invalid frame wire magic"); invariant(reader.u16() === 2 && reader.u16() === 0, "invalid frame wire header");
-  const epoch = reader.u64(), frameSequence = reader.u64(), simulationTick = reader.u64(), animationTimeMicros = reader.u64(), resourceRevision = reader.u64(), frameHash = Uint8Array.from(reader.take(16)), camera = readCamera(reader), environment = readEnvironment(reader), instanceCount = reader.u32(); invariant(instanceCount <= RENDER_MAX_INSTANCES_V2, "too many instances");
+  const reader = new Reader(bytes); invariant(equalBytes(reader.take(4), FRAME_MAGIC), "invalid frame wire magic"); invariant(reader.u16() === 2, "invalid frame wire schema"); const wireFlags = reader.u16(); invariant((wireFlags & ~FRAME_WIRE_LIGHTING_EXTENSION_V2) === 0, "invalid frame wire flags");
+  const epoch = reader.u64(), frameSequence = reader.u64(), simulationTick = reader.u64(), animationTimeMicros = reader.u64(), resourceRevision = reader.u64(), frameHash = Uint8Array.from(reader.take(16)), camera = readCamera(reader); const baseEnvironment = readEnvironment(reader); const environment = wireFlags & FRAME_WIRE_LIGHTING_EXTENSION_V2 ? { ...baseEnvironment, lighting: readLighting(reader) } : baseEnvironment; const instanceCount = reader.u32(); invariant(instanceCount <= RENDER_MAX_INSTANCES_V2, "too many instances");
   const instances: RenderInstanceV2[] = [];
   for (let index = 0; index < instanceCount; index += 1) { const stableId = reader.u64(), domain = reader.u8(); invariant(domain <= 8 && reader.take(3).every((item) => item === 0), "invalid instance header"); const geometry = reader.u64(), material = reader.u64(), rawParent = reader.u64(); instances.push({ stableId, domain: domain as RenderInstanceV2["domain"], geometry, material, parent: rawParent === U64_ZERO ? null : rawParent, transform: readTransform(reader), tintRgba8: [...reader.take(4)] as [number, number, number, number], visibilityMask: reader.u32(), sortKey: reader.i32(), animationFlags: reader.u32() }); }
   const particleCount = reader.u32(); invariant(particleCount <= RENDER_MAX_PARTICLES_V2, "too many particles"); const particles: RenderParticleV2[] = [];

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { RendererShellExtractionPublisherR11 } from "./renderer-cutover-r11";
 import { isSharedModelGeometry, sharedModelGeometryDiagnostics } from "./shared-model-geometry";
 import { CreatureLodBatcher, type CreatureLodInstance } from "./creature-lod-batcher";
 import { CreatureArticulatedBatcher, type ArticulatedCreatureInstance } from "./creature-articulated-batcher";
@@ -1655,7 +1656,12 @@ export type EngineEvents = {
   onRendererState?: (lost: boolean) => void;
 };
 
-export type VoxelEngineOptions = Readonly<{ agentMode?: boolean; agentTestAdmin?: boolean }>;
+export type VoxelEngineOptions = Readonly<{
+  agentMode?: boolean;
+  agentTestAdmin?: boolean;
+  /** Optional R11 presentation sink. Three remains primary unless the shell explicitly selects otherwise. */
+  renderExtraction?: RendererShellExtractionPublisherR11;
+}>;
 
 type VoxelHit = {
   x: number;
@@ -4033,6 +4039,22 @@ export class VoxelEngine {
   renderPixelRatio = 1;
   averageFrameMs = 16.7;
   performanceSampleTime = 0;
+  renderExtraction: RendererShellExtractionPublisherR11 | null = null;
+  renderExtractionNextAt = 0;
+  renderExtractionErrors = 0;
+  renderExtractionLastError: string | null = null;
+  rendererEvidenceFrozenAt: number | null = null;
+  rendererEnvironmentR11: Readonly<{
+    clearRgb8: readonly [number, number, number];
+    fogRgb8: readonly [number, number, number];
+    fogNear: number;
+    fogFar: number;
+  }> = Object.freeze({
+    clearRgb8: [48, 103, 162] as const,
+    fogRgb8: [48, 103, 162] as const,
+    fogNear: 30,
+    fogFar: 62,
+  });
 
   position = new THREE.Vector3(0, 48, 0);
   spawn = new THREE.Vector3(0, 48, 0);
@@ -4461,6 +4483,7 @@ export class VoxelEngine {
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
     this.agentMode = options.agentMode === true;
+    this.renderExtraction = options.renderExtraction ?? null;
     this.basicWorldRenderer = BASIC_RENDER_DISTANCE_ENABLED && !this.agentMode ? new BasicWorldRenderer(true) : null;
     this.agentTestAdmin = this.agentMode && options.agentTestAdmin === true;
     if (this.agentMode) settings = {
@@ -4657,7 +4680,59 @@ export class VoxelEngine {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.renderExtraction?.resize(Math.max(1, this.canvas.width), Math.max(1, this.canvas.height));
   };
+
+  /**
+   * Copies camera/environment and the world's immutable terrain-page snapshot
+   * into Extraction V2. This never traverses `scene`, Three geometry/materials,
+   * or voxel storage, and does not claim entity/model/particle parity.
+   */
+  publishRendererExtractionR11(now: number) {
+    const sink = this.renderExtraction;
+    if (!sink || now < this.renderExtractionNextAt) return;
+    this.renderExtractionNextAt = now + 1000 / 30;
+    try {
+      sink.present({
+        simulationTick: BigInt(Math.max(0, Math.floor(this.worldSimulationSeconds() * 1_000_000))),
+        animationTimeMicros: BigInt(Math.max(0, Math.floor(now * 1_000))),
+        camera: {
+          position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+          orientation: [this.camera.quaternion.x, this.camera.quaternion.y, this.camera.quaternion.z, this.camera.quaternion.w],
+          verticalFovRadians: THREE.MathUtils.degToRad(this.camera.fov),
+          near: this.camera.near,
+          far: this.camera.far,
+          viewport: [Math.max(1, this.canvas.width), Math.max(1, this.canvas.height)],
+        },
+        environment: {
+          daylight: this.daylightAmount(),
+          worldTime: this.visualWorldTime,
+          weather: this.weatherState.kind,
+          underwater: this.headSubmerged ? 1 : 0,
+          caveOcclusion: this.cameraEnvironment.caveBackdropBlend,
+          ...this.rendererEnvironmentR11,
+        },
+        terrain: this.world.rendererTerrainSnapshotR11(this.camera.position.x, this.camera.position.z, {
+          maxChunks: 64,
+          maxPages: 512,
+          maxBytes: 64 * 1024 * 1024,
+        }),
+      });
+      this.renderExtractionLastError = null;
+    } catch (error) {
+      // Shadow presentation is diagnostic-only and must never interrupt the
+      // authoritative simulation or the selected compatibility renderer.
+      this.renderExtractionErrors += 1;
+      this.renderExtractionLastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** Holds presentation time for deterministic same-state renderer evidence. */
+  setRendererEvidenceFreezeR11(frozen: boolean) {
+    this.rendererEvidenceFrozenAt = frozen ? performance.now() : null;
+    this.renderExtractionNextAt = 0;
+    return this.rendererEvidenceFrozenAt;
+  }
 
   updateAdaptiveResolution(rawDt: number) {
     if (!Number.isFinite(rawDt) || rawDt <= 0 || rawDt > 0.2 || document.hidden) return;
@@ -30673,15 +30748,27 @@ export class VoxelEngine {
     this.updateLightning(weatherFx, dt);
     if (this.lightningFlash > 0.01) sky.lerp(this.weatherSkyColor.set("#dcecff"), Math.min(0.58, this.lightningFlash * 0.58));
     this.scene.background = sky;
+    let rendererFogNear = 30;
+    let rendererFogFar = 62;
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.color.copy(sky);
       const view = this.settings.renderDistance * 16;
       const weatherVisibility = 1 - weatherFx.fogDensity * 0.72;
       const outdoorNear = view * 0.54 * weatherVisibility;
       const outdoorFar = Math.max(28, view * 1.05 * weatherVisibility);
-      this.scene.fog.near = underwater ? 3 : THREE.MathUtils.lerp(outdoorNear, 8, caveBackdrop);
-      this.scene.fog.far = underwater ? 24 : THREE.MathUtils.lerp(outdoorFar, Math.max(26, view * 0.64), caveBackdrop);
+      rendererFogNear = underwater ? 3 : THREE.MathUtils.lerp(outdoorNear, 8, caveBackdrop);
+      rendererFogFar = underwater ? 24 : THREE.MathUtils.lerp(outdoorFar, Math.max(26, view * 0.64), caveBackdrop);
+      this.scene.fog.near = rendererFogNear;
+      this.scene.fog.far = rendererFogFar;
     }
+    const rendererColorByte = (value: number) => Math.round(clamp(value, 0, 1) * 255);
+    const rendererSkyRgb8 = [rendererColorByte(sky.r), rendererColorByte(sky.g), rendererColorByte(sky.b)] as const;
+    this.rendererEnvironmentR11 = Object.freeze({
+      clearRgb8: rendererSkyRgb8,
+      fogRgb8: rendererSkyRgb8,
+      fogNear: rendererFogNear,
+      fogFar: rendererFogFar,
+    });
     // Sun and moon are global, but their direct and ambient contribution is
     // gated by actual sky exposure. Local point lights remain independent.
     const weatherLight = weatherFx.fullOvercast ? 0.42 : 1 - weatherFx.skyDarkening * 0.62;
@@ -31433,8 +31520,9 @@ export class VoxelEngine {
     this.camera.getWorldDirection(this.streamingViewDirection);
     this.world.setStreamingViewHint(this.streamingViewDirection.x, this.streamingViewDirection.z);
 
+    const presentationNow = this.rendererEvidenceFrozenAt ?? now;
     if (this.titleMode) {
-      const t = now * 0.000045;
+      const t = presentationNow * 0.000045;
       this.camera.position.set(this.spawn.x + Math.sin(t) * 24, this.spawn.y + 13 + Math.sin(t * 1.8) * 1.2, this.spawn.z + Math.cos(t) * 24);
       this.camera.lookAt(this.spawn.x, this.spawn.y + 4, this.spawn.z);
       const chunkWorkStartedAt = performance.now();
@@ -31543,7 +31631,7 @@ export class VoxelEngine {
     if (this.running && !this.titleMode) this.updateMultiplayer(dt);
     const environmentPresentationStartedAt = phaseSampled ? performance.now() : 0;
     if (!this.agentMode) this.updateRain(dt);
-    this.world.updateWaterAnimation(now);
+    this.world.updateWaterAnimation(presentationNow);
     this.syncExhibitVisuals(false, dt);
     this.syncAquariumVisuals(false, dt);
     this.syncOrbRackVisuals(false, dt);
@@ -31566,6 +31654,7 @@ export class VoxelEngine {
     }
     const renderSubmissionMilliseconds = Math.max(0, performance.now() - renderStartedAt);
     const renderCompletedAt = performance.now();
+    this.publishRendererExtractionR11(presentationNow);
     const renderBuckets = phaseSampled ? this.renderBucketDiagnostics() : null;
     this.lastPresentedFrameTime = renderCompletedAt;
     this.resetLookFrameBudget();
@@ -32562,6 +32651,7 @@ export class VoxelEngine {
     this.updateGameplayCamera(Math.min(duration, 0.1));
     this.updateTarget();
     this.renderer.render(this.scene, this.camera);
+    this.publishRendererExtractionR11(performance.now());
     this.lastPresentedFrameTime = performance.now();
     this.resetLookFrameBudget();
   }

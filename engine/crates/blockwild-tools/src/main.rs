@@ -11,7 +11,10 @@ use blockwild_persistence::{PersistenceWireRecord, decode_record, inspect_checkp
 use blockwild_protocol::{PROTOCOL_VERSION, ReplayFrame, ReplayHeader, ReplayLog};
 use blockwild_render::SceneFixture;
 #[cfg(not(target_arch = "wasm32"))]
-use blockwild_render::{SMOKE_HEIGHT, SMOKE_WIDTH, SmokeStatus, smoke_offscreen_artifact_blocking};
+use blockwild_render::{
+    SMOKE_HEIGHT, SMOKE_WIDTH, SmokeStatus, WgpuSceneStatusV2, canonical_integrated_scene_artifact_blocking,
+    smoke_offscreen_artifact_blocking,
+};
 use blockwild_types::{
     Aabb, AabbBatchQuery, CanonicalHash, Ray, RayBatchQuery, SpatialEntry, SpatialIndex, StableId, block_index,
     fnv1a_utf16_units, hash2, hash2_bits, hash3, hash3_bits, split_coordinate,
@@ -54,8 +57,12 @@ fn run(args: Vec<String>) -> Result<(), String> {
             };
             render_smoke(output)
         }
+        Some("render-scene") => {
+            let output = args.get(1).ok_or("render-scene requires a .ppm output path")?;
+            render_scene(output)
+        }
         Some("save-inspect") => save_inspect(args.get(1).ok_or("save-inspect requires a persistence wire file")?),
-        _ => Err("usage: blockwild-tools <replay-self-test|replay FILE|write-replay FILE|benchmark [ITERATIONS]|kernels-json [--input FILE]|render-fixture|render-smoke [--output] FILE|save-inspect FILE>".into()),
+        _ => Err("usage: blockwild-tools <replay-self-test|replay FILE|write-replay FILE|benchmark [ITERATIONS]|kernels-json [--input FILE]|render-fixture|render-smoke [--output] FILE|render-scene FILE.ppm|save-inspect FILE>".into()),
     }
 }
 
@@ -529,6 +536,53 @@ fn render_smoke(output_path: Option<&str>) -> Result<(), String> {
 #[cfg(target_arch = "wasm32")]
 fn render_smoke(_output_path: Option<&str>) -> Result<(), String> {
     Err("render-smoke is a native CLI command; browser smoke uses the async renderer path".into())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn render_scene(output_path: &str) -> Result<(), String> {
+    const WIDTH: u32 = 960;
+    const HEIGHT: u32 = 540;
+    if Path::new(output_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("ppm")
+    {
+        return Err("integrated scene evidence output must use the .ppm extension".into());
+    }
+    let artifact = canonical_integrated_scene_artifact_blocking(WIDTH, HEIGHT)?;
+    if artifact.diagnostics.status != WgpuSceneStatusV2::Ready {
+        return Err(artifact.diagnostics.message);
+    }
+    if artifact.rgba8.len() != (WIDTH * HEIGHT * 4) as usize {
+        return Err("integrated renderer did not return the expected RGBA readback".into());
+    }
+    let path = Path::new(output_path);
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
+    ppm.reserve((WIDTH * HEIGHT * 3) as usize);
+    for pixel in artifact.rgba8.chunks_exact(4) {
+        ppm.extend_from_slice(&pixel[..3]);
+    }
+    fs::write(path, ppm)
+        .map_err(|error| format!("cannot write integrated render evidence {}: {error}", path.display()))?;
+    println!(
+        "scene_status={:?} backend={} adapter={:?} draws={} geometry_bytes={} instance_bytes={} output={}",
+        artifact.diagnostics.status,
+        artifact.diagnostics.backend,
+        artifact.diagnostics.adapter,
+        artifact.diagnostics.draw_calls,
+        artifact.diagnostics.uploaded_geometry_bytes,
+        artifact.diagnostics.uploaded_instance_bytes,
+        path.display(),
+    );
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render_scene(_output_path: &str) -> Result<(), String> {
+    Err("render-scene is a native CLI command; browser rendering uses the async scene path".into())
 }
 
 #[allow(dead_code)]

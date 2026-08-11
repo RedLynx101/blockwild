@@ -12,18 +12,65 @@
   "runtime": {
     "schema": 1,
     "backend": "wgpu-webgpu",
-    "artifactHash": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259",
-    "directory": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259",
-    "module": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/renderer.js",
-    "wasm": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/renderer_bg.wasm",
-    "resourceFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/canonical-resources.bwrd",
-    "frameFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/canonical-frame.bwrf",
-    "liveResourceFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/live-resources.bwrd",
-    "liveFrameFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/live-frame.bwrf",
+    "artifactHash": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8",
+    "directory": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8",
+    "module": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/renderer.js",
+    "wasm": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/renderer_bg.wasm",
+    "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/canonical-resources.bwrd",
+    "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/canonical-frame.bwrf",
+    "liveResourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/live-resources.bwrd",
+    "liveFrameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/live-frame.bwrf",
+    "visualMatrix": {
+      "manifest": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/matrix.json",
+      "scenes": [
+        {
+          "name": "overworld-day",
+          "purpose": "Dense streamed terrain, flora, river transparency, current creatures, player rig, weather particles, and emission.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/overworld-day-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/overworld-day-frame.bwrf"
+        },
+        {
+          "name": "night-weather",
+          "purpose": "Night sky, celestial body, fire, emissive fauna, flying dragon, rain, and transparent ordering.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/night-weather-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/night-weather-frame.bwrf"
+        },
+        {
+          "name": "living-cave",
+          "purpose": "Cave topology, darkness contrast, bioluminescent ecology, machinery, golem and hostile creature silhouettes.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/living-cave-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/living-cave-frame.bwrf"
+        },
+        {
+          "name": "underwater-ice",
+          "purpose": "Underwater fog, ice-water adjacency, kelp continuity, bubbles, aquatic creatures, caustic and glass-like materials.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/underwater-ice-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/underwater-ice-frame.bwrf"
+        },
+        {
+          "name": "settlement-machinery",
+          "purpose": "Settlement density, architecture, glass, current player and NPC rigs, held tools, storage, block-damage overlays and powered utility models.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/settlement-machinery-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/settlement-machinery-frame.bwrf"
+        },
+        {
+          "name": "bestiary-cardforge",
+          "purpose": "Production Bestiary and Cardforge specimen lineup with current authored models, glass, emission and silhouette separation.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/bestiary-cardforge-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/bestiary-cardforge-frame.bwrf"
+        },
+        {
+          "name": "celestial-effects",
+          "purpose": "Sky and celestial shading, flying dragons, projectile and item domains, particles, animation and additive emission.",
+          "resourceFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/celestial-effects-resources.bwrd",
+          "frameFixture": "d49995f9b15446c717109dff37289c936abe6be5a50b7d8526f28888b070d3a8/celestial-effects-frame.bwrf"
+        }
+      ]
+    },
     "coldStartBudget": {
-      "rawBytes": 522567,
-      "gzipBytes": 151919,
-      "brotliBytes": 119311,
+      "rawBytes": 568574,
+      "gzipBytes": 164487,
+      "brotliBytes": 128446,
       "files": [
         "live-frame.bwrf",
         "live-resources.bwrd",
@@ -32,6 +79,22 @@
       ]
     },
     "files": [
+      {
+        "path": "bestiary-cardforge-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 34393,
+        "sha256": "737b94595e80f3aecae18e073cab60b8cbc447a852de2aca08f3d3aa176674a0",
+        "gzipBytes": 6733,
+        "brotliBytes": 5424
+      },
+      {
+        "path": "bestiary-cardforge-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 6703,
+        "sha256": "175fdda624f371301893aa460890e0003029fb99c14130ce7c88b833fc6c90e8",
+        "gzipBytes": 932,
+        "brotliBytes": 728
+      },
       {
         "path": "canonical-frame.bwrf",
         "role": "frame-fixture",
@@ -47,6 +110,22 @@
         "sha256": "7900fff2d289bab000adc9b804cd2b4d40a2ead4f648cb2a57e60bbdde79dfe9",
         "gzipBytes": 296,
         "brotliBytes": 279
+      },
+      {
+        "path": "celestial-effects-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 73997,
+        "sha256": "67a8f84b9fee157bf668a6ef30fd800654e51dff5034a6e2c4a7c8fbdf5aa8c6",
+        "gzipBytes": 21516,
+        "brotliBytes": 17418
+      },
+      {
+        "path": "celestial-effects-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 9178,
+        "sha256": "003d30c23ee5852acc6b06a8945230a4a92f74ab389d7c0222145f720959468f",
+        "gzipBytes": 1191,
+        "brotliBytes": 868
       },
       {
         "path": "live-frame.bwrf",
@@ -65,36 +144,124 @@
         "brotliBytes": 745
       },
       {
+        "path": "living-cave-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 106769,
+        "sha256": "725a822c0d3283543ed91a358664e9dceb41a7ed122c3ce85291c829cb64e4ad",
+        "gzipBytes": 16566,
+        "brotliBytes": 12662
+      },
+      {
+        "path": "living-cave-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 11981,
+        "sha256": "faf261a2e84ae066739cf7dd00535fd6c812f18af51cb29e224b8189e17e724c",
+        "gzipBytes": 1443,
+        "brotliBytes": 1005
+      },
+      {
+        "path": "matrix.json",
+        "role": "support",
+        "bytes": 2317,
+        "sha256": "85f9ce68a0fa7cfe5d53a0f4111b55c76cf72cd92fc55c841a6e41bc98e69649",
+        "gzipBytes": 779,
+        "brotliBytes": 645
+      },
+      {
+        "path": "night-weather-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 97857,
+        "sha256": "75214c618f4d27d688ae90af0a4f09be2474452078cc0ff52462be8f12a098c7",
+        "gzipBytes": 16084,
+        "brotliBytes": 11946
+      },
+      {
+        "path": "night-weather-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 5281,
+        "sha256": "41722d0cf4919935942077dd8c1d6434d9eabadd5c136074bbd233bec11ed7fe",
+        "gzipBytes": 820,
+        "brotliBytes": 653
+      },
+      {
+        "path": "overworld-day-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 96489,
+        "sha256": "29eb74b39d773fc4552bcfa73d56803406d271e775a9bf713b6ebb6a575e6c1b",
+        "gzipBytes": 12423,
+        "brotliBytes": 8793
+      },
+      {
+        "path": "overworld-day-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 7592,
+        "sha256": "0b621f1e78b8a403b70ee4a57067b7d64e6ca6736bed35797e19d048371f87ec",
+        "gzipBytes": 978,
+        "brotliBytes": 745
+      },
+      {
         "path": "renderer.d.ts",
         "role": "support",
         "bytes": 3201,
-        "sha256": "8573d9e44a2fc5b85f13c4dc3189066596749cd1ab93cc80717511bea585c560",
+        "sha256": "229fc75bfa1d572eb8cfcf59d86505372d3f05dd23cfa1efd21355686b3f1282",
         "gzipBytes": 857,
-        "brotliBytes": 722
+        "brotliBytes": 712
       },
       {
         "path": "renderer.js",
         "role": "glue",
-        "bytes": 65240,
-        "sha256": "97ad612ab34c50cb3db7cb06c2d3417330bab81361e4ca39b8464d60868442c2",
-        "gzipBytes": 12014,
-        "brotliBytes": 10249
+        "bytes": 68936,
+        "sha256": "c9e18715859138fbea9930834ca391e413b09406a9f48844330d9512b03aa949",
+        "gzipBytes": 12628,
+        "brotliBytes": 10743
       },
       {
         "path": "renderer_bg.wasm",
         "role": "wasm",
-        "bytes": 353246,
-        "sha256": "ec8219296865be5623e28cdab9e595c3497cc48f0e0a41e795ed62549aa7922c",
-        "gzipBytes": 126504,
-        "brotliBytes": 99524
+        "bytes": 395557,
+        "sha256": "7587ad0bee46f001251b577c9a3c23af73d68bc0ad825cc383ee385c1b2504fc",
+        "gzipBytes": 138458,
+        "brotliBytes": 108165
       },
       {
         "path": "renderer_bg.wasm.d.ts",
         "role": "support",
         "bytes": 1749,
-        "sha256": "74ce0d11b364edff029a67f021673a534bf61b9fff56b7788f80704c510e05c7",
+        "sha256": "bf5eb012435845e57082b3dcc8b0e2d2e87cd9d6ccee487b21d8c057671261aa",
         "gzipBytes": 334,
-        "brotliBytes": 283
+        "brotliBytes": 280
+      },
+      {
+        "path": "settlement-machinery-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 65469,
+        "sha256": "6411f3a14a17803647c037f5ac9e22eadfe0ceeac32b410dd4761caa0c1ee457",
+        "gzipBytes": 9666,
+        "brotliBytes": 7128
+      },
+      {
+        "path": "settlement-machinery-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 15632,
+        "sha256": "2e8a497485ec2d506d1ec2780502c0c2ac1de74fea287b26681b518df3d43ed9",
+        "gzipBytes": 1630,
+        "brotliBytes": 1161
+      },
+      {
+        "path": "underwater-ice-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 79133,
+        "sha256": "1fe8c19b27bcc434fdbbf5e84649be9f5f2198469a2676d5e608f9936f5d12f9",
+        "gzipBytes": 15331,
+        "brotliBytes": 12053
+      },
+      {
+        "path": "underwater-ice-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 8604,
+        "sha256": "147d79e530486821c421124734c56bb026a1c992391ff9c55cdc77b77ee632ce",
+        "gzipBytes": 1022,
+        "brotliBytes": 804
       }
     ]
   }
