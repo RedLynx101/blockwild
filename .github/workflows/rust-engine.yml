@@ -5,23 +5,41 @@ on:
     branches: [main]
     paths:
       - "engine/**"
-      - "app/game/rust-engine-*.ts"
+      - "app/game/rust-*.ts"
+      - "app/game/renderer-*.ts"
       - "app/game/engine-facade.ts"
-      - "scripts/*rust-engine*.mjs"
-      - "scripts/benchmark-rust-browser.mjs"
+      - "app/game/VoxelGame.tsx"
+      - "app/game/engine.ts"
+      - "app/game/world.ts"
+      - "app/game/world-storage.ts"
+      - "scripts/*rust*.mjs"
+      - "scripts/*rust*.ts"
       - "tests/rust-*.test.*"
+      - "tests/renderer-*.test.*"
       - "public/engine/**"
+      - "public/renderer/**"
+      - "docs/HYBRID_RUST_ENGINE_MIGRATION_MASTER_PLAN.md"
+      - "docs/RUST_ENGINE_AUTHORITY_LEDGER.md"
       - ".github/workflows/rust-engine.yml"
   pull_request:
     branches: [main]
     paths:
       - "engine/**"
-      - "app/game/rust-engine-*.ts"
+      - "app/game/rust-*.ts"
+      - "app/game/renderer-*.ts"
       - "app/game/engine-facade.ts"
-      - "scripts/*rust-engine*.mjs"
-      - "scripts/benchmark-rust-browser.mjs"
+      - "app/game/VoxelGame.tsx"
+      - "app/game/engine.ts"
+      - "app/game/world.ts"
+      - "app/game/world-storage.ts"
+      - "scripts/*rust*.mjs"
+      - "scripts/*rust*.ts"
       - "tests/rust-*.test.*"
+      - "tests/renderer-*.test.*"
       - "public/engine/**"
+      - "public/renderer/**"
+      - "docs/HYBRID_RUST_ENGINE_MIGRATION_MASTER_PLAN.md"
+      - "docs/RUST_ENGINE_AUTHORITY_LEDGER.md"
       - ".github/workflows/rust-engine.yml"
   workflow_dispatch:
 
@@ -84,6 +102,14 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Verify TypeScript protocol and tooling
         run: npm run test:rust-engine
+      - name: Publish current migration gate report
+        run: node scripts/audit-rust-migration.mjs --out work/hybrid-rust-migration/ci-audit.json
+      - name: Upload migration gate report
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-migration-gates-${{ github.sha }}
+          path: work/hybrid-rust-migration/ci-audit.json
+          if-no-files-found: error
       - name: Install matching wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
       - name: Rebuild immutable browser artifact
@@ -94,3 +120,40 @@ jobs:
         run: |
           npm run check:rust-engine
           git diff --exit-code -- public/engine
+
+  windows-native-contract:
+    name: Windows native and browser contract
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup set profile minimal
+          rustup toolchain install 1.91.1 --component rustfmt,clippy --target wasm32-unknown-unknown
+          rustup default 1.91.1
+      - name: Cache Cargo downloads and targets
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/target
+          key: rust-engine-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+      - name: Native and Wasm checks
+        working-directory: engine
+        run: |
+          cargo check --workspace --all-targets --locked
+          cargo test --workspace --locked
+          cargo build --locked --release --target wasm32-unknown-unknown -p blockwild-wasm
+      - name: Use Node.js 22.13.1
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - name: Install browser dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify Windows protocol and renderer contracts
+        run: npm.cmd run test:rust-engine

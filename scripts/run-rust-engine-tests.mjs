@@ -6,15 +6,15 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsDirectory = resolve(repositoryRoot, "tests");
 const rustTests = readdirSync(testsDirectory, { withFileTypes: true })
-  .filter((entry) => entry.isFile() && /^rust-.+\.test\.(?:mjs|ts)$/.test(entry.name))
+  .filter((entry) => entry.isFile() && /^(?:rust|renderer)-.+\.test\.(?:mjs|ts)$/.test(entry.name))
   .map((entry) => `tests/${entry.name}`)
   .sort((left, right) => left.localeCompare(right, "en"));
 
 if (rustTests.length === 0) {
-  throw new Error("No Rust engine tests were discovered under tests/.");
+  throw new Error("No Rust engine or renderer tests were discovered under tests/.");
 }
 
-console.log(`Running ${rustTests.length} Rust engine test files.`);
+console.log(`Running ${rustTests.length} Rust engine and renderer test files.`);
 const result = spawnSync(
   process.execPath,
   ["--import", "tsx", "--test", ...rustTests],
