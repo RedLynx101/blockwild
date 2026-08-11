@@ -1,0 +1,101 @@
+{
+  "schema": 2,
+  "format": "blockwild-compiled-model-catalog-v2",
+  "current": "12c522f880e94c1ae527de701ae3e710fee13701d66fbb0a4ad24895557011b4",
+  "artifact": "/12c522f880e94c1ae527de701ae3e710fee13701d66fbb0a4ad24895557011b4/models.bwm2",
+  "sha256": "12c522f880e94c1ae527de701ae3e710fee13701d66fbb0a4ad24895557011b4",
+  "catalogHash": "52fd4aebb0c457f3c83af79af6b83c93",
+  "byteLength": 785824,
+  "modelCount": 252,
+  "nodeCount": 13121,
+  "source": "renderer-neutral model specs and offline production captures",
+  "runtime": {
+    "schema": 1,
+    "backend": "wgpu-webgpu",
+    "artifactHash": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259",
+    "directory": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259",
+    "module": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/renderer.js",
+    "wasm": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/renderer_bg.wasm",
+    "resourceFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/canonical-resources.bwrd",
+    "frameFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/canonical-frame.bwrf",
+    "liveResourceFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/live-resources.bwrd",
+    "liveFrameFixture": "8b15cec9736ed31e3735b8cbd3138806d2107593490719feca018b5392d53259/live-frame.bwrf",
+    "coldStartBudget": {
+      "rawBytes": 522567,
+      "gzipBytes": 151919,
+      "brotliBytes": 119311,
+      "files": [
+        "live-frame.bwrf",
+        "live-resources.bwrd",
+        "renderer.js",
+        "renderer_bg.wasm"
+      ]
+    },
+    "files": [
+      {
+        "path": "canonical-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 537,
+        "sha256": "5a1283cdca23112d46e190135af47baf2037b57473478b8c9ab73e66d9b0ad57",
+        "gzipBytes": 268,
+        "brotliBytes": 268
+      },
+      {
+        "path": "canonical-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 1097,
+        "sha256": "7900fff2d289bab000adc9b804cd2b4d40a2ead4f648cb2a57e60bbdde79dfe9",
+        "gzipBytes": 296,
+        "brotliBytes": 279
+      },
+      {
+        "path": "live-frame.bwrf",
+        "role": "frame-fixture",
+        "bytes": 96489,
+        "sha256": "29eb74b39d773fc4552bcfa73d56803406d271e775a9bf713b6ebb6a575e6c1b",
+        "gzipBytes": 12423,
+        "brotliBytes": 8793
+      },
+      {
+        "path": "live-resources.bwrd",
+        "role": "resource-fixture",
+        "bytes": 7592,
+        "sha256": "0b621f1e78b8a403b70ee4a57067b7d64e6ca6736bed35797e19d048371f87ec",
+        "gzipBytes": 978,
+        "brotliBytes": 745
+      },
+      {
+        "path": "renderer.d.ts",
+        "role": "support",
+        "bytes": 3201,
+        "sha256": "8573d9e44a2fc5b85f13c4dc3189066596749cd1ab93cc80717511bea585c560",
+        "gzipBytes": 857,
+        "brotliBytes": 722
+      },
+      {
+        "path": "renderer.js",
+        "role": "glue",
+        "bytes": 65240,
+        "sha256": "97ad612ab34c50cb3db7cb06c2d3417330bab81361e4ca39b8464d60868442c2",
+        "gzipBytes": 12014,
+        "brotliBytes": 10249
+      },
+      {
+        "path": "renderer_bg.wasm",
+        "role": "wasm",
+        "bytes": 353246,
+        "sha256": "ec8219296865be5623e28cdab9e595c3497cc48f0e0a41e795ed62549aa7922c",
+        "gzipBytes": 126504,
+        "brotliBytes": 99524
+      },
+      {
+        "path": "renderer_bg.wasm.d.ts",
+        "role": "support",
+        "bytes": 1749,
+        "sha256": "74ce0d11b364edff029a67f021673a534bf61b9fff56b7788f80704c510e05c7",
+        "gzipBytes": 334,
+        "brotliBytes": 283
+      }
+    ]
+  }
+}

@@ -1,5 +1,19 @@
 //! Renderer-independent scene fixtures and the first offscreen `wgpu` smoke path.
 
+mod extraction;
+mod extraction_wire;
+mod model_asset;
+mod scene_renderer;
+mod scene_store;
+mod visual_matrix;
+
+pub use extraction::*;
+pub use extraction_wire::*;
+pub use model_asset::*;
+pub use scene_renderer::*;
+pub use scene_store::*;
+pub use visual_matrix::*;
+
 use blockwild_protocol::{Envelope, MessageKind};
 use blockwild_types::{CanonicalHash, CanonicalHasher};
 

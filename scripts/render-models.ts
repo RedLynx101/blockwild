@@ -3,6 +3,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { createButterflyVisual } from "../app/game/butterflies.ts";
+import { createSailboatVisual } from "../app/game/boats.ts";
+import { createArrowVisual } from "../app/game/projectiles.ts";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
 import { applyDragonPose, applyDragonVariant, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER, DRAGON_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind, type DragonKind } from "../app/game/mobs.ts";
@@ -27,12 +29,27 @@ type Face = {
   emissive: boolean;
 };
 export type InspectionMetadata = {
-  source: "model-specs" | "BlockPlayerModel" | "MobVisual" | "ButterflySystem";
+  source: "model-specs" | "BlockPlayerModel" | "MobVisual" | "ButterflySystem" | "SailboatVisual";
   pose?: "standing" | "crouching" | "running" | "mining";
   variant?: ButterflyKind;
   mob?: CoreMobKind;
 };
-export type InspectionModelSpec = ModelSpec & { inspection?: InspectionMetadata };
+export type RendererHierarchyNode = Readonly<{
+  id: string;
+  parentId?: string;
+  part: string;
+  size: readonly [number, number, number];
+  position: readonly [number, number, number];
+  rotation: readonly [number, number, number];
+  color: ModelBox["color"];
+  emissive?: boolean;
+  visible: boolean;
+}>;
+export type InspectionModelSpec = ModelSpec & {
+  inspection?: InspectionMetadata;
+  /** Renderer-only local rig. Inspection boxes remain root-local for 2D tools. */
+  rendererHierarchy?: readonly RendererHierarchyNode[];
+};
 export type InspectionManifest = {
   version: 1;
   renderer: "blockwild-model-inspector";
@@ -97,6 +114,42 @@ function semanticPart(mesh: THREE.Mesh, root: THREE.Object3D) {
   return mesh.name || "body";
 }
 
+function objectSemanticPart(object: THREE.Object3D, root: THREE.Object3D) {
+  if (typeof object.userData.inspectorPart === "string") return object.userData.inspectorPart;
+  if (typeof object.userData.playerPart === "string") return object.userData.playerPart;
+  if (object instanceof THREE.Mesh) return semanticPart(object, root);
+  return object.name || "rig";
+}
+
+function isVisibleWithinRoot(object: THREE.Object3D, root: THREE.Object3D) {
+  for (let current: THREE.Object3D | null = object; current; current = current.parent) {
+    if (!current.visible) return false;
+    if (current === root) return true;
+  }
+  return false;
+}
+
+function containsRenderableDescendant(object: THREE.Object3D, root: THREE.Object3D) {
+  let found = false;
+  object.traverse((candidate) => {
+    if (candidate !== object && candidate instanceof THREE.Mesh && candidate.geometry instanceof THREE.BufferGeometry && isVisibleWithinRoot(candidate, root)) found = true;
+  });
+  return found;
+}
+
+function decomposedTransform(matrix: THREE.Matrix4) {
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  matrix.decompose(position, quaternion, scale);
+  const rotation = new THREE.Euler().setFromQuaternion(quaternion, "XYZ");
+  return {
+    position: [position.x, position.y, position.z] as const,
+    rotation: [rotation.x, rotation.y, rotation.z] as const,
+    scale: [Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z)] as const,
+  };
+}
+
 /** Converts the actual posed Three.js hierarchy into renderer-independent boxes. */
 export function objectToInspectionSpec(
   root: THREE.Object3D,
@@ -105,11 +158,43 @@ export function objectToInspectionSpec(
   root.updateWorldMatrix(true, true);
   const inverseRoot = root.matrixWorld.clone().invert();
   const boxes: ModelBox[] = [];
+  const rendererHierarchy: RendererHierarchyNode[] = [{
+    id: "__model_root__",
+    part: "model-root",
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    color: 0,
+    visible: false,
+  }];
+  const anchorByObject = new Map<THREE.Object3D, string>([[root, "__model_root__"]]);
+  const anchorObjectById = new Map<string, THREE.Object3D>([["__model_root__", root]]);
+  let anchorIndex = 0;
+  root.traverse((object) => {
+    if (object === root || !isVisibleWithinRoot(object, root) || !containsRenderableDescendant(object, root)) return;
+    let parent = object.parent;
+    while (parent && !anchorByObject.has(parent)) parent = parent.parent;
+    const parentId = parent ? anchorByObject.get(parent) : "__model_root__";
+    const parentObject = anchorObjectById.get(parentId ?? "__model_root__") ?? root;
+    const localMatrix = parentObject.matrixWorld.clone().invert().multiply(object.matrixWorld);
+    const transform = decomposedTransform(localMatrix);
+    const id = `__rig_${++anchorIndex}__`;
+    anchorByObject.set(object, id);
+    anchorObjectById.set(id, object);
+    rendererHierarchy.push({
+      id,
+      parentId,
+      part: objectSemanticPart(object, root),
+      size: [1, 1, 1],
+      position: transform.position,
+      rotation: transform.rotation,
+      color: 0,
+      visible: false,
+    });
+  });
   const usedIds = new Set<string>();
   root.traverse((object) => {
-    let visible = object.visible;
-    for (let ancestor = object.parent; visible && ancestor && ancestor !== root; ancestor = ancestor.parent) visible = ancestor.visible;
-    if (!(object instanceof THREE.Mesh) || !visible || !(object.geometry instanceof THREE.BufferGeometry)) return;
+    if (!(object instanceof THREE.Mesh) || !isVisibleWithinRoot(object, root) || !(object.geometry instanceof THREE.BufferGeometry)) return;
     object.geometry.computeBoundingBox();
     const geometryBounds = object.geometry.boundingBox;
     if (!geometryBounds || geometryBounds.isEmpty()) return;
@@ -126,6 +211,13 @@ export function objectToInspectionSpec(
     let id = baseId;
     for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${baseId}-${suffix}`;
     usedIds.add(id);
+    let parentObject: THREE.Object3D | null = anchorByObject.has(object) ? object : object.parent;
+    while (parentObject && !anchorByObject.has(parentObject)) parentObject = parentObject.parent;
+    const parentId = parentObject ? anchorByObject.get(parentObject) : "__model_root__";
+    const parentWorld = parentObject?.matrixWorld ?? root.matrixWorld;
+    const rendererMatrix = parentWorld.clone().invert().multiply(object.matrixWorld);
+    const rendererTransform = decomposedTransform(rendererMatrix);
+    const rendererCenter = geometryBounds.getCenter(new THREE.Vector3()).applyMatrix4(rendererMatrix);
     boxes.push({
       id,
       part: semanticPart(object, root),
@@ -136,15 +228,31 @@ export function objectToInspectionSpec(
       color: appearance.color,
       ...(appearance.emissive ? { emissive: true } : {}),
     });
+    rendererHierarchy.push({
+      id,
+      parentId,
+      part: semanticPart(object, root),
+      size: [
+        Math.abs(geometrySize.x * rendererTransform.scale[0]),
+        Math.abs(geometrySize.y * rendererTransform.scale[1]),
+        Math.abs(geometrySize.z * rendererTransform.scale[2]),
+      ],
+      position: [rendererCenter.x, rendererCenter.y, rendererCenter.z],
+      rotation: rendererTransform.rotation,
+      color: appearance.color,
+      ...(appearance.emissive ? { emissive: true } : {}),
+      visible: true,
+    });
   });
   if (!boxes.length) throw new Error(`Object '${descriptor.id}' did not contain renderable box meshes.`);
-  const provisional: InspectionModelSpec = { ...descriptor, boxes };
+  const provisional: InspectionModelSpec = { ...descriptor, boxes, rendererHierarchy };
   const minimums = boxes.map((modelBox) => Math.min(...boxVertices(modelBox).vertices.map((vertex) => vertex.y)));
   const lowest = Math.min(...minimums);
   provisional.groundContactBoxIds = descriptor.groundY === undefined
     ? undefined
     : boxes.filter((_, index) => Math.abs(minimums[index] - lowest) < 0.0001).map((modelBox) => modelBox.id);
-  return assertModelSpec(provisional) as InspectionModelSpec;
+  assertModelSpec(provisional);
+  return provisional;
 }
 
 export function createPlayerInspectionSpecs() {
@@ -214,6 +322,35 @@ export function createSkeletonArrowInspectionSpec(): InspectionModelSpec {
   const spec = objectToInspectionSpec(arrow, {
     id: "skeleton-arrow",
     label: "Skeleton Arrow",
+    category: "utility",
+    front: "-z",
+    inspection: { source: "MobVisual" },
+  });
+  disposeObject(arrow);
+  return spec;
+}
+
+/** Captures the actual two-seat gameplay sailboat for the compiled renderer catalog. */
+export function createSailboatInspectionSpec(): InspectionModelSpec {
+  const sailboat = createSailboatVisual("renderer-catalog");
+  const spec = objectToInspectionSpec(sailboat, {
+    id: "sailboat",
+    label: "Wildwood Sailboat",
+    category: "utility",
+    front: "-z",
+    groundY: 0,
+    inspection: { source: "SailboatVisual" },
+  });
+  disposeObject(sailboat);
+  return spec;
+}
+
+/** Captures the gameplay arrow used by player and creature ranged attacks. */
+export function createArrowInspectionSpec(): InspectionModelSpec {
+  const arrow = createArrowVisual();
+  const spec = objectToInspectionSpec(arrow, {
+    id: "arrow-projectile",
+    label: "Arrow Projectile",
     category: "utility",
     front: "-z",
     inspection: { source: "MobVisual" },
@@ -320,7 +457,7 @@ export function buildInspectionSpecs(): InspectionModelSpec[] {
   const base = INSPECTOR_MODEL_SPECS
     .filter((spec) => spec.id !== "ridgeback" && spec.id !== "zombie")
     .map((spec) => ({ ...spec, inspection: { source: "model-specs" as const } }));
-  return [...base, createSkeletonArrowInspectionSpec(), ...createMobInspectionSpecs(), ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
+  return [...base, createSkeletonArrowInspectionSpec(), createArrowInspectionSpec(), createSailboatInspectionSpec(), ...createMobInspectionSpecs(), ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
 }
 
 function escapeXml(value: string) {

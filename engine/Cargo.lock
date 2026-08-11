@@ -113,6 +113,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockwild-render-web"
+version = "0.1.0"
+dependencies = [
+ "blockwild-render",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
 name = "blockwild-simulation"
 version = "0.1.0"
 dependencies = [
