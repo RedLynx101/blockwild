@@ -193,7 +193,16 @@ export async function instantiatePreparedRustArtifact(
     now?: Clock;
   }> = {},
 ): Promise<RustArtifactProbeReport> {
-  const importer = options.importer ?? ((url: string) => import(/* webpackIgnore: true */ url) as Promise<unknown>);
+  const importer = options.importer ?? (async (url: string) => {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    const moduleUrl = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
+    try {
+      return await import(/* @vite-ignore */ /* webpackIgnore: true */ moduleUrl) as unknown;
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  });
   const now = options.now ?? (() => performance.now());
   const startedAt = now();
   const namespace = record(await importer(prepared.artifact.moduleUrl));

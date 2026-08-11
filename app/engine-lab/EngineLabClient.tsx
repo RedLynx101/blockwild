@@ -37,6 +37,10 @@ type PersistenceReport = Readonly<{
   commitDurationMs: number | null;
   checkpointRoundTrip: boolean;
   atomicConflictRejected: boolean;
+  protocolCommitVerified: boolean;
+  reopenedRecoveryVerified: boolean;
+  corruptionDetected: boolean;
+  quotaClassified: boolean;
   legacyNamespaceUntouched: boolean;
   message: string;
 }>;
@@ -93,6 +97,10 @@ const EMPTY_PERSISTENCE: PersistenceReport = {
   commitDurationMs: null,
   checkpointRoundTrip: false,
   atomicConflictRejected: false,
+  protocolCommitVerified: false,
+  reopenedRecoveryVerified: false,
+  corruptionDetected: false,
+  quotaClassified: false,
   legacyNamespaceUntouched: true,
   message: "Transactional persistence probe has not run.",
 };
@@ -135,6 +143,44 @@ type EngineServiceHandle = {
 };
 
 type PersistenceDiagnosticHandle = { destroyForDiagnostics(): Promise<void> };
+
+const RUST_PERSISTENCE_COMMIT_FIXTURE_HEX = "4257505201000100080706050403120097010000de9d4c65a885b56180a589948ab71d5cbf0000004257505301000100a3000000abd1fc0d1b6fa825400facb0010574b6130000007472616e73616374696f6e3a62726f777365720d000000776f726c643a62726f777365720f000000636865636b706f696e743a626173650000000000000000010000000000000001000000010d000000776f726c643a62726f77736572090000006f766572776f726c64020d00000063726561747572653ac383c2b100010000000000000006000000007f80ffc3b1888ae5103c911ec390a7961e2dbe878cd00000004257505301000200b400000001bcbcf3582adab980a589948ab71d5c0e000000636865636b706f696e743a6f6e65000d000000776f726c643a62726f77736572010000000000000011111111111111111111111111111111222222222222222222222222222222220700000000000000010000000d000000776f726c643a62726f77736572090000006f766572776f726c64020d00000063726561747572653ac383c2b10100000000000000060000003b522b40a24d651c90a7961e2dfe905d2112991ca7bf42a3c0f06ce27bd65760";
+
+function diagnosticHexBytes(value: string) {
+  if (value.length % 2 !== 0 || !/^[0-9a-f]+$/u.test(value)) throw new Error("Persistence fixture is not canonical hexadecimal.");
+  return Uint8Array.from({ length: value.length / 2 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16));
+}
+
+function indexedDbRequest<T>(request: IDBRequest<T>) {
+  return new Promise<T>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB diagnostic request failed."));
+  });
+}
+
+function indexedDbTransaction(transaction: IDBTransaction) {
+  return new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB diagnostic transaction aborted."));
+    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB diagnostic transaction failed."));
+  });
+}
+
+async function corruptDiagnosticPersistenceRecord(databaseName: string, key: string) {
+  const request = indexedDB.open(databaseName, 1);
+  const database = await indexedDbRequest(request);
+  try {
+    const transaction = database.transaction("records", "readwrite", { durability: "strict" });
+    const complete = indexedDbTransaction(transaction);
+    const store = transaction.objectStore("records");
+    const record = await indexedDbRequest(store.get(key)) as Readonly<Record<string, unknown>> | undefined;
+    if (!record) throw new Error("Persistence corruption probe could not find its committed record.");
+    store.put({ ...record, payload: Uint8Array.of(0xde, 0xad, 0xbe, 0xef) });
+    await complete;
+  } finally {
+    database.close();
+  }
+}
 
 declare global {
   interface Window {
@@ -363,55 +409,76 @@ export default function EngineLabClient() {
 
     let persistenceReport: PersistenceReport;
     try {
-      const [{ IndexedDbPersistenceAdapterV1 }, persistence] = await Promise.all([
+      const [{ IndexedDbPersistenceAdapterV1 }, { RustPersistenceBrowserRuntimeV1 }, protocol, persistence] = await Promise.all([
         import("../game/indexeddb-persistence-adapter"),
+        import("../game/rust-persistence-runtime-adapter"),
+        import("../game/rust-persistence-runtime-contract"),
         import("../game/persistence-journal-contract"),
       ]);
       const database = `blockwild-rust-persistence-lab-${run}-${Date.now().toString(36)}`;
       const adapter = new IndexedDbPersistenceAdapterV1(indexedDB, database);
       persistenceRef.current = adapter;
-      const alpha = { universeId: "lab", locationId: "overworld", kind: "entity" as const, recordId: "alpha" };
-      const zeta = { universeId: "lab", locationId: "overworld", kind: "entity" as const, recordId: "zeta" };
-      const transaction = persistence.createPersistenceTransactionV1({
-        transactionId: "lab-transaction-1", worldId: "lab-world", checkpointId: "lab-checkpoint", expectedJournalSequence: 0, nextJournalSequence: 1,
-        mutations: [
-          { operation: "put", address: zeta, expectedRecordRevision: null, nextRecordRevision: 1, payload: Uint8Array.from([9, 8, 7]) },
-          { operation: "put", address: alpha, expectedRecordRevision: null, nextRecordRevision: 1, payload: Uint8Array.from([1, 2, 3]) },
-        ],
-      });
+      const runtime = new RustPersistenceBrowserRuntimeV1(adapter);
+      const commitFixture = diagnosticHexBytes(RUST_PERSISTENCE_COMMIT_FIXTURE_HEX);
       const commitStartedAt = performance.now();
-      const receipt = await adapter.commit(transaction);
+      const committed = protocol.decodeRustPersistenceResponseV1(await runtime.execute(commitFixture));
       const commitDurationMs = Math.max(0, performance.now() - commitStartedAt);
-      if (receipt.status !== "committed") throw new Error(`${receipt.code}: ${receipt.message}`);
-      const alphaMutation = transaction.mutations.find((mutation) => mutation.address.recordId === "alpha");
-      if (!alphaMutation || alphaMutation.operation !== "put") throw new Error("canonical transaction lost the alpha record");
-      const checkpoint = persistence.createPersistenceCheckpointV1({
-        checkpointId: "lab-checkpoint", parentCheckpointId: null, worldId: "lab-world", journalSequence: 1,
-        generatorHash: "0123456789abcdef0123456789abcdef", contentHash: "fedcba9876543210fedcba9876543210", createdAt: 1,
-        records: transaction.mutations.flatMap((mutation) => mutation.operation === "put" ? [{ address: mutation.address, revision: mutation.nextRecordRevision, byteLength: mutation.payload.byteLength, payloadHash: mutation.payloadHash }] : []),
+      const protocolCommitVerified = committed.kind === "commit" && committed.code === "committed" && committed.verifiedReadback;
+      if (!protocolCommitVerified) throw new Error(committed.kind === "error" ? `${committed.code}: ${committed.message}` : "Rust persistence request did not prove an exact commit.");
+
+      const duplicate = protocol.decodeRustPersistenceResponseV1(await runtime.execute(commitFixture));
+      const atomicConflictRejected = duplicate.kind === "commit" && (duplicate.code === "stale-sequence" || duplicate.code === "record-conflict") && !duplicate.verifiedReadback;
+
+      await adapter.close();
+      const reopenedAdapter = new IndexedDbPersistenceAdapterV1(indexedDB, database);
+      persistenceRef.current = reopenedAdapter;
+      const reopenedRuntime = new RustPersistenceBrowserRuntimeV1(reopenedAdapter);
+      const recovery = protocol.decodeRustPersistenceResponseV1(await reopenedRuntime.execute(
+        protocol.encodeRustPersistenceRecoverLatestRequestV1(2, "world:browser"),
+      ));
+      const recoveredPayload = recovery.kind === "recovery" ? recovery.recordPayloads[0] : null;
+      const reopenedRecoveryVerified = recovery.kind === "recovery"
+        && recovery.code === "ready"
+        && recovery.checkpoint?.checkpointHash === committed.checkpointHash
+        && recoveredPayload?.join(",") === "0,127,128,255,195,177";
+      const checkpointRoundTrip = reopenedRecoveryVerified;
+
+      const descriptor = recovery.kind === "recovery" ? recovery.checkpoint?.records[0] : null;
+      if (!descriptor) throw new Error("Rust recovery did not return the committed descriptor.");
+      await corruptDiagnosticPersistenceRecord(database, persistence.persistenceRecordKeyV1(descriptor.address));
+      const corrupted = protocol.decodeRustPersistenceResponseV1(await reopenedRuntime.execute(
+        protocol.encodeRustPersistenceRecoverLatestRequestV1(3, "world:browser"),
+      ));
+      const corruptionDetected = corrupted.kind === "recovery"
+        && corrupted.code === "corrupt"
+        && corrupted.corruptRecordKeys.includes(persistence.persistenceRecordKeyV1(descriptor.address));
+
+      const quotaRuntime = new RustPersistenceBrowserRuntimeV1({
+        commit: async (transaction) => Object.freeze({
+          status: "rejected" as const,
+          transactionId: transaction.transactionId,
+          code: "quota" as const,
+          message: "Synthetic browser quota gate.",
+        }),
+        readLatestCheckpoint: async () => null,
+        readCheckpoint: async () => null,
+        readRecord: async () => null,
       });
-      await adapter.putCheckpoint(checkpoint);
-      const loadedCheckpoint = await adapter.readCheckpoint(checkpoint.worldId, checkpoint.checkpointId);
-      const loadedAlpha = await adapter.readRecord(alpha, 1);
-      const conflict = persistence.createPersistenceTransactionV1({
-        transactionId: "lab-transaction-conflict", worldId: "lab-world", checkpointId: "lab-checkpoint", expectedJournalSequence: 1, nextJournalSequence: 2,
-        mutations: [
-          { operation: "put", address: alpha, expectedRecordRevision: 9, nextRecordRevision: 10, payload: Uint8Array.from([4]) },
-          { operation: "put", address: zeta, expectedRecordRevision: 1, nextRecordRevision: 2, payload: Uint8Array.from([6]) },
-        ],
-      });
-      const conflictReceipt = await adapter.commit(conflict);
-      const alphaAfterConflict = await adapter.readRecord(alpha, 1);
-      const checkpointRoundTrip = loadedCheckpoint?.checkpointHash === checkpoint.checkpointHash && loadedAlpha?.join(",") === "1,2,3";
-      const atomicConflictRejected = conflictReceipt.status === "rejected" && conflictReceipt.code === "record-conflict" && alphaAfterConflict?.join(",") === "1,2,3";
-      if (!checkpointRoundTrip || !atomicConflictRejected) throw new Error("IndexedDB journal failed checkpoint readback or atomic rollback");
+      const quota = protocol.decodeRustPersistenceResponseV1(await quotaRuntime.execute(commitFixture));
+      const quotaClassified = quota.kind === "commit" && quota.code === "quota" && !quota.verifiedReadback;
+
+      if (!atomicConflictRejected || !reopenedRecoveryVerified || !corruptionDetected || !quotaClassified) {
+        throw new Error("Rust browser persistence did not pass duplicate, reopen, corruption, and quota gates.");
+      }
       persistenceReport = {
-        status: "ready", database, commitDurationMs, checkpointRoundTrip, atomicConflictRejected, legacyNamespaceUntouched: true,
-        message: "Strict IndexedDB journal committed two records, round-tripped its checkpoint, and rejected a conflicting batch without partial mutation.",
+        status: "ready", database, commitDurationMs, checkpointRoundTrip, atomicConflictRejected,
+        protocolCommitVerified, reopenedRecoveryVerified, corruptionDetected, quotaClassified, legacyNamespaceUntouched: true,
+        message: "A native-Rust BWPR committed through strict IndexedDB, survived close/reopen, rejected a duplicate atomically, reported deliberate corruption, and classified quota failure.",
       };
     } catch (error) {
       persistenceReport = {
-        status: "fallback", database: null, commitDurationMs: null, checkpointRoundTrip: false, atomicConflictRejected: false, legacyNamespaceUntouched: true,
+        status: "fallback", database: null, commitDurationMs: null, checkpointRoundTrip: false, atomicConflictRejected: false,
+        protocolCommitVerified: false, reopenedRecoveryVerified: false, corruptionDetected: false, quotaClassified: false, legacyNamespaceUntouched: true,
         message: error instanceof Error ? error.message : String(error),
       };
     }
@@ -525,9 +592,13 @@ export default function EngineLabClient() {
 
           <DiagnosticCard title="Rust journal adapter" kicker="INDEXEDDB · ATOMICITY · READBACK" status={snapshot.persistence.status} message={snapshot.persistence.message}>
             <Metric label="Database" value={snapshot.persistence.database ?? "ephemeral / unavailable"} code />
-            <Metric label="Two-record commit" value={milliseconds(snapshot.persistence.commitDurationMs)} />
+            <Metric label="BWPR commit" value={milliseconds(snapshot.persistence.commitDurationMs)} />
+            <Metric label="Rust protocol receipt" value={snapshot.persistence.protocolCommitVerified ? "verified" : "not verified"} />
             <Metric label="Checkpoint readback" value={snapshot.persistence.checkpointRoundTrip ? "verified" : "not verified"} />
+            <Metric label="Close / reopen" value={snapshot.persistence.reopenedRecoveryVerified ? "verified" : "not verified"} />
             <Metric label="Conflict rollback" value={snapshot.persistence.atomicConflictRejected ? "verified" : "not verified"} />
+            <Metric label="Corruption report" value={snapshot.persistence.corruptionDetected ? "verified" : "not verified"} />
+            <Metric label="Quota response" value={snapshot.persistence.quotaClassified ? "verified" : "not verified"} />
             <Metric label="Legacy namespace" value={snapshot.persistence.legacyNamespaceUntouched ? "untouched" : "modified"} />
           </DiagnosticCard>
 

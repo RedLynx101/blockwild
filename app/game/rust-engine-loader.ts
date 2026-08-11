@@ -141,9 +141,27 @@ const requiredExports: readonly (keyof RustEngineWasmExports)[] = [
   "blockwild_engine_destroy",
 ];
 
-/** This import is intentionally indirect and is never evaluated during SSR. */
+/**
+ * Load published Wasm glue without asking Vite/Next to resolve a `/public`
+ * module as application source. The artifact is immutable and its URL was
+ * selected from the content-addressed manifest, so fetching it and importing a
+ * short-lived module Blob preserves native ESM while keeping bundlers out of
+ * the runtime path.
+ */
 async function importUnbundledRustModule(artifact: ResolvedRustEngineArtifact) {
-  return import(/* webpackIgnore: true */ artifact.moduleUrl) as Promise<unknown>;
+  if (typeof fetch !== "function" || typeof URL?.createObjectURL !== "function" || typeof Blob === "undefined") {
+    throw new RustEngineLoadError("artifact-unavailable", "Published Rust modules require browser fetch and Blob URL support");
+  }
+  const response = await fetch(artifact.moduleUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new RustEngineLoadError("artifact-unavailable", `Rust engine module returned HTTP ${response.status}`);
+  }
+  const moduleUrl = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
+  try {
+    return await import(/* @vite-ignore */ /* webpackIgnore: true */ moduleUrl) as unknown;
+  } finally {
+    URL.revokeObjectURL(moduleUrl);
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
