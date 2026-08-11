@@ -94,11 +94,17 @@ async function audit() {
     "app/renderer-lab/",
   ];
   const normalPathThreeImports = [];
+  const staticThreeCompatibilityImports = [];
   for (const file of sourceFiles) {
     const source = await text(file);
-    if (!/(?:from\s+["']three["']|import\s*\(["']three["']\))/u.test(source)) continue;
     const name = relative(file);
-    if (!allowedThreePrefixes.some((prefix) => name.startsWith(prefix))) normalPathThreeImports.push(name);
+    const compatibilityOnly = allowedThreePrefixes.some((prefix) => name.startsWith(prefix));
+    if (!compatibilityOnly && /(?:from\s+["']three["']|import\s*\(["']three["']\))/u.test(source)) {
+      normalPathThreeImports.push(name);
+    }
+    if (!compatibilityOnly && /(?:^|\n)\s*import(?:\s+[^;]+?\s+from\s+|\s*)["'][^"']*three-compat[^"']*["']/u.test(source)) {
+      staticThreeCompatibilityImports.push(name);
+    }
   }
 
   const legacyAuthoritySymbols = [
@@ -158,6 +164,7 @@ async function audit() {
   if (pendingAuthority.length) blockers.push(`${pendingAuthority.length} migratable authority rows are not Rust-authoritative or retired`);
   if (openLogGates.length) blockers.push(`${openLogGates.length} implementation-log completion gates remain open`);
   if (normalPathThreeImports.length) blockers.push(`${normalPathThreeImports.length} normal-path app modules still import Three.js`);
+  if (staticThreeCompatibilityImports.length) blockers.push(`${staticThreeCompatibilityImports.length} normal-path modules statically import the Three.js compatibility bundle`);
   if (legacyAuthoritySymbols.length) blockers.push(`${legacyAuthoritySymbols.length} known TypeScript authority implementations remain`);
   if (missingWasmExports.length) blockers.push(`${missingWasmExports.length} integrated runtime Wasm exports are missing`);
   if (declaredEngineDefault?.toLowerCase() !== "rust") blockers.push(`ledger engine default is ${declaredEngineDefault ?? "unset"}`);
@@ -181,6 +188,7 @@ async function audit() {
       authorityPending: pendingAuthority.length,
       openLogGates: openLogGates.length,
       normalPathThreeImports: normalPathThreeImports.length,
+      staticThreeCompatibilityImports: staticThreeCompatibilityImports.length,
       legacyAuthoritySymbols: legacyAuthoritySymbols.length,
       missingWasmExports: missingWasmExports.length,
     },
@@ -199,6 +207,7 @@ async function audit() {
     uncheckedPlanItems,
     openLogGates,
     normalPathThreeImports,
+    staticThreeCompatibilityImports,
     legacyAuthoritySymbols,
     missingWasmExports,
   };

@@ -57,6 +57,10 @@ The final renderer protocol separates durable GPU resources from lightweight fra
 
 The early R5-R9 TypeScript DTOs and native Rust crates were deliberately built as independent safety contracts. That exposed naming and hash-domain drift before authority promotion: a pair of locally valid command models is not a production protocol. Live cutover therefore requires one generated or byte-tested wire schema per domain, with TypeScript fixture bytes decoded by native and Wasm code and native receipts decoded by TypeScript. The integrated worker will not translate between two hand-maintained semantic models, and an injected fake-kernel test cannot satisfy this gate. This adds convergence work but removes a permanent source of multiplayer, save, and replay divergence.
 
+### Asynchronous authority receipts, not optimistic gameplay commits
+
+The browser worker boundary is asynchronous, while the legacy `ChunkWorld.setBlock` surface returns a synchronous boolean that existing callers may immediately use to consume an item, advance a quest, or emit a multiplayer result. R4 may mirror an accepted Rust edit into presentation immediately after its receipt, but a synchronous optimistic `true` cannot become the production transaction boundary: a later stale-revision rejection or worker restart would split world state from inventory and progression. Final promotion therefore routes block edits and their gameplay consequences through one awaited integrated Rust command receipt. The compatibility `ChunkWorld` method may remain as a presentation/cache adapter during the measured rollback window, but it cannot independently promise success.
+
 ### Full generated-chunk authority
 
 The first R4 store contract held resident cells and authored edits but omitted height maps, biome columns, light streams, leaf/emissive indices, and structure markers. That would have made Rust unable to own maps, POIs, lighting publication, or exact cache/save regeneration. The store now retains a validated, renderer-independent auxiliary record per resident chunk and includes it in its canonical state hash. It remains disposable generated state—authored edits stay in the durable journal—but it is no longer silently dropped at the R3/R4 boundary.
@@ -72,6 +76,7 @@ The combined-runtime benchmark then exposed three additional linear costs: cloni
 - Promote the complete v18 generator with seed/chunk/POI byte parity and no `ChunkWorld` construction in its worker.
 - Promote Rust world authority, then physics, entities, gameplay, persistence validation, and host/agent networking through coarse Wasm paths.
 - Converge the independently authored R5-R9 TypeScript/Rust DTOs on one byte-tested generated schema before any domain becomes production authority.
+- Replace optimistic synchronous `ChunkWorld` edit success with awaited integrated Rust receipts before world edits, inventory consumption, quests, or multiplayer results are promoted.
 - Complete renderer-independent extraction for every visible domain.
 - Render the integrated game through `wgpu`, promote it on the supported WebGPU profile, and isolate Three.js into an explicit compatibility bundle.
 - Remove authoritative state/rules from `engine.ts` and `world.ts`; keep only browser/UI/platform adapters.
