@@ -5,10 +5,11 @@ import {
   createEmptyRustEntityAuthoritySnapshotR6V2,
   decodeRustEntityAuthoritySnapshotR6V2,
   decodeRustEntityCompatibilityRecordR6V1,
-  decodeRustEntityExtractionR6V2,
+  decodeRustEntityExtractionR6V3,
   encodeRustEntityAuthoritySnapshotR6V2,
   encodeRustEntityCompatibilityRecordR6V1,
-  encodeRustEntityExtractionR6V2,
+  encodeRustEntityExtractionR6V3,
+  rustEntityExtractionPromotionStateR6V3,
 } from "../app/game/rust-entity-authority-codec-r6.ts";
 import type {
   RustEntityAuthoritySnapshotR6V2,
@@ -31,7 +32,7 @@ const ID = (BigInt(1) << BigInt(32)) | BigInt(1);
 const LOCATION = (BigInt(2) << BigInt(32)) | BigInt(7);
 const WIRE_FIXTURE = JSON.parse(readFileSync(new URL("./fixtures/rust-engine/r6/entity-wire-v1.json", import.meta.url), "utf8")) as {
   authority: { emptyHex: string; maximumBytes: number };
-  extraction: { emptyHex: string; maximumBytes: number; maximumRecords: number };
+  extraction: { emptyHex: string; headerBytes: number; maximumBytes: number; maximumRecords: number };
 };
 
 function compatibility(externalEntityId = "wyrm-雪-🦋"): RustEntityCompatibilityRecordR6 {
@@ -138,10 +139,21 @@ test("BWEC v1 is byte-stable across high-byte UTF-8 and canonical maps", () => {
 
 test("checked-in R6 wire fixture freezes empty authority and extraction headers", () => {
   assert.equal(Buffer.from(encodeRustEntityAuthoritySnapshotR6V2(createEmptyRustEntityAuthoritySnapshotR6V2())).toString("hex"), WIRE_FIXTURE.authority.emptyHex);
-  assert.equal(Buffer.from(encodeRustEntityExtractionR6V2({ schema: 2, extractionRevision: BigInt(0), total: 0, selected: 0, omitted: 0, records: [] })).toString("hex"), WIRE_FIXTURE.extraction.emptyHex);
+  assert.equal(Buffer.from(encodeRustEntityExtractionR6V3({
+    schema: 3,
+    extractionRevision: BigInt(0),
+    authorityTick: BigInt(0),
+    contentManifestHash: new Uint8Array(16),
+    contentReady: false,
+    total: 0,
+    selected: 0,
+    omitted: 0,
+    records: [],
+  })).toString("hex"), WIRE_FIXTURE.extraction.emptyHex);
   assert.equal(WIRE_FIXTURE.authority.maximumBytes, 64 * 1_048_576);
   assert.equal(WIRE_FIXTURE.extraction.maximumBytes, 4 * 1_048_576);
   assert.equal(WIRE_FIXTURE.extraction.maximumRecords, 4_096);
+  assert.equal(WIRE_FIXTURE.extraction.headerBytes, 51);
 });
 
 test("BWEA v2 round-trips full typed authority without losing unknown bytes or u64 revisions", () => {
@@ -167,36 +179,79 @@ test("snapshot decoder rejects corrupt magic, schema, truncation, trailing data,
   assert.throws(() => encodeRustEntityAuthoritySnapshotR6V2({ ...inconsistent, free: [1] }), /free set/);
 });
 
-test("BWR6 v2 enforces bounded hot-then-cold extraction and preserves renderer records", () => {
+test("BWR6 v3 preserves authoritative renderer state and exact header offsets", () => {
   const record = compatibility();
-  const encoded = encodeRustEntityExtractionR6V2({
-    schema: 2,
+  const typed = components(record);
+  const contentManifestHash = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
+  const modelHash = Uint8Array.from({ length: 16 }, (_, index) => 0xf0 - index);
+  const encoded = encodeRustEntityExtractionR6V3({
+    schema: 3,
     extractionRevision: BigInt("9007199254740997"),
+    authorityTick: BigInt("9007199254740999"),
+    contentManifestHash,
+    contentReady: true,
     total: 3,
     selected: 2,
     omitted: 1,
     records: [
       {
-        entityId: ID, residency: "hot", class: record.class, simulationTier: "hero", protection: BigInt(5), externalEntityId: record.externalEntityId,
-        specimenId: record.specimenId, kindKey: record.kindKey, variantKey: record.variantKey, name: record.name, modelKey: "ember-wyrm-adult",
+        entityId: ID, residency: "hot", class: record.class, simulationTier: "hero", protection: BigInt(5), entityRevision: BigInt(77), externalEntityId: record.externalEntityId,
+        specimenId: record.specimenId, kindKey: record.kindKey, variantKey: record.variantKey, name: record.name, modelKey: "ember-wyrm-adult", modelRevision: 4, modelHash,
         position: record.position, yaw: record.yaw, velocity: record.velocity, health: record.health, maximumHealth: record.maximumHealth, tamed: record.tamed,
+        ageTicks: record.ageTicks, movementMode: typed.locomotion.movementMode, grounded: typed.locomotion.grounded, submerged: typed.locomotion.submerged,
+        lastDamageTick: typed.vitals.lastDamageTick, action: typed.locomotion.action, equipment: typed.equipment, mount: typed.mount, research: record.research,
       },
       {
-        entityId: (BigInt(3) << BigInt(32)) | BigInt(2), residency: "cold", class: "creature", simulationTier: "dormant", protection: BigInt(0),
-        externalEntityId: "cold-雪", specimenId: "cold-specimen", kindKey: "mossling", variantKey: null, name: null, modelKey: "mossling",
+        entityId: (BigInt(3) << BigInt(32)) | BigInt(2), residency: "cold", class: "creature", simulationTier: "dormant", protection: BigInt(0), entityRevision: BigInt(3),
+        externalEntityId: "cold-雪", specimenId: "cold-specimen", kindKey: "mossling", variantKey: null, name: null, modelKey: "mossling", modelRevision: 1, modelHash,
         position: { x: -1, y: 12, z: 3 }, yaw: 0, velocity: { x: 0, y: 0, z: 0 }, health: 4, maximumHealth: 4, tamed: false,
+        ageTicks: BigInt(200), movementMode: "ground", grounded: true, submerged: false, lastDamageTick: BigInt(0),
+        action: { key: "idle", phase: 0, startedTick: BigInt(0), endsTick: BigInt(0), target: null }, equipment: [],
+        mount: { parentMount: null, occupiedSeat: null, acceptsRiders: false, saddleKey: null, seats: [] }, research: [["ecology", 1]],
       },
     ],
   });
-  assert.deepEqual([...encoded.subarray(0, 6)], [0x42, 0x57, 0x52, 0x36, 2, 0]);
-  const decoded = decodeRustEntityExtractionR6V2(encoded);
+  const header = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+  assert.deepEqual([...encoded.subarray(0, 6)], [0x42, 0x57, 0x52, 0x36, 3, 0]);
+  assert.equal(header.getBigUint64(6, true), BigInt("9007199254740997"));
+  assert.equal(header.getBigUint64(14, true), BigInt("9007199254740999"));
+  assert.deepEqual(encoded.subarray(22, 38), contentManifestHash);
+  assert.equal(header.getUint8(38), 1);
+  assert.equal(header.getUint32(39, true), 3);
+  assert.equal(header.getUint32(43, true), 2);
+  assert.equal(header.getUint32(47, true), 1);
+  const decoded = decodeRustEntityExtractionR6V3(encoded);
   assert.equal(decoded.extractionRevision, BigInt("9007199254740997"));
+  assert.equal(decoded.authorityTick, BigInt("9007199254740999"));
   assert.equal(decoded.records[0].name, "Mírë 雪");
+  assert.equal(decoded.records[0].entityRevision, BigInt(77));
+  assert.deepEqual(decoded.records[0].equipment, typed.equipment);
+  assert.deepEqual(decoded.records[0].mount, typed.mount);
+  assert.deepEqual(decoded.records[0].research, [["ecology", 9], ["声", 3]]);
   assert.equal(decoded.omitted, 1);
-  assert.deepEqual(encodeRustEntityExtractionR6V2(decoded), encoded);
+  assert.deepEqual(rustEntityExtractionPromotionStateR6V3(decoded), { ready: true, blockers: [] });
+  assert.deepEqual(encodeRustEntityExtractionR6V3(decoded), encoded);
   const corrupt = encoded.slice();
-  new DataView(corrupt.buffer, corrupt.byteOffset).setUint32(22, 2, true); // omitted, so selected + omitted != total
-  assert.throws(() => decodeRustEntityExtractionR6V2(corrupt), /counts are inconsistent/);
+  new DataView(corrupt.buffer, corrupt.byteOffset).setUint32(47, 2, true);
+  assert.throws(() => decodeRustEntityExtractionR6V3(corrupt), /counts are inconsistent/);
+  const oldSchema = encoded.slice();
+  new DataView(oldSchema.buffer, oldSchema.byteOffset).setUint16(4, 2, true);
+  assert.throws(() => decodeRustEntityExtractionR6V3(oldSchema), /unsupported extraction schema 2/);
+  const zeroHash = new Uint8Array(16);
+  const blocked = {
+    ...decoded,
+    contentReady: false,
+    contentManifestHash: zeroHash,
+    records: decoded.records.map((item, index) => index === 0 ? { ...item, modelRevision: 0, modelHash: zeroHash } : item),
+  };
+  const blockedDecoded = decodeRustEntityExtractionR6V3(encodeRustEntityExtractionR6V3(blocked));
+  assert.equal(blockedDecoded.contentReady, false);
+  assert.equal(blockedDecoded.records[0].modelRevision, 0);
+  assert.deepEqual(blockedDecoded.records[0].modelHash, zeroHash);
+  assert.deepEqual(rustEntityExtractionPromotionStateR6V3(blockedDecoded), {
+    ready: false,
+    blockers: ["content-not-ready", "content-manifest-zero", "model-revision-zero", "model-hash-zero"],
+  });
 });
 
 class SnapshotKernel implements RustEntityAuthorityKernelR6 {

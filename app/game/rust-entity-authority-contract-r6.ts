@@ -257,33 +257,53 @@ export type RustEntityAuthoritySnapshotR6V2 = Readonly<{
   cold: readonly RustEntityColdRecordR6[];
 }>;
 
-export type RustEntityExtractionRecordR6V2 = Readonly<{
+export type RustEntityExtractionRecordR6V3 = Readonly<{
   entityId: RustEntityIdR6;
   residency: RustEntityResidencyR6;
   class: RustEntityClassR6;
   simulationTier: RustEntitySimulationTierR6;
   protection: bigint;
+  entityRevision: bigint;
   externalEntityId: string;
   specimenId: string;
   kindKey: string;
   variantKey: string | null;
   name: string | null;
   modelKey: string;
+  modelRevision: number;
+  modelHash: Uint8Array;
   position: RustEntityVec3R6;
   yaw: number;
   velocity: RustEntityVec3R6;
   health: number;
   maximumHealth: number;
   tamed: boolean;
+  ageTicks: bigint;
+  movementMode: RustEntityMovementModeR6;
+  grounded: boolean;
+  submerged: boolean;
+  lastDamageTick: bigint;
+  action: RustEntityActionR6;
+  equipment: RustEntityComponentsR6["equipment"];
+  mount: RustEntityComponentsR6["mount"];
+  research: RustEntityMapR6<number>;
 }>;
 
-export type RustEntityExtractionR6V2 = Readonly<{
-  schema: 2;
+export type RustEntityExtractionR6V3 = Readonly<{
+  schema: 3;
   extractionRevision: bigint;
+  authorityTick: bigint;
+  contentManifestHash: Uint8Array;
+  contentReady: boolean;
   total: number;
   selected: number;
   omitted: number;
-  records: readonly RustEntityExtractionRecordR6V2[];
+  records: readonly RustEntityExtractionRecordR6V3[];
+}>;
+
+export type RustEntityExtractionPromotionR6V3 = Readonly<{
+  ready: boolean;
+  blockers: readonly ("content-not-ready" | "content-manifest-zero" | "model-revision-zero" | "model-hash-zero")[];
 }>;
 
 export type RustEntityCommandR6 =

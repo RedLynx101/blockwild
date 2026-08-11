@@ -10,8 +10,9 @@ import {
   type RustEntityCompatibilityRecordR6,
   type RustEntityComponentsR6,
   type RustEntityDormantSummaryR6,
-  type RustEntityExtractionR6V2,
-  type RustEntityExtractionRecordR6V2,
+  type RustEntityExtractionPromotionR6V3,
+  type RustEntityExtractionR6V3,
+  type RustEntityExtractionRecordR6V3,
   type RustEntityHotRecordR6,
   type RustEntityIdR6,
   type RustEntityMapR6,
@@ -616,24 +617,124 @@ export function createEmptyRustEntityAuthoritySnapshotR6V2(): RustEntityAuthorit
   return Object.freeze({ schema: 2, revision: BigInt(0), lastSequence: null, slots: Object.freeze([Object.freeze({ generation: 0, residency: null })]), free: Object.freeze([]), hot: Object.freeze([]), cold: Object.freeze([]) });
 }
 
-function validateExtractionRecord(value: RustEntityExtractionRecordR6V2) {
+function validateHash16(value: Uint8Array, label: string) {
+  if (!(value instanceof Uint8Array) || value.byteLength !== 16) fail(`${label} must contain exactly 16 bytes`);
+}
+
+function isZeroHash16(value: Uint8Array) {
+  return value.every((byte) => byte === 0);
+}
+
+function validateExtractionEquipment(value: RustEntityComponentsR6["equipment"]) {
+  canonicalMap(value, MAX_COMPONENT_MAP_ENTRIES, MAX_COMPONENT_TEXT_BYTES, "extraction equipment").forEach(({ key, item }) => {
+    keyBytes(key, "equipment slot");
+    keyBytes(item.itemKey, "equipment item");
+    integer(item.count, 1, 0xffff, "equipment count");
+    integer(item.durability, 0, 0xffff_ffff, "equipment durability");
+    canonicalMap(item.custom, MAX_COMPONENT_MAP_ENTRIES, MAX_COMPONENT_TEXT_BYTES, "equipment custom").forEach(({ key: customKey, item: bytes }) => {
+      keyBytes(customKey, "equipment custom key");
+      if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_COMPONENT_TEXT_BYTES) fail("equipment custom bytes exceed bound");
+    });
+  });
+}
+
+function validateExtractionMount(value: RustEntityComponentsR6["mount"]) {
+  if (value.parentMount !== null) validatePackedId(value.parentMount, "parent mount");
+  if (value.occupiedSeat !== null) integer(value.occupiedSeat, 0, 0xff, "occupied seat");
+  if (value.saddleKey !== null) textBytes(value.saddleKey, MAX_COMPONENT_TEXT_BYTES, "saddle key");
+  if (value.seats.length > MAX_MOUNT_SEATS) fail("mount seats exceed bound");
+  value.seats.forEach((seat, index) => {
+    integer(seat.index, 0, 0xff, "mount seat index");
+    if (index > 0 && value.seats[index - 1].index >= seat.index) fail("mount seats are not strictly ordered");
+    keyBytes(seat.role, "mount seat role");
+    Object.values(seat.offset).forEach((item) => finite(item, "mount seat offset"));
+    if (seat.occupant !== null) validatePackedId(seat.occupant, "mount occupant");
+    integer(seat.controlWeightMilli, 0, 0xffff, "mount control weight");
+  });
+  if (value.occupiedSeat !== null && !value.seats.some((seat) => seat.index === value.occupiedSeat)) fail("occupied mount seat does not exist");
+}
+
+function validateExtractionRecord(value: RustEntityExtractionRecordR6V3) {
   validatePackedId(value.entityId, "extraction entity id");
   if (value.residency !== "hot" && value.residency !== "cold") fail("extraction residency is invalid");
   if (!ENTITY_CLASSES.includes(value.class)) fail("extraction class is invalid");
   if (!TIERS.includes(value.simulationTier)) fail("extraction tier is invalid");
   unsigned64(value.protection, "extraction protection");
+  unsigned64(value.entityRevision, "extraction entity revision");
   for (const [label, text] of [["external entity id", value.externalEntityId], ["specimen id", value.specimenId], ["kind key", value.kindKey], ["model key", value.modelKey]] as const) {
     if (textBytes(text, MAX_COMPONENT_TEXT_BYTES, label).byteLength === 0) fail(`${label} is empty`);
   }
   if (value.variantKey !== null) textBytes(value.variantKey, MAX_COMPONENT_TEXT_BYTES, "variant key");
   if (value.name !== null) textBytes(value.name, MAX_COMPONENT_TEXT_BYTES, "entity name");
+  integer(value.modelRevision, 0, 0xffff_ffff, "model revision");
+  validateHash16(value.modelHash, "model hash");
   [value.position.x, value.position.y, value.position.z, value.yaw, value.velocity.x, value.velocity.y, value.velocity.z].forEach((item) => finite(item, "extraction transform"));
   if (!Number.isFinite(value.health) || !Number.isFinite(value.maximumHealth) || value.maximumHealth <= 0 || value.health < 0 || value.health > value.maximumHealth) fail("extraction health is invalid");
+  unsigned64(value.ageTicks, "extraction age");
+  if (!MOVEMENT_MODES.includes(value.movementMode)) fail("extraction movement mode is invalid");
+  unsigned64(value.lastDamageTick, "last damage tick");
+  keyBytes(value.action.key, "action key");
+  integer(value.action.phase, 0, 0xffff, "action phase");
+  unsigned64(value.action.startedTick, "action started tick");
+  unsigned64(value.action.endsTick, "action end tick");
+  if (value.action.target !== null) validatePackedId(value.action.target, "action target");
+  validateExtractionEquipment(value.equipment);
+  validateExtractionMount(value.mount);
+  canonicalMap(value.research, MAX_COMPATIBILITY_MAP_ENTRIES, MAX_COMPATIBILITY_STRING_BYTES, "extraction research").forEach(({ item }) => integer(item, 0, 0xffff_ffff, "research value"));
 }
 
-export function encodeRustEntityExtractionR6V2(value: RustEntityExtractionR6V2) {
-  if (value.schema !== 2 || value.selected !== value.records.length || value.selected > RUST_ENTITY_MAX_EXTRACTION_RECORDS_R6 || value.selected + value.omitted !== value.total) fail("extraction counts are inconsistent");
-  const writer = new Writer(RUST_ENTITY_MAX_EXTRACTION_BYTES_R6); writer.raw(BWR6_MAGIC); writer.u16(2); writer.u64(value.extractionRevision); writer.u32(value.total); writer.u32(value.selected); writer.u32(value.omitted);
+function writeExtractionEquipment(writer: Writer, value: RustEntityComponentsR6["equipment"]) {
+  writeMap(writer, value, MAX_COMPONENT_MAP_ENTRIES, MAX_COMPONENT_TEXT_BYTES, "extraction equipment", (slot) => {
+    writer.string(slot.itemKey);
+    writer.u16(slot.count);
+    writer.u32(slot.durability);
+    writeMap(writer, slot.custom, MAX_COMPONENT_MAP_ENTRIES, MAX_COMPONENT_TEXT_BYTES, "equipment custom", (bytes) => writer.blob(bytes, MAX_COMPONENT_TEXT_BYTES));
+  });
+}
+
+function readExtractionEquipment(reader: Reader): RustEntityComponentsR6["equipment"] {
+  return readMap(reader, MAX_COMPONENT_MAP_ENTRIES, MAX_COMPONENT_TEXT_BYTES, "extraction equipment", () => Object.freeze({
+    itemKey: reader.string(),
+    count: reader.u16(),
+    durability: reader.u32(),
+    custom: readMap(reader, MAX_COMPONENT_MAP_ENTRIES, MAX_COMPONENT_TEXT_BYTES, "equipment custom", () => reader.blob(MAX_COMPONENT_TEXT_BYTES)),
+  }));
+}
+
+function writeExtractionMount(writer: Writer, value: RustEntityComponentsR6["mount"]) {
+  writer.optId(value.parentMount);
+  writer.bool(value.occupiedSeat !== null);
+  if (value.occupiedSeat !== null) writer.u8(value.occupiedSeat);
+  writer.bool(value.acceptsRiders);
+  writer.optString(value.saddleKey, MAX_COMPONENT_TEXT_BYTES);
+  writer.u32(value.seats.length);
+  for (const seat of value.seats) {
+    writer.u8(seat.index);
+    writer.string(seat.role);
+    writer.vec3(seat.offset);
+    writer.optId(seat.occupant);
+    writer.u16(seat.controlWeightMilli);
+  }
+}
+
+function readExtractionMount(reader: Reader): RustEntityComponentsR6["mount"] {
+  const parentMount = reader.optId();
+  const occupiedSeat = reader.bool() ? reader.u8() : null;
+  const acceptsRiders = reader.bool();
+  const saddleKey = reader.optString(MAX_COMPONENT_TEXT_BYTES);
+  const seats = Object.freeze(Array.from({ length: reader.length(MAX_MOUNT_SEATS, "mount seats") }, () => Object.freeze({
+    index: reader.u8(), role: reader.string(), offset: reader.vec3(), occupant: reader.optId(), controlWeightMilli: reader.u16(),
+  })));
+  return Object.freeze({ parentMount, occupiedSeat, acceptsRiders, saddleKey, seats });
+}
+
+export function encodeRustEntityExtractionR6V3(value: RustEntityExtractionR6V3) {
+  if (value.schema !== 3 || value.selected !== value.records.length || value.selected > RUST_ENTITY_MAX_EXTRACTION_RECORDS_R6 || value.selected + value.omitted !== value.total) fail("extraction counts are inconsistent");
+  unsigned64(value.extractionRevision, "extraction revision");
+  unsigned64(value.authorityTick, "authority tick");
+  validateHash16(value.contentManifestHash, "content manifest hash");
+  const writer = new Writer(RUST_ENTITY_MAX_EXTRACTION_BYTES_R6);
+  writer.raw(BWR6_MAGIC); writer.u16(3); writer.u64(value.extractionRevision); writer.u64(value.authorityTick); writer.raw(value.contentManifestHash); writer.bool(value.contentReady); writer.u32(value.total); writer.u32(value.selected); writer.u32(value.omitted);
   let previousHot = BigInt(-1);
   let previousCold = BigInt(-1);
   let coldStarted = false;
@@ -648,27 +749,41 @@ export function encodeRustEntityExtractionR6V2(value: RustEntityExtractionR6V2) 
       previousCold = record.entityId;
     }
     writer.u64(record.entityId); writer.u8(record.residency === "hot" ? 0 : 1); writeTag(writer, record.class, ENTITY_CLASSES, "entity class");
-    const tier = TIERS.indexOf(record.simulationTier); writer.u16(tier); writer.u64(record.protection);
-    writer.string(record.externalEntityId); writer.string(record.specimenId); writer.string(record.kindKey); writer.optString(record.variantKey, MAX_COMPONENT_TEXT_BYTES); writer.optString(record.name, MAX_COMPONENT_TEXT_BYTES); writer.string(record.modelKey);
+    const tier = TIERS.indexOf(record.simulationTier); writer.u16(tier); writer.u64(record.protection); writer.u64(record.entityRevision);
+    writer.string(record.externalEntityId); writer.string(record.specimenId); writer.string(record.kindKey); writer.optString(record.variantKey, MAX_COMPONENT_TEXT_BYTES); writer.optString(record.name, MAX_COMPONENT_TEXT_BYTES); writer.string(record.modelKey); writer.u32(record.modelRevision); writer.raw(record.modelHash);
     writer.vec3(record.position); writer.f32(record.yaw); writer.vec3(record.velocity); writer.f32(record.health); writer.f32(record.maximumHealth); writer.bool(record.tamed);
+    writer.u64(record.ageTicks); writeTag(writer, record.movementMode, MOVEMENT_MODES, "movement mode"); writer.bool(record.grounded); writer.bool(record.submerged); writer.u64(record.lastDamageTick);
+    writer.string(record.action.key); writer.u16(record.action.phase); writer.u64(record.action.startedTick); writer.u64(record.action.endsTick); writer.optId(record.action.target);
+    writeExtractionEquipment(writer, record.equipment);
+    writeExtractionMount(writer, record.mount);
+    writeMap(writer, record.research, MAX_COMPATIBILITY_MAP_ENTRIES, MAX_COMPATIBILITY_STRING_BYTES, "extraction research", (item) => writer.u32(item));
   }
   const bytes = writer.finish();
   if (bytes.byteLength > RUST_ENTITY_MAX_EXTRACTION_BYTES_R6) fail("extraction payload exceeds 4 MiB");
   return bytes;
 }
 
-export function decodeRustEntityExtractionR6V2(value: Uint8Array | ArrayBuffer) {
+export function decodeRustEntityExtractionR6V3(value: Uint8Array | ArrayBuffer) {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
   if (bytes.byteLength > RUST_ENTITY_MAX_EXTRACTION_BYTES_R6) fail("extraction payload exceeds 4 MiB");
-  const reader = new Reader(bytes); expectMagic(reader, BWR6_MAGIC); const schema = reader.u16(); if (schema !== 2) fail(`unsupported extraction schema ${schema}`);
-  const extractionRevision = reader.u64(); const total = reader.u32(); const selected = reader.u32(); const omitted = reader.u32();
+  const reader = new Reader(bytes); expectMagic(reader, BWR6_MAGIC); const schema = reader.u16(); if (schema !== 3) fail(`unsupported extraction schema ${schema}`);
+  const extractionRevision = reader.u64();
+  const authorityTick = reader.u64();
+  const contentManifestHash = Uint8Array.from(reader.take(16));
+  const contentReady = reader.bool();
+  const total = reader.u32(); const selected = reader.u32(); const omitted = reader.u32();
   if (selected > RUST_ENTITY_MAX_EXTRACTION_RECORDS_R6 || selected + omitted !== total) fail("extraction counts are inconsistent");
-  const records: RustEntityExtractionRecordR6V2[] = Array.from({ length: selected }, () => {
+  const records: RustEntityExtractionRecordR6V3[] = Array.from({ length: selected }, () => {
     const entityId = reader.id(); const residencyTag = reader.u8(); const residency: RustEntityResidencyR6 = residencyTag === 0 ? "hot" : residencyTag === 1 ? "cold" : fail(`invalid extraction residency tag ${residencyTag}`);
     const record = Object.freeze({
-      entityId, residency, class: readTag(reader, ENTITY_CLASSES, "entity class"), simulationTier: TIERS[reader.u16()] ?? fail("invalid extraction tier"), protection: reader.u64(),
-      externalEntityId: reader.string(), specimenId: reader.string(), kindKey: reader.string(), variantKey: reader.optString(MAX_COMPONENT_TEXT_BYTES), name: reader.optString(MAX_COMPONENT_TEXT_BYTES), modelKey: reader.string(),
+      entityId, residency, class: readTag(reader, ENTITY_CLASSES, "entity class"), simulationTier: TIERS[reader.u16()] ?? fail("invalid extraction tier"), protection: reader.u64(), entityRevision: reader.u64(),
+      externalEntityId: reader.string(), specimenId: reader.string(), kindKey: reader.string(), variantKey: reader.optString(MAX_COMPONENT_TEXT_BYTES), name: reader.optString(MAX_COMPONENT_TEXT_BYTES), modelKey: reader.string(), modelRevision: reader.u32(), modelHash: Uint8Array.from(reader.take(16)),
       position: reader.vec3(), yaw: reader.f32(), velocity: reader.vec3(), health: reader.f32(), maximumHealth: reader.f32(), tamed: reader.bool(),
+      ageTicks: reader.u64(), movementMode: readTag(reader, MOVEMENT_MODES, "movement mode"), grounded: reader.bool(), submerged: reader.bool(), lastDamageTick: reader.u64(),
+      action: Object.freeze({ key: reader.string(), phase: reader.u16(), startedTick: reader.u64(), endsTick: reader.u64(), target: reader.optId() }),
+      equipment: readExtractionEquipment(reader),
+      mount: readExtractionMount(reader),
+      research: readMap(reader, MAX_COMPATIBILITY_MAP_ENTRIES, MAX_COMPATIBILITY_STRING_BYTES, "extraction research", () => reader.u32()),
     });
     validateExtractionRecord(record);
     return record;
@@ -679,5 +794,20 @@ export function decodeRustEntityExtractionR6V2(value: Uint8Array | ArrayBuffer) 
     if (record.residency === "hot") { if (coldStarted || record.entityId <= previousHot) fail("extraction hot records are not canonical"); previousHot = record.entityId; }
     else { coldStarted = true; if (record.entityId <= previousCold) fail("extraction cold records are not canonical"); previousCold = record.entityId; }
   }
-  return Object.freeze({ schema: 2 as const, extractionRevision, total, selected, omitted, records: Object.freeze(records) });
+  return Object.freeze({ schema: 3 as const, extractionRevision, authorityTick, contentManifestHash, contentReady, total, selected, omitted, records: Object.freeze(records) });
+}
+
+export function rustEntityExtractionPromotionStateR6V3(value: RustEntityExtractionR6V3): RustEntityExtractionPromotionR6V3 {
+  const blockers = new Set<RustEntityExtractionPromotionR6V3["blockers"][number]>();
+  if (!value.contentReady) blockers.add("content-not-ready");
+  validateHash16(value.contentManifestHash, "content manifest hash");
+  if (isZeroHash16(value.contentManifestHash)) blockers.add("content-manifest-zero");
+  for (const record of value.records) {
+    validateHash16(record.modelHash, "model hash");
+    if (record.modelRevision === 0) blockers.add("model-revision-zero");
+    if (isZeroHash16(record.modelHash)) blockers.add("model-hash-zero");
+  }
+  const ordered = ["content-not-ready", "content-manifest-zero", "model-revision-zero", "model-hash-zero"] as const;
+  const result = ordered.filter((blocker) => blockers.has(blocker));
+  return Object.freeze({ ready: result.length === 0, blockers: Object.freeze(result) });
 }
