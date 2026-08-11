@@ -12,7 +12,7 @@ import {
 
 const ARTIFACT = "a".repeat(64);
 const CONTENT = "b".repeat(32);
-const GENERATOR = "c".repeat(64);
+const GENERATOR = "c".repeat(32);
 
 const identity = (world = 0): RustIntegratedRuntimeIdentityV1 => Object.freeze({
   universeId: "world:test",

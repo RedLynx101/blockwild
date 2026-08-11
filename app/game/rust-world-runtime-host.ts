@@ -26,7 +26,8 @@ import {
 } from "./rust-multiplayer-authority";
 import { RustNetworkRuntimeServiceV1 } from "./rust-network-runtime-service";
 
-const HASH_PATTERN = /^[0-9a-f]{64}$/u;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const CANONICAL_HASH_PATTERN = /^[0-9a-f]{32}$/u;
 const ENGINE_MANIFEST_SCHEMA = 1;
 
 export type RustWorldRuntimeHostStateV1 = "idle" | "starting" | "ready" | "stopping" | "stopped" | "failed";
@@ -85,8 +86,13 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function requireHash(value: string, label: string) {
-  if (!HASH_PATTERN.test(value)) throw new Error(`${label} must be a lowercase SHA-256 hash`);
+function requireArtifactHash(value: string, label: string) {
+  if (!SHA256_PATTERN.test(value)) throw new Error(`${label} must be a lowercase SHA-256 hash`);
+  return value;
+}
+
+function requireCanonicalHash(value: string, label: string) {
+  if (!CANONICAL_HASH_PATTERN.test(value)) throw new Error(`${label} must be a lowercase 128-bit canonical hash`);
   return value;
 }
 
@@ -104,7 +110,7 @@ export async function resolveRustEngineArtifactHashV1(
   if (root?.schema !== ENGINE_MANIFEST_SCHEMA || root?.defaultVariant !== "compatibility" || !compatibility) {
     throw new Error("Rust engine manifest does not select the compatibility artifact");
   }
-  const hash = requireHash(String(compatibility.hash ?? ""), "Rust engine artifact hash");
+  const hash = requireArtifactHash(String(compatibility.hash ?? ""), "Rust engine artifact hash");
   if (compatibility.directory !== hash || compatibility.manifest !== `${hash}/manifest.json`) {
     throw new Error("Rust engine manifest is not content-addressed by its selected hash");
   }
@@ -130,7 +136,7 @@ function runtimeConfig(
     locationId: input.locationId,
     sessionId: input.sessionId,
     contentHash,
-    generatorHash: requireHash(input.generatorHash, "Rust generator hash"),
+    generatorHash: requireCanonicalHash(input.generatorHash, "Rust generator hash"),
     waterBlockId: input.waterBlockId,
     directionalBlockIds: Object.freeze([...input.directionalBlockIds]),
     waterloggedBlockIds: Object.freeze([...input.waterloggedBlockIds]),
@@ -202,7 +208,7 @@ export class RustWorldRuntimeHostV1 {
         const bundle = (this.dependencies.contentFactory ?? productionContentBundle)();
         if (!bundle.manifest || bundle.blockers.length) throw new Error("Rust production content contains unresolved blockers");
         const artifactHash = this.dependencies.artifactHash
-          ? requireHash(this.dependencies.artifactHash, "Rust engine artifact hash")
+          ? requireArtifactHash(this.dependencies.artifactHash, "Rust engine artifact hash")
           : await resolveRustEngineArtifactHashV1(this.dependencies.fetch, this.dependencies.manifestUrl);
         const adapterFactory = this.dependencies.adapterFactory
           ?? ((options: RustIntegratedRuntimeBrowserAdapterOptionsV1) => new RustIntegratedRuntimeBrowserAdapterV1(options));
