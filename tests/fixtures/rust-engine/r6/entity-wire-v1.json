@@ -1,0 +1,19 @@
+{
+  "authority": {
+    "magic": "BWEA",
+    "schema": 2,
+    "maximumBytes": 67108864,
+    "emptyHex": "425745410200000000000000000000010000000000000000000000000000000000000000"
+  },
+  "compatibility": {
+    "magic": "BWEC",
+    "schema": 1
+  },
+  "extraction": {
+    "magic": "BWR6",
+    "schema": 2,
+    "maximumBytes": 4194304,
+    "maximumRecords": 4096,
+    "emptyHex": "4257523602000000000000000000000000000000000000000000"
+  }
+}
