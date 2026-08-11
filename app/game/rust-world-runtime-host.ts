@@ -1,0 +1,311 @@
+import { GAME_VERSION } from "./version";
+import {
+  createNetworkAuthorityIdentityV1,
+  createNetworkInterestSetV1,
+  type NetworkAuthorityIdentityV1,
+  type NetworkInterestSetV1,
+  type NetworkInterestSetSourceV1,
+} from "./network-authority-contract";
+import {
+  RustIntegratedRuntimeBrowserAdapterV1,
+  type RustIntegratedRuntimeBrowserAdapterOptionsV1,
+} from "./rust-integrated-runtime-adapter";
+import {
+  requireBlockwildProductionContent,
+  type RustContentInstallReceiptV1,
+  type RustProductionContentBundle,
+} from "./rust-integrated-runtime-content";
+import { RustIntegratedNetworkRuntimePortV1 } from "./rust-integrated-runtime-domain-adapters";
+import type {
+  RustIntegratedRuntimeConfigV1,
+  RustIntegratedRuntimeIdentityV1,
+} from "./rust-integrated-runtime-contract";
+import {
+  IntegratedRustMultiplayerAuthorityV1,
+  type RustMultiplayerAuthorityV1,
+} from "./rust-multiplayer-authority";
+import { RustNetworkRuntimeServiceV1 } from "./rust-network-runtime-service";
+
+const HASH_PATTERN = /^[0-9a-f]{64}$/u;
+const ENGINE_MANIFEST_SCHEMA = 1;
+
+export type RustWorldRuntimeHostStateV1 = "idle" | "starting" | "ready" | "stopping" | "stopped" | "failed";
+
+export type RustWorldRuntimeHostConfigV1 = Readonly<{
+  worldSeed: string;
+  universeId: string;
+  locationId: string;
+  sessionId: string;
+  generatorHash: string;
+  waterBlockId: number;
+  directionalBlockIds: readonly number[];
+  waterloggedBlockIds: readonly number[];
+}>;
+
+export interface RustWorldRuntimeAdapterV1 {
+  start(config: RustIntegratedRuntimeConfigV1): Promise<RustIntegratedRuntimeIdentityV1>;
+  installContent(bundle: RustProductionContentBundle): Promise<RustContentInstallReceiptV1>;
+  shutdown(): Promise<unknown>;
+  identity(): RustIntegratedRuntimeIdentityV1;
+  diagnostics(): Readonly<{
+    authoritative: boolean;
+    contentReady: boolean;
+    contentManifestHash: string | null;
+    [key: string]: unknown;
+  }>;
+}
+
+export type RustWorldRuntimeHostDependenciesV1 = Readonly<{
+  fetch?: typeof globalThis.fetch;
+  manifestUrl?: string;
+  artifactHash?: string;
+  contentFactory?: () => RustProductionContentBundle;
+  adapterFactory?: (options: RustIntegratedRuntimeBrowserAdapterOptionsV1) => RustWorldRuntimeAdapterV1;
+  authorityFactory?: (
+    adapter: RustWorldRuntimeAdapterV1,
+    identity: () => NetworkAuthorityIdentityV1,
+    contentHash: string,
+    generatorHash: string,
+  ) => RustMultiplayerAuthorityV1;
+}>;
+
+export type RustWorldRuntimeHostDiagnosticsV1 = Readonly<{
+  state: RustWorldRuntimeHostStateV1;
+  artifactHash: string | null;
+  contentHash: string | null;
+  generatorHash: string;
+  identity: RustIntegratedRuntimeIdentityV1 | null;
+  adapter: ReturnType<RustWorldRuntimeAdapterV1["diagnostics"]> | null;
+  lastError: string | null;
+}>;
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function requireHash(value: string, label: string) {
+  if (!HASH_PATTERN.test(value)) throw new Error(`${label} must be a lowercase SHA-256 hash`);
+  return value;
+}
+
+/** Resolves the exact compatibility artifact selected by the content-addressed engine index. */
+export async function resolveRustEngineArtifactHashV1(
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+  manifestUrl = "/engine/manifest.json",
+) {
+  if (typeof fetchImpl !== "function") throw new Error("Rust engine manifest fetch is unavailable");
+  const response = await fetchImpl(manifestUrl, { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Rust engine manifest request failed with HTTP ${response.status}`);
+  const root = record(await response.json());
+  const artifacts = record(root?.artifacts);
+  const compatibility = record(artifacts?.compatibility);
+  if (root?.schema !== ENGINE_MANIFEST_SCHEMA || root?.defaultVariant !== "compatibility" || !compatibility) {
+    throw new Error("Rust engine manifest does not select the compatibility artifact");
+  }
+  const hash = requireHash(String(compatibility.hash ?? ""), "Rust engine artifact hash");
+  if (compatibility.directory !== hash || compatibility.manifest !== `${hash}/manifest.json`) {
+    throw new Error("Rust engine manifest is not content-addressed by its selected hash");
+  }
+  return hash;
+}
+
+function productionContentBundle(): RustProductionContentBundle {
+  const compiled = requireBlockwildProductionContent();
+  return Object.freeze({
+    manifest: compiled.manifest,
+    artifacts: compiled.artifacts,
+    blockers: Object.freeze([]),
+  });
+}
+
+function runtimeConfig(
+  input: RustWorldRuntimeHostConfigV1,
+  contentHash: string,
+): RustIntegratedRuntimeConfigV1 {
+  return Object.freeze({
+    worldSeed: input.worldSeed,
+    universeId: input.universeId,
+    locationId: input.locationId,
+    sessionId: input.sessionId,
+    contentHash,
+    generatorHash: requireHash(input.generatorHash, "Rust generator hash"),
+    waterBlockId: input.waterBlockId,
+    directionalBlockIds: Object.freeze([...input.directionalBlockIds]),
+    waterloggedBlockIds: Object.freeze([...input.waterloggedBlockIds]),
+  });
+}
+
+function networkIdentity(identity: RustIntegratedRuntimeIdentityV1): NetworkAuthorityIdentityV1 {
+  return createNetworkAuthorityIdentityV1(
+    { universeId: identity.universeId, locationId: identity.locationId },
+    {
+      epoch: identity.revision.epoch,
+      world: identity.revision.world,
+      entities: identity.revision.entities,
+      gameplay: identity.revision.gameplay,
+      persistence: identity.revision.persistence,
+    },
+  );
+}
+
+function productionAuthority(
+  adapter: RustWorldRuntimeAdapterV1,
+  identity: () => NetworkAuthorityIdentityV1,
+  contentHash: string,
+  generatorHash: string,
+) {
+  const service = (adapter as RustIntegratedRuntimeBrowserAdapterV1).service;
+  if (!service) throw new Error("Production Rust runtime adapter does not expose its sole worker service");
+  const lifecycle = new RustIntegratedNetworkRuntimePortV1(service);
+  return new IntegratedRustMultiplayerAuthorityV1({
+    network: new RustNetworkRuntimeServiceV1(lifecycle),
+    lifecycle,
+    identity,
+    engineVersion: GAME_VERSION,
+    contentHash,
+    generatorHash,
+  });
+}
+
+/**
+ * Owns exactly one integrated Rust worker for one active world/session.
+ * Consumers receive only awaited authority and renderer/persistence ports; no
+ * second multiplayer, entity, or gameplay worker may be created beside it.
+ */
+export class RustWorldRuntimeHostV1 {
+  private state: RustWorldRuntimeHostStateV1 = "idle";
+  private adapter: RustWorldRuntimeAdapterV1 | null = null;
+  private authority: RustMultiplayerAuthorityV1 | null = null;
+  private artifactHash: string | null = null;
+  private contentHash: string | null = null;
+  private identityValue: RustIntegratedRuntimeIdentityV1 | null = null;
+  private lastError: string | null = null;
+  private lifecycle = Promise.resolve<unknown>(undefined);
+
+  constructor(
+    readonly config: RustWorldRuntimeHostConfigV1,
+    private readonly dependencies: RustWorldRuntimeHostDependenciesV1 = {},
+  ) {}
+
+  start() {
+    return this.enqueue(async () => {
+      if (this.state === "ready") return this.identity();
+      if (this.state !== "idle" && this.state !== "stopped" && this.state !== "failed") {
+        throw new Error(`Cannot start Rust world runtime from ${this.state}`);
+      }
+      this.state = "starting";
+      this.lastError = null;
+      let adapter: RustWorldRuntimeAdapterV1 | null = null;
+      try {
+        const bundle = (this.dependencies.contentFactory ?? productionContentBundle)();
+        if (!bundle.manifest || bundle.blockers.length) throw new Error("Rust production content contains unresolved blockers");
+        const artifactHash = this.dependencies.artifactHash
+          ? requireHash(this.dependencies.artifactHash, "Rust engine artifact hash")
+          : await resolveRustEngineArtifactHashV1(this.dependencies.fetch, this.dependencies.manifestUrl);
+        const adapterFactory = this.dependencies.adapterFactory
+          ?? ((options: RustIntegratedRuntimeBrowserAdapterOptionsV1) => new RustIntegratedRuntimeBrowserAdapterV1(options));
+        adapter = adapterFactory({ artifactHash });
+        const created = await adapter.start(runtimeConfig(this.config, bundle.manifest.manifestHash));
+        const installed = await adapter.installContent(bundle);
+        if (installed.status !== "installed" || installed.manifestHash !== bundle.manifest.manifestHash) {
+          throw new Error("Rust runtime did not attest the complete authored-content bundle");
+        }
+        const diagnostics = adapter.diagnostics();
+        if (!diagnostics.authoritative || !diagnostics.contentReady
+          || diagnostics.contentManifestHash !== bundle.manifest.manifestHash) {
+          throw new Error("Rust runtime remained non-authoritative after content installation");
+        }
+        this.adapter = adapter;
+        this.artifactHash = artifactHash;
+        this.contentHash = bundle.manifest.manifestHash;
+        this.identityValue = created;
+        const activeAdapter = adapter;
+        const identity = () => networkIdentity(activeAdapter.identity());
+        this.authority = (this.dependencies.authorityFactory ?? productionAuthority)(
+          adapter,
+          identity,
+          bundle.manifest.manifestHash,
+          this.config.generatorHash,
+        );
+        this.identityValue = adapter.identity();
+        this.state = "ready";
+        return this.identity();
+      } catch (error) {
+        this.state = "failed";
+        this.lastError = error instanceof Error ? error.message : String(error);
+        if (adapter) {
+          try { await adapter.shutdown(); } catch { /* Preserve the primary startup failure. */ }
+        }
+        this.adapter = null;
+        this.authority = null;
+        this.identityValue = null;
+        throw error;
+      }
+    });
+  }
+
+  shutdown() {
+    return this.enqueue(async () => {
+      if (this.state === "idle" || this.state === "stopped") return;
+      this.state = "stopping";
+      const authority = this.authority;
+      const adapter = this.adapter;
+      this.authority = null;
+      this.adapter = null;
+      try {
+        await authority?.drain();
+        await adapter?.shutdown();
+        this.state = "stopped";
+      } catch (error) {
+        this.state = "failed";
+        this.lastError = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    });
+  }
+
+  identity() {
+    const value = this.requireAdapter().identity();
+    this.identityValue = value;
+    return value;
+  }
+
+  networkIdentity() { return networkIdentity(this.identity()); }
+
+  multiplayerAuthority() {
+    if (this.state !== "ready" || !this.authority) throw new Error("Rust multiplayer authority is not ready");
+    return this.authority;
+  }
+
+  authorityInterest(source: NetworkInterestSetSourceV1): NetworkInterestSetV1 {
+    if (this.state !== "ready") throw new Error("Rust world authority is not ready");
+    return createNetworkInterestSetV1(source);
+  }
+
+  runtimeAdapter() { return this.requireAdapter(); }
+
+  diagnostics(): RustWorldRuntimeHostDiagnosticsV1 {
+    return Object.freeze({
+      state: this.state,
+      artifactHash: this.artifactHash,
+      contentHash: this.contentHash,
+      generatorHash: this.config.generatorHash,
+      identity: this.identityValue,
+      adapter: this.adapter?.diagnostics() ?? null,
+      lastError: this.lastError,
+    });
+  }
+
+  private requireAdapter() {
+    if (this.state !== "ready" || !this.adapter) throw new Error("Rust world runtime is not ready");
+    return this.adapter;
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.lifecycle.catch(() => undefined).then(operation);
+    this.lifecycle = next;
+    return next;
+  }
+}
