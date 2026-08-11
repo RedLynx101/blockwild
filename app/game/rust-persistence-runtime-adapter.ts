@@ -11,6 +11,7 @@ import {
   decodeRustPersistenceRequestV1,
   encodeRustPersistenceResponseV1,
   rustPersistenceZeroHashV1,
+  type RustPersistencePlatformRequestV1,
   type RustPersistenceRecoveryResponseV1,
   type RustPersistenceResponseV1,
 } from "./rust-persistence-runtime-contract";
@@ -21,6 +22,7 @@ export interface RustPersistencePlatformAdapterV1 {
   readLatestCheckpoint(worldId: string): Promise<PersistenceCheckpointV1 | null>;
   readCheckpoint(worldId: string, checkpointId: string): Promise<PersistenceCheckpointV1 | null>;
   readRecord(address: PersistenceRecordAddressV1, revision?: number): Promise<Uint8Array | null>;
+  executePlatform?(request: RustPersistencePlatformRequestV1): Promise<Extract<RustPersistenceResponseV1, { kind: "platform" }>>;
 }
 
 function sameCheckpoint(left: PersistenceCheckpointV1 | null, right: PersistenceCheckpointV1) {
@@ -56,6 +58,7 @@ export class RustPersistenceBrowserRuntimeV1 {
     const next = previous.catch(() => new Uint8Array()).then(async () => {
       try {
         if (request.kind === "commit") return this.commit(request.requestId, request.transaction, request.checkpoint);
+        if (request.kind === "platform") return this.platform(request);
         return this.recover(request.requestId, request.worldId, request.kind === "read-checkpoint" ? request.checkpointId : null);
       } catch (error) {
         const failure = classifyError(error);
@@ -65,6 +68,15 @@ export class RustPersistenceBrowserRuntimeV1 {
     this.queues.set(worldId, next);
     void next.finally(() => { if (this.queues.get(worldId) === next) this.queues.delete(worldId); });
     return next;
+  }
+
+  private async platform(request: RustPersistencePlatformRequestV1) {
+    if (!this.adapter.executePlatform) throw new RustPersistenceRuntimeContractError("platform-unavailable", "browser adapter does not implement additive persistence operations");
+    const response = await this.adapter.executePlatform(request);
+    if (response.requestId !== request.requestId || response.operation !== request.operation) {
+      throw new RustPersistenceRuntimeContractError("platform-response", "platform adapter response does not match its Rust request");
+    }
+    return encodeRustPersistenceResponseV1(response);
   }
 
   private async commit(requestId: number, transaction: PersistenceTransactionV1, checkpoint: PersistenceCheckpointV1) {
