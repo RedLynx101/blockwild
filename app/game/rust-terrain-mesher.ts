@@ -27,6 +27,7 @@ import {
   type TerrainMesherRequestOptions,
   type TerrainMesherResult,
 } from "./terrain-mesher-backend";
+import type { RustEngineArtifact } from "./rust-engine-loader";
 
 export interface TerrainMesherWorkerLike {
   onmessage: ((event: MessageEvent<TerrainMesherWorkerResponseV1>) => void) | null;
@@ -41,6 +42,7 @@ export type TerrainMesherWorkerHelloV1 = Readonly<{
   protocolVersion: typeof TERRAIN_MESH_PROTOCOL_V1;
   snapshotSchemaVersion: typeof SECTION_SNAPSHOT_SCHEMA_V1;
   meshSchemaVersion: typeof MESH_PACKET_SCHEMA_V1;
+  artifact?: RustEngineArtifact;
 }>;
 
 export type TerrainMesherWorkerMeshRequestV1 = Readonly<{
@@ -77,17 +79,25 @@ export type TerrainMesherWorkerTaskErrorV1 = Readonly<{
   requestId: number;
   message: string;
   recoverable: boolean;
+  code?: "ineligible-section" | "task-error";
   returnedInputBuffers?: readonly ArrayBuffer[];
+}>;
+
+export type TerrainMesherWorkerFatalV1 = Readonly<{
+  type: "terrain-mesher-fatal-v1";
+  message: string;
 }>;
 
 export type TerrainMesherWorkerResponseV1 =
   | TerrainMesherWorkerReadyV1
   | TerrainMesherWorkerResultV1
-  | TerrainMesherWorkerTaskErrorV1;
+  | TerrainMesherWorkerTaskErrorV1
+  | TerrainMesherWorkerFatalV1;
 
 export type RustTerrainMesherOptions = Readonly<{
-  /** No default worker is wired until the Rust R2 entry point exists. */
+  /** Override used by tests or hosts that supply their own worker lifecycle. */
   workerFactory?: () => TerrainMesherWorkerLike;
+  artifact?: RustEngineArtifact;
   fallback: TerrainMesherBackend;
   bufferPool?: TerrainBufferPool;
   startupTimeoutMs?: number;
@@ -110,6 +120,7 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
   abortListener?: () => void;
   transferredInputs: readonly TransferDescriptor[];
+  startedAt: number;
 };
 
 const SNAPSHOT_TRANSFER_PURPOSES = [
@@ -128,15 +139,21 @@ function normalizedError(error: unknown, code: TerrainMesherFailureCode) {
     : new TerrainMesherBackendError(code, error instanceof Error ? error.message : String(error), true, error);
 }
 
+export function createRustTerrainMesherWorker(): TerrainMesherWorkerLike {
+  if (typeof Worker !== "function") throw new TerrainMesherBackendError("worker-unavailable", "Web Workers are unavailable", true);
+  return new Worker(new URL("./rust-terrain-mesher-worker.ts", import.meta.url), { type: "module", name: "blockwild-rust-terrain" });
+}
+
 /**
- * Coarse whole-section Rust worker adapter. It is shadow-only at R2: callers
- * must opt in, and every worker failure delegates to the exact TypeScript
- * reference backend with the original (non-detached) snapshot.
+ * Coarse whole-section Rust worker adapter. Every worker failure delegates to
+ * the exact TypeScript reference backend with the original, non-detached
+ * snapshot; callers separately decide whether an eligible result is promoted.
  */
 export class RustTerrainMesherBackend implements TerrainMesherBackend {
   readonly kind = "rust-worker-shadow" as const;
   readonly bufferPool?: TerrainBufferPool;
   private readonly workerFactory?: () => TerrainMesherWorkerLike;
+  private readonly artifact?: RustEngineArtifact;
   private readonly fallback: TerrainMesherBackend;
   private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
@@ -165,10 +182,12 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
   private transferredToWorkerBytes = 0;
   private transferredFromWorkerBytes = 0;
   private returnedInputBytes = 0;
+  private readonly requestDurationsMilliseconds: number[] = [];
   private lastError: TerrainMesherDiagnostics["lastError"] = null;
 
   constructor(options: RustTerrainMesherOptions) {
-    this.workerFactory = options.workerFactory;
+    this.workerFactory = options.workerFactory ?? (typeof Worker === "function" ? createRustTerrainMesherWorker : undefined);
+    this.artifact = options.artifact;
     this.fallback = options.fallback;
     this.bufferPool = options.bufferPool;
     this.startupTimeoutMs = Math.max(1, options.startupTimeoutMs ?? 4_000);
@@ -247,6 +266,7 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
           protocolVersion: TERRAIN_MESH_PROTOCOL_V1,
           snapshotSchemaVersion: SECTION_SNAPSHOT_SCHEMA_V1,
           meshSchemaVersion: MESH_PACKET_SCHEMA_V1,
+          ...(this.artifact ? { artifact: this.artifact } : {}),
         });
       } catch (error) {
         this.handleWorkerFault(normalizedError(error, "worker-startup"), generation);
@@ -287,6 +307,7 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
         reject,
         timer,
         transferredInputs: transferDescriptors,
+        startedAt: performance.now(),
       };
       if (options.signal) {
         pending.abortListener = () => {
@@ -308,6 +329,10 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
 
   private handleMessage(message: TerrainMesherWorkerResponseV1, generation: number) {
     if (generation !== this.workerGeneration || this.workerState === "disposed") return;
+    if (message.type === "terrain-mesher-fatal-v1") {
+      this.handleWorkerFault(new TerrainMesherBackendError("worker-startup", message.message || "Rust terrain worker could not start", true), generation);
+      return;
+    }
     if (message.type === "terrain-mesher-ready-v1") {
       const valid = message.protocolVersion === TERRAIN_MESH_PROTOCOL_V1
         && message.snapshotSchemaVersion === SECTION_SNAPSHOT_SCHEMA_V1
@@ -339,11 +364,13 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
     }
     this.pending.delete(message.requestId);
     this.finishPending(pending);
+    this.recordRequestDuration(performance.now() - pending.startedAt);
     this.releaseReturnedInputs(pending, message.returnedInputBuffers);
     if (message.type === "terrain-mesh-task-error-v1") {
-      this.failed += 1;
-      this.lastError = { code: "task-error", message: message.message || "Rust terrain mesher rejected a task" };
-      void this.runFallback(pending.snapshot, pending.options, "task-error").then(pending.resolve, pending.reject);
+      const code = message.code ?? "task-error";
+      if (code !== "ineligible-section") this.failed += 1;
+      this.lastError = { code, message: message.message || "Rust terrain mesher rejected a task" };
+      void this.runFallback(pending.snapshot, pending.options, code).then(pending.resolve, pending.reject);
       return;
     }
     try {
@@ -457,12 +484,28 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
     if (pending.abortListener) pending.options.signal?.removeEventListener("abort", pending.abortListener);
   }
 
+  private recordRequestDuration(milliseconds: number) {
+    this.requestDurationsMilliseconds.push(Math.max(0, milliseconds));
+    if (this.requestDurationsMilliseconds.length > 512) this.requestDurationsMilliseconds.shift();
+  }
+
+  /** Explicit audit hook used only by the opt-in R2 browser recovery harness. */
+  simulateWorkerCrashForDiagnostics(message = "simulated R2 terrain worker crash") {
+    if (!this.worker || (this.workerState !== "ready" && this.workerState !== "starting")) return false;
+    this.handleWorkerFault(new TerrainMesherBackendError("worker-crash", message, true), this.workerGeneration);
+    return true;
+  }
+
   private clearStartupTimer() {
     if (this.startupTimer !== null) this.cancelTimeout(this.startupTimer);
     this.startupTimer = null;
   }
 
   diagnostics(): TerrainMesherDiagnostics {
+    const durations = [...this.requestDurationsMilliseconds].sort((left, right) => left - right);
+    const percentile = (fraction: number) => durations.length
+      ? durations[Math.min(durations.length - 1, Math.ceil(durations.length * fraction) - 1)]
+      : 0;
     return {
       kind: this.kind,
       disposed: this.workerState === "disposed",
@@ -477,6 +520,13 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
       transferredToWorkerBytes: this.transferredToWorkerBytes,
       transferredFromWorkerBytes: this.transferredFromWorkerBytes,
       returnedInputBytes: this.returnedInputBytes,
+      latency: {
+        samples: durations.length,
+        p50Milliseconds: percentile(0.5),
+        p95Milliseconds: percentile(0.95),
+        p99Milliseconds: percentile(0.99),
+        maximumMilliseconds: durations.at(-1) ?? 0,
+      },
       lastError: this.lastError,
     };
   }
@@ -507,4 +557,3 @@ export class RustTerrainMesherBackend implements TerrainMesherBackend {
     if (this.ownsFallback) await this.fallback.dispose();
   }
 }
-

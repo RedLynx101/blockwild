@@ -31,6 +31,56 @@ fn registry() -> TerrainMaterialRegistryV1 {
     }
 }
 
+fn catalog_registry() -> TerrainMaterialRegistryV1 {
+    let mut value = registry();
+    value.blocks.resize(601, None);
+    for block_id in crate::catalog::specialty_catalog_ids_v1() {
+        value.blocks[block_id as usize] = Some(TerrainMaterialV1::Specialty);
+    }
+    value
+}
+
+fn data_driven_registry() -> TerrainMaterialRegistryV1 {
+    let mut value = catalog_registry();
+    for (block_id, entry) in value.blocks.iter_mut().enumerate() {
+        *entry = match *entry {
+            None => None,
+            Some(TerrainMaterialV1::Air) => Some(TerrainMaterialV1::Air),
+            Some(TerrainMaterialV1::OpaqueFullCube(material)) => {
+                Some(TerrainMaterialV1::DataDriven(CanonicalSpecialtyMaterialV1 {
+                    side_tile: material.side_tile,
+                    top_tile: material.top_tile,
+                    bottom_tile: material.bottom_tile,
+                    layer: TerrainMeshLayerV1::Opaque,
+                    shape: CanonicalShapeV1::Cube,
+                    solid: true,
+                    liquid: CanonicalLiquidV1::None,
+                    waterlogged: false,
+                    connects_fence: false,
+                    light_dampening: material.light_dampening,
+                    emitted_light: material.emitted_light,
+                    emissive_strength_bits: material.emissive_strength.to_bits(),
+                    aquatic_profile: 0,
+                    vertical_group: 0,
+                    shape_variant: 0,
+                    geometry_revision: 1,
+                    tint_policy: 1,
+                    ambient_occlusion: material.ambient_occlusion,
+                    selective_interior_faces: false,
+                    directionally_placed: false,
+                    joins_same_horizontal: false,
+                    joins_same_vertical: false,
+                }))
+            }
+            Some(TerrainMaterialV1::Specialty) => {
+                crate::catalog::canonical_specialty_material_v1(block_id as u16).map(TerrainMaterialV1::DataDriven)
+            }
+            Some(TerrainMaterialV1::DataDriven(material)) => Some(TerrainMaterialV1::DataDriven(material)),
+        };
+    }
+    value
+}
+
 fn snapshot_with_revision(revision: TerrainSectionRevisionV1) -> SectionSnapshotV1 {
     SectionSnapshotV1::create(
         HASH.into(),
@@ -91,6 +141,13 @@ fn set_block(snapshot: &mut SectionSnapshotV1, x: i32, y: i32, z: i32, block: u1
 
 fn mesh(snapshot: &SectionSnapshotV1) -> Box<MeshPacketV1> {
     match mesh_opaque_section_v1(snapshot, &registry(), None).unwrap() {
+        MeshSectionOutcomeV1::Eligible(packet) => packet,
+        MeshSectionOutcomeV1::Ineligible(reason) => panic!("unexpected ineligibility: {reason:?}"),
+    }
+}
+
+fn mesh_with(snapshot: &SectionSnapshotV1, registry: &TerrainMaterialRegistryV1) -> Box<MeshPacketV1> {
+    match mesh_opaque_section_v1(snapshot, registry, None).unwrap() {
         MeshSectionOutcomeV1::Eligible(packet) => packet,
         MeshSectionOutcomeV1::Ineligible(reason) => panic!("unexpected ineligibility: {reason:?}"),
     }
@@ -187,18 +244,11 @@ fn validation_is_strict_for_schema_utf16_bounds_lengths_facing_and_hash() {
 }
 
 #[test]
-fn whole_section_eligibility_rejects_specialty_hidden_fluid_unknown_and_content_drift() {
-    let cases = [
-        (3_u16, 0_u8, 0_u8, 0_u8),
-        (1, TERRAIN_HIDDEN_GEOMETRY_V1, 0, 0),
-        (1, TERRAIN_HIDDEN_UNKNOWN_HALO_V1, 0, 0),
-        (1, 0, 2, TERRAIN_FLUID_PRESENT_V1),
-    ];
-    for (block, hidden, level, flags) in cases {
+fn whole_section_eligibility_rejects_unknown_specialty_invalid_fluid_and_content_drift() {
+    for (block, level, flags) in [(3_u16, 0_u8, 0_u8), (1, 2, TERRAIN_FLUID_PRESENT_V1)] {
         let mut value = snapshot();
         let index = halo_cell_index_v1(0, 0, 0).unwrap();
         value.streams.blocks[index] = block;
-        value.streams.hidden[index] = hidden;
         value.streams.fluid_level[index] = level;
         value.streams.fluid_flags[index] = flags;
         value.snapshot_hash = hash_section_snapshot_v1(&value);
@@ -212,6 +262,15 @@ fn whole_section_eligibility_rejects_specialty_hidden_fluid_unknown_and_content_
             MeshSectionOutcomeV1::Ineligible(_)
         ));
     }
+    let mut hidden = snapshot();
+    set_block(&mut hidden, 0, 0, 0, 1);
+    let index = halo_cell_index_v1(0, 0, 0).unwrap();
+    hidden.streams.hidden[index] = TERRAIN_HIDDEN_GEOMETRY_V1;
+    hidden.streams.hidden[halo_cell_index_v1(-1, 0, 0).unwrap()] = TERRAIN_HIDDEN_UNKNOWN_HALO_V1;
+    hidden.snapshot_hash = hash_section_snapshot_v1(&hidden);
+    assert!(section_eligibility_v1(&hidden, &registry()).unwrap().is_eligible());
+    assert_eq!(mesh(&hidden).streams.vertex_count(), 0);
+
     let mut changed_registry = registry();
     changed_registry.content_hash = "ffffffffffffffffffffffffffffffff".into();
     assert_eq!(
@@ -242,6 +301,185 @@ fn opaque_mesh_hides_internal_faces_and_uses_halo_for_seams() {
     assert_eq!(seam_packet.streams.vertex_count(), 20);
     assert_eq!(seam_packet.streams.indices.len(), 30);
     assert_eq!(seam_packet.address.chunk_x, -12);
+}
+
+#[test]
+fn data_driven_glass_halo_does_not_occlude_adjacent_cutout_geometry() {
+    let mut value = snapshot();
+    set_block(&mut value, 0, 0, 0, 6);
+    set_block(&mut value, -1, 0, 0, 12);
+
+    let packet = mesh_with(&value, &data_driven_registry());
+    assert_eq!(packet.layers.len(), 1);
+    assert_eq!(packet.layers[0].layer, TerrainMeshLayerV1::Cutout);
+    assert_eq!(packet.streams.vertex_count(), 24);
+    assert_eq!(packet.streams.indices.len(), 36);
+}
+
+#[test]
+fn data_driven_furnace_variant_preserves_cube_ambient_occlusion() {
+    let mut value = snapshot();
+    set_block(&mut value, 0, 0, 0, 31);
+    set_block(&mut value, 1, 0, 0, 1);
+
+    let packet = mesh_with(&value, &data_driven_registry());
+    assert!(packet.streams.occlusions.iter().any(|&value| value < u8::MAX));
+}
+
+#[test]
+fn frozen_bwr1_catalog_owns_every_current_specialty_id_without_partial_fallback() {
+    let registry = catalog_registry();
+    let ids = crate::catalog::specialty_catalog_ids_v1().collect::<Vec<_>>();
+    assert_eq!(ids.len(), 218);
+    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+    for block_id in ids {
+        let mut value = snapshot();
+        value.address.location_id = "seed:4276993775".into();
+        set_block(&mut value, 8, 8, 8, block_id);
+        let packet = mesh_with(&value, &registry);
+        packet.validate_matches_snapshot(&value).unwrap();
+        assert!(
+            packet.streams.vertex_count() > 0,
+            "catalog block {block_id} emitted no visible geometry"
+        );
+    }
+}
+
+#[test]
+fn bwr2_round_trip_is_data_driven_and_byte_identical_to_the_bwr1_rollback_catalog() {
+    let legacy = catalog_registry();
+    let production = data_driven_registry();
+    let encoded = encode_material_registry_v2(&production).unwrap();
+    assert_eq!(&encoded[..4], b"BWR2");
+    let decoded = decode_material_registry_v1(&encoded).unwrap();
+    assert_eq!(decoded, production);
+    assert!(
+        decoded
+            .blocks
+            .iter()
+            .flatten()
+            .all(|material| { matches!(material, TerrainMaterialV1::Air | TerrainMaterialV1::DataDriven(_)) })
+    );
+
+    for block_id in crate::catalog::specialty_catalog_ids_v1() {
+        let mut value = snapshot();
+        value.address.location_id = "seed:4276993775".into();
+        set_block(&mut value, 8, 8, 8, block_id);
+        let legacy_packet = mesh_with(&value, &legacy);
+        let production_packet = mesh_with(&value, &decoded);
+        assert_eq!(production_packet, legacy_packet, "BWR2 block {block_id} drifted");
+    }
+}
+
+#[test]
+fn bwr2_rejects_future_geometry_revisions_and_never_guesses_missing_ids() {
+    let mut registry = data_driven_registry();
+    let Some(TerrainMaterialV1::DataDriven(mut material)) = registry.blocks[6] else {
+        panic!("fixture block must be data driven");
+    };
+    material.geometry_revision = 2;
+    registry.blocks[6] = Some(TerrainMaterialV1::DataDriven(material));
+    assert!(encode_material_registry_v2(&registry).is_err());
+
+    let mut source = snapshot();
+    set_block(&mut source, 0, 0, 0, 601);
+    assert!(matches!(
+        mesh_opaque_section_v1(&source, &data_driven_registry(), None).unwrap(),
+        MeshSectionOutcomeV1::Ineligible(SectionIneligibilityV1::UnsupportedBlock { block_id: 601, .. })
+    ));
+}
+
+#[test]
+fn specialty_gallery_uses_every_render_layer_in_canonical_order() {
+    let registry = catalog_registry();
+    let mut value = snapshot();
+    for (x, block_id) in [(0, 1), (2, 6), (4, 13), (6, 41), (8, 7), (10, 37), (12, 12)] {
+        set_block(&mut value, x, 8, 8, block_id);
+    }
+    let water = halo_cell_index_v1(8, 8, 8).unwrap();
+    value.streams.fluid_flags[water] = TERRAIN_FLUID_PRESENT_V1 | TERRAIN_FLUID_SOURCE_V1;
+    value.snapshot_hash = hash_section_snapshot_v1(&value);
+    let packet = mesh_with(&value, &registry);
+    assert_eq!(
+        packet.layers.iter().map(|span| span.layer).collect::<Vec<_>>(),
+        TerrainMeshLayerV1::ALL
+    );
+    assert!(
+        packet
+            .layers
+            .iter()
+            .all(|span| span.vertex_count > 0 && span.index_count > 0)
+    );
+}
+
+#[test]
+fn fluids_waterlogging_and_hidden_state_preserve_whole_section_ownership() {
+    let registry = catalog_registry();
+    let mut source = snapshot();
+    set_block(&mut source, 2, 8, 2, 7);
+    let source_index = halo_cell_index_v1(2, 8, 2).unwrap();
+    source.streams.fluid_flags[source_index] = TERRAIN_FLUID_PRESENT_V1 | TERRAIN_FLUID_SOURCE_V1;
+    source.snapshot_hash = hash_section_snapshot_v1(&source);
+    let source_mesh = mesh_with(&source, &registry);
+
+    let mut flowing = source.clone();
+    flowing.streams.fluid_level[source_index] = 7;
+    flowing.streams.fluid_flags[source_index] = TERRAIN_FLUID_PRESENT_V1;
+    flowing.snapshot_hash = hash_section_snapshot_v1(&flowing);
+    let flowing_mesh = mesh_with(&flowing, &registry);
+    let maximum_y = |packet: &MeshPacketV1| {
+        packet
+            .streams
+            .positions
+            .chunks_exact(3)
+            .map(|position| position[1])
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    assert!(maximum_y(&source_mesh) > maximum_y(&flowing_mesh));
+
+    let mut waterlogged = snapshot();
+    set_block(&mut waterlogged, 8, 8, 8, 110);
+    let index = halo_cell_index_v1(8, 8, 8).unwrap();
+    waterlogged.streams.fluid_flags[index] =
+        TERRAIN_FLUID_PRESENT_V1 | TERRAIN_FLUID_SOURCE_V1 | TERRAIN_FLUID_WATERLOGGED_V1;
+    waterlogged.snapshot_hash = hash_section_snapshot_v1(&waterlogged);
+    let packet = mesh_with(&waterlogged, &registry);
+    assert_eq!(
+        packet.layers.iter().map(|span| span.layer).collect::<Vec<_>>(),
+        vec![TerrainMeshLayerV1::Emissive, TerrainMeshLayerV1::Water]
+    );
+
+    waterlogged.streams.hidden[index] = TERRAIN_HIDDEN_GEOMETRY_V1;
+    waterlogged.snapshot_hash = hash_section_snapshot_v1(&waterlogged);
+    let hidden = mesh_with(&waterlogged, &registry);
+    assert_eq!(hidden.streams.vertex_count(), 0);
+}
+
+#[test]
+fn specialty_emission_and_dampening_participate_in_resumable_lighting() {
+    let registry = catalog_registry();
+    let mut value = snapshot();
+    set_block(&mut value, 8, 8, 8, 13);
+    let LightingSectionOutcomeV1::Eligible(mut fine) =
+        begin_section_lighting_v1(&value, &registry, vec![0; 256]).unwrap()
+    else {
+        panic!("catalog lighting must be eligible");
+    };
+    while !fine.step(1).complete {}
+    let fine = fine.finish().unwrap();
+    let LightingSectionOutcomeV1::Eligible(mut coarse) =
+        begin_section_lighting_v1(&value, &registry, vec![0; 256]).unwrap()
+    else {
+        panic!("catalog lighting must be eligible");
+    };
+    while !coarse.step(u32::MAX).complete {}
+    let coarse = coarse.finish().unwrap();
+    assert_eq!(fine, coarse);
+    let source = halo_cell_index_v1(8, 8, 8).unwrap();
+    let neighbor = halo_cell_index_v1(9, 8, 8).unwrap();
+    assert_eq!(fine.light[source], 4037);
+    assert_eq!(light_channel(fine.light[neighbor], LightChannel::Red), 14);
+    assert_eq!(light_channel(fine.light[neighbor], LightChannel::Green), 11);
 }
 
 #[test]

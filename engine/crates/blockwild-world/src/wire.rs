@@ -5,9 +5,11 @@ use crate::contract::{
 };
 use crate::lighting::SectionLightingResultV1;
 use crate::material::{OpaqueCubeMaterialV1, SectionIneligibilityV1, TerrainMaterialRegistryV1, TerrainMaterialV1};
+use crate::{CanonicalLiquidV1, CanonicalShapeV1, CanonicalSpecialtyMaterialV1};
 
 const SNAPSHOT_MAGIC: [u8; 4] = *b"BWS1";
-const REGISTRY_MAGIC: [u8; 4] = *b"BWR1";
+const REGISTRY_MAGIC_V1: [u8; 4] = *b"BWR1";
+const REGISTRY_MAGIC_V2: [u8; 4] = *b"BWR2";
 const MESH_MAGIC: [u8; 4] = *b"BWM1";
 const LIGHT_MAGIC: [u8; 4] = *b"BWL1";
 const INELIGIBLE_MAGIC: [u8; 4] = *b"BWI1";
@@ -127,7 +129,7 @@ pub fn decode_section_snapshot_v1(bytes: &[u8]) -> Result<SectionSnapshotV1, Ter
 #[must_use]
 pub fn encode_material_registry_v1(registry: &TerrainMaterialRegistryV1) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(&REGISTRY_MAGIC);
+    bytes.extend_from_slice(&REGISTRY_MAGIC_V1);
     push_string(&mut bytes, &registry.content_hash);
     push_u32(&mut bytes, registry.blocks.len() as u32);
     for material in &registry.blocks {
@@ -145,26 +147,90 @@ pub fn encode_material_registry_v1(registry: &TerrainMaterialRegistryV1) -> Vec<
                 bytes.push(u8::from(material.ambient_occlusion));
             }
             Some(TerrainMaterialV1::Specialty) => bytes.push(3),
+            Some(TerrainMaterialV1::DataDriven(_)) => {
+                unreachable!("BWR1 cannot encode a BWR2 data-driven material")
+            }
         }
     }
-    push_u32(&mut bytes, registry.biome_tints.len() as u32);
-    for tint in &registry.biome_tints {
+    push_biome_tints(&mut bytes, &registry.biome_tints);
+    bytes
+}
+
+fn push_biome_tints(bytes: &mut Vec<u8>, biome_tints: &[Option<[f64; 3]>]) {
+    push_u32(bytes, biome_tints.len() as u32);
+    for tint in biome_tints {
         if let Some(tint) = tint {
             bytes.push(1);
             for channel in tint {
-                push_f64(&mut bytes, *channel);
+                push_f64(bytes, *channel);
             }
         } else {
             bytes.push(0);
         }
     }
-    bytes
+}
+
+/// Encode the production self-describing material registry. Unlike BWR1, no
+/// block-ID catalog is needed to mesh a BWR2 material.
+pub fn encode_material_registry_v2(registry: &TerrainMaterialRegistryV1) -> Result<Vec<u8>, TerrainMeshContractError> {
+    registry.validate()?;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&REGISTRY_MAGIC_V2);
+    push_string(&mut bytes, &registry.content_hash);
+    push_u32(&mut bytes, registry.blocks.len() as u32);
+    for (block_id, material) in registry.blocks.iter().enumerate() {
+        match material {
+            None => bytes.push(0),
+            Some(TerrainMaterialV1::Air) => bytes.push(1),
+            Some(TerrainMaterialV1::DataDriven(material)) => {
+                bytes.push(2);
+                bytes.push(material.layer as u8);
+                bytes.push(material.shape as u8);
+                push_u16(&mut bytes, material.side_tile);
+                push_u16(&mut bytes, material.top_tile);
+                push_u16(&mut bytes, material.bottom_tile);
+                let flags = u16::from(material.solid)
+                    | (u16::from(material.waterlogged) << 1)
+                    | (u16::from(material.connects_fence) << 2)
+                    | (u16::from(material.ambient_occlusion) << 3)
+                    | (u16::from(material.selective_interior_faces) << 4)
+                    | (u16::from(material.directionally_placed) << 5)
+                    | (u16::from(material.joins_same_horizontal) << 6)
+                    | (u16::from(material.joins_same_vertical) << 7);
+                push_u16(&mut bytes, flags);
+                bytes.push(material.liquid as u8);
+                bytes.push(material.light_dampening);
+                push_u16(&mut bytes, material.emitted_light);
+                push_f64(&mut bytes, material.emissive_strength());
+                push_u16(&mut bytes, material.vertical_group);
+                bytes.push(material.aquatic_profile);
+                push_u16(&mut bytes, material.shape_variant);
+                push_u16(&mut bytes, material.geometry_revision);
+                bytes.push(material.tint_policy);
+            }
+            Some(TerrainMaterialV1::OpaqueFullCube(_) | TerrainMaterialV1::Specialty) => {
+                return Err(TerrainMeshContractError::new(format!(
+                    "registry block {block_id} is a legacy-only BWR1 material"
+                )));
+            }
+        }
+    }
+    push_biome_tints(&mut bytes, &registry.biome_tints);
+    Ok(bytes)
 }
 
 pub fn decode_material_registry_v1(bytes: &[u8]) -> Result<TerrainMaterialRegistryV1, TerrainMeshContractError> {
     validate_wire_size(bytes)?;
     let mut reader = Reader::new(bytes);
-    reader.expect_magic(REGISTRY_MAGIC)?;
+    let version = match reader.read_exact(4)? {
+        value if value == REGISTRY_MAGIC_V1 => 1,
+        value if value == REGISTRY_MAGIC_V2 => 2,
+        _ => {
+            return Err(TerrainMeshContractError::new(
+                "binary world payload has the wrong magic",
+            ));
+        }
+    };
     let content_hash = reader.read_string()?;
     let block_count = reader.read_count("registry block count")?;
     if block_count > u16::MAX as usize + 1 {
@@ -173,31 +239,79 @@ pub fn decode_material_registry_v1(bytes: &[u8]) -> Result<TerrainMaterialRegist
         ));
     }
     let mut blocks = Vec::with_capacity(block_count);
-    for _ in 0..block_count {
+    for _block_id in 0..block_count {
         blocks.push(match reader.read_u8()? {
             0 => None,
             1 => Some(TerrainMaterialV1::Air),
-            2 => Some(TerrainMaterialV1::OpaqueFullCube(OpaqueCubeMaterialV1 {
+            2 if version == 1 => Some(TerrainMaterialV1::OpaqueFullCube(OpaqueCubeMaterialV1 {
                 side_tile: reader.read_u16()?,
                 top_tile: reader.read_u16()?,
                 bottom_tile: reader.read_u16()?,
                 emitted_light: reader.read_u16()?,
                 emissive_strength: reader.read_f64()?,
                 light_dampening: reader.read_u8()?,
-                ambient_occlusion: match reader.read_u8()? {
-                    0 => false,
-                    1 => true,
-                    value => {
+                ambient_occlusion: read_boolean(&mut reader, "material ambient-occlusion")?,
+            })),
+            2 => {
+                let layer = match reader.read_u8()? {
+                    0 => TerrainMeshLayerV1::Opaque,
+                    1 => TerrainMeshLayerV1::Cutout,
+                    2 => TerrainMeshLayerV1::Emissive,
+                    3 => TerrainMeshLayerV1::TranslucentSolid,
+                    4 => TerrainMeshLayerV1::Water,
+                    5 => TerrainMeshLayerV1::Transparent,
+                    6 => TerrainMeshLayerV1::Glass,
+                    code => {
                         return Err(TerrainMeshContractError::new(format!(
-                            "material ambient-occlusion flag must be 0 or 1, got {value}"
+                            "unknown BWR2 material layer {code}"
                         )));
                     }
-                },
-            })),
-            3 => Some(TerrainMaterialV1::Specialty),
+                };
+                let shape_code = reader.read_u8()?;
+                let shape = CanonicalShapeV1::from_code(shape_code).ok_or_else(|| {
+                    TerrainMeshContractError::new(format!("unknown BWR2 material shape {shape_code}"))
+                })?;
+                let side_tile = reader.read_u16()?;
+                let top_tile = reader.read_u16()?;
+                let bottom_tile = reader.read_u16()?;
+                let flags = reader.read_u16()?;
+                if flags & !0x00ff != 0 {
+                    return Err(TerrainMeshContractError::new(
+                        "BWR2 material reserved flag bits must be zero",
+                    ));
+                }
+                let liquid_code = reader.read_u8()?;
+                let liquid = CanonicalLiquidV1::from_code(liquid_code)
+                    .ok_or_else(|| TerrainMeshContractError::new(format!("unknown BWR2 liquid kind {liquid_code}")))?;
+                Some(TerrainMaterialV1::DataDriven(CanonicalSpecialtyMaterialV1 {
+                    side_tile,
+                    top_tile,
+                    bottom_tile,
+                    layer,
+                    shape,
+                    solid: flags & 1 != 0,
+                    waterlogged: flags & 2 != 0,
+                    connects_fence: flags & 4 != 0,
+                    ambient_occlusion: flags & 8 != 0,
+                    selective_interior_faces: flags & 16 != 0,
+                    directionally_placed: flags & 32 != 0,
+                    joins_same_horizontal: flags & 64 != 0,
+                    joins_same_vertical: flags & 128 != 0,
+                    liquid,
+                    light_dampening: reader.read_u8()?,
+                    emitted_light: reader.read_u16()?,
+                    emissive_strength_bits: reader.read_f64()?.to_bits(),
+                    vertical_group: reader.read_u16()?,
+                    aquatic_profile: reader.read_u8()?,
+                    shape_variant: reader.read_u16()?,
+                    geometry_revision: reader.read_u16()?,
+                    tint_policy: reader.read_u8()?,
+                }))
+            }
+            3 if version == 1 => Some(TerrainMaterialV1::Specialty),
             tag => {
                 return Err(TerrainMeshContractError::new(format!(
-                    "unknown registry material tag {tag}"
+                    "unknown BWR{version} registry material tag {tag}"
                 )));
             }
         });
@@ -228,6 +342,16 @@ pub fn decode_material_registry_v1(bytes: &[u8]) -> Result<TerrainMaterialRegist
     };
     registry.validate()?;
     Ok(registry)
+}
+
+fn read_boolean(reader: &mut Reader<'_>, label: &str) -> Result<bool, TerrainMeshContractError> {
+    match reader.read_u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => Err(TerrainMeshContractError::new(format!(
+            "{label} flag must be 0 or 1, got {value}"
+        ))),
+    }
 }
 
 #[must_use]

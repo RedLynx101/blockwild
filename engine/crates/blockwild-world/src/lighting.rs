@@ -4,8 +4,7 @@ use crate::contract::{
     TerrainSectionRevisionV1, core_cell_index_v1, halo_cell_index_v1,
 };
 use crate::material::{
-    MAX_LIGHT_LEVEL, SectionEligibilityV1, SectionIneligibilityV1, TerrainMaterialRegistryV1, TerrainMaterialV1,
-    opaque_section_eligibility_v1,
+    MAX_LIGHT_LEVEL, SectionEligibilityV1, SectionIneligibilityV1, TerrainMaterialRegistryV1, section_eligibility_v1,
 };
 
 const DIRECTIONS: [[i32; 3]; 6] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
@@ -344,7 +343,7 @@ pub fn begin_section_lighting_v1(
     registry: &TerrainMaterialRegistryV1,
     direct_sky_above: Vec<u8>,
 ) -> Result<LightingSectionOutcomeV1, TerrainMeshContractError> {
-    match opaque_section_eligibility_v1(snapshot, registry)? {
+    match section_eligibility_v1(snapshot, registry)? {
         SectionEligibilityV1::Ineligible(reason) => return Ok(LightingSectionOutcomeV1::Ineligible(reason)),
         SectionEligibilityV1::Eligible => {}
     }
@@ -356,17 +355,11 @@ pub fn begin_section_lighting_v1(
     let mut dampening = vec![MAX_LIGHT_LEVEL; TERRAIN_SECTION_HALO_CELL_COUNT_V1];
     let mut emission = vec![0_u16; TERRAIN_SECTION_HALO_CELL_COUNT_V1];
     for index in 0..TERRAIN_SECTION_HALO_CELL_COUNT_V1 {
-        match registry
-            .material(snapshot.streams.blocks[index])
-            .expect("eligibility verified every block ID")
-        {
-            TerrainMaterialV1::Air => dampening[index] = 0,
-            TerrainMaterialV1::OpaqueFullCube(material) => {
-                dampening[index] = material.light_dampening;
-                emission[index] = material.emitted_light;
-            }
-            TerrainMaterialV1::Specialty => unreachable!("eligibility rejects specialty blocks"),
-        }
+        let material = registry
+            .resolved_material(snapshot.streams.blocks[index])
+            .expect("eligibility verified every block ID");
+        dampening[index] = material.light_dampening();
+        emission[index] = material.emitted_light();
     }
     let mut light = snapshot.streams.light.clone();
     for local_y in 0..16 {

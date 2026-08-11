@@ -48,6 +48,7 @@ export type TerrainMesherFailureCode =
   | "worker-crash"
   | "worker-message"
   | "request-timeout"
+  | "ineligible-section"
   | "task-error"
   | "protocol-error"
   | "invalid-snapshot"
@@ -80,6 +81,13 @@ export type TerrainMesherDiagnostics = Readonly<{
   transferredToWorkerBytes: number;
   transferredFromWorkerBytes: number;
   returnedInputBytes: number;
+  latency?: Readonly<{
+    samples: number;
+    p50Milliseconds: number;
+    p95Milliseconds: number;
+    p99Milliseconds: number;
+    maximumMilliseconds: number;
+  }>;
   lastError: Readonly<{ code: TerrainMesherFailureCode; message: string }> | null;
 }>;
 
@@ -138,4 +146,3 @@ export function terrainMesherAbortError() {
 export function throwIfTerrainMeshAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw terrainMesherAbortError();
 }
-

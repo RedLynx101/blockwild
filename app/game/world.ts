@@ -3,6 +3,24 @@ import { ChunkMemoryCache, ChunkPersistentCache, type CachedChunkData } from "./
 import { TerrainBufferPipeline, type TerrainMergedGeometry, type TerrainSectionGeometry } from "./terrain-buffer-pipeline";
 import { TerrainGenerationPipeline, type TerrainGenerationResult } from "./terrain-generation-pipeline";
 import {
+  TerrainFluidFlagV1,
+  TerrainHiddenFlagV1,
+  TERRAIN_SECTION_HALO_CELL_COUNT_V1,
+  TERRAIN_SECTION_HALO_COLUMN_COUNT_V1,
+  TERRAIN_SECTION_HALO_SIZE_V1,
+  TERRAIN_SECTION_SIZE_V1,
+  createMeshPacketV1,
+  createSectionSnapshotV1,
+  terrainSectionAddressKeyV1,
+  type MeshPacketV1,
+  type SectionSnapshotV1,
+  type TerrainSectionAddressV1,
+  type TerrainSectionRevisionV1,
+} from "./terrain-mesh-contract";
+import { RustTerrainMesherBackend } from "./rust-terrain-mesher";
+import { TypeScriptTerrainMesherBackend } from "./typescript-terrain-mesher";
+import { TERRAIN_BIOME_TINTS_V1, canonicalTerrainMaterialRegistryV2 } from "./terrain-material-registry";
+import {
   adventureClearanceBounds,
   adventureDungeonCandidateForChunk,
   adventureMarkersForChunk,
@@ -158,6 +176,21 @@ export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
 export const GENERATOR_VERSION = 18;
+
+export type RustTerrainR2BrowserHarnessV1 = Readonly<{
+  schemaVersion: 1;
+  mode: RustTerrainMesherMode;
+  diagnostics(): ReturnType<ChunkWorld["streamingDiagnostics"]>["rustTerrain"];
+  buildGallery(): Promise<Readonly<{
+    anchor: Readonly<{ x: number; y: number; z: number }>;
+    placements: readonly Readonly<{ x: number; y: number; z: number; blockId: BlockId; name: string }>[];
+    shapeFamilies: number;
+    sectionSeamY: number;
+  }>>;
+  exerciseImmediateEdit(): Promise<Readonly<Record<string, unknown>>>;
+  exerciseCrashRecovery(): Promise<Readonly<Record<string, unknown>>>;
+  awaitSettled(timeoutMilliseconds?: number, submittedBefore?: number): Promise<ReturnType<ChunkWorld["streamingDiagnostics"]>["rustTerrain"]>;
+}>;
 /** v1.8.4: conventional ore rolls are 25% richer before the world's abundance setting. */
 export const ORE_SPAWN_RATE_MULTIPLIER = 1.25;
 /** Shared vein cells were 2 x 2 x 2; broader 3 x 2 x 3 cells permit larger, still porous seams. */
@@ -538,6 +571,14 @@ function legendarySitePalette(encounterId: LegendaryEncounterId) {
 
 type WorldRenderLayer = Exclude<RenderLayer, "none"> | "water" | "glass";
 const WORLD_RENDER_LAYERS = ["opaque", "cutout", "emissive", "translucentSolid", "water", "transparent", "glass"] as const satisfies readonly WorldRenderLayer[];
+export type RustTerrainMesherMode = "off" | "shadow" | "promote";
+const configuredRustTerrainMode = typeof process === "undefined"
+  ? undefined
+  : process.env.NEXT_PUBLIC_BLOCKWILD_RUST_TERRAIN_MESHER;
+export const DEFAULT_RUST_TERRAIN_MESHER_MODE: RustTerrainMesherMode = typeof document === "undefined"
+  ? "off"
+  : configuredRustTerrainMode === "promote" ? "promote"
+    : configuredRustTerrainMode === "shadow" ? "shadow" : "off";
 const worldRenderOrder = (layer: WorldRenderLayer) => layer === "glass" ? 6
   : layer === "transparent" ? 5
     : layer === "water" ? 4
@@ -968,32 +1009,9 @@ const FACES: Face[] = [
   { direction: [0, 0, -1], shade: 0.76, corners: [[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, -0.5, -0.5]] },
 ];
 
-const BIOME_TINT: Record<number, [number, number, number]> = {
-  [BiomeId.DeepOcean]: [0.72, 0.83, 0.98],
-  [BiomeId.Ocean]: [0.8, 0.9, 1],
-  [BiomeId.Beach]: [1.04, 1.01, 0.86],
-  [BiomeId.Meadow]: [0.84, 0.98, 0.82],
-  [BiomeId.Wildwood]: [0.74, 0.93, 0.69],
-  [BiomeId.Frostpine]: [0.74, 0.92, 0.88],
-  [BiomeId.Desert]: [1.1, 0.96, 0.72],
-  [BiomeId.Savanna]: [1.03, 0.96, 0.69],
-  [BiomeId.Siltfen]: [0.64, 0.78, 0.63],
-  [BiomeId.Snowfield]: [0.92, 1.01, 1.08],
-  [BiomeId.Badlands]: [1.08, 0.78, 0.65],
-  [BiomeId.Birchlight]: [0.95, 1.08, 0.83],
-  [BiomeId.Bloomwood]: [1.08, 0.91, 1.02],
-  [BiomeId.Highlands]: [0.88, 0.93, 0.95],
-  [BiomeId.Volcanic]: [0.76, 0.7, 0.72],
-  [BiomeId.MushroomFen]: [0.96, 0.78, 0.94],
-  [BiomeId.River]: [0.82, 0.94, 0.94],
-  [BiomeId.CloudreedGlen]: [0.76, 1.02, 0.91],
-  [BiomeId.RainveilJungle]: [0.62, 1.01, 0.73],
-  [BiomeId.SakurabloomGrove]: [1.05, 0.9, 1.01],
-  [BiomeId.LumenTrench]: [0.62, 0.78, 1.08],
-  [BiomeId.SugarplumVale]: [1.08, 0.88, 1.04],
-  [BiomeId.Glimmerwood]: [0.64, 1.01, 0.9],
-  [BiomeId.SnowcapRange]: [0.88, 0.96, 1.03],
-};
+const BIOME_TINT: Record<number, [number, number, number]> = Object.fromEntries(
+  TERRAIN_BIOME_TINTS_V1.map((tint, biome) => [biome, [...tint] as [number, number, number]]),
+);
 
 /**
  * Fits an aquatic settlement to the water volume at every authored point.
@@ -2957,6 +2975,32 @@ export class ChunkWorld {
   invalidatedCombinedMeshes = 0;
   terrainBufferPipeline = new TerrainBufferPipeline();
   terrainGenerationPipeline = new TerrainGenerationPipeline();
+  private readonly rustTerrainMode: RustTerrainMesherMode;
+  private readonly rustTerrainMesher: RustTerrainMesherBackend | null;
+  private rustTerrainR2BrowserHarness: RustTerrainR2BrowserHarnessV1 | null = null;
+  private rustTerrainR2AuditPosition: Readonly<{ x: number; y: number; z: number }> | null = null;
+  private readonly rustTerrainReferencePackets = new Map<string, MeshPacketV1>();
+  private readonly rustTerrainRevisions = new Map<string, TerrainSectionRevisionV1>();
+  private rustTerrainRevisionSerial = 0;
+  private rustTerrainShadow = {
+    submitted: 0,
+    rustEligible: 0,
+    exactMatches: 0,
+    parityMismatches: 0,
+    fallback: 0,
+    stale: 0,
+    promoted: 0,
+    installFailures: 0,
+    lastMismatch: null as Readonly<{
+      address: string;
+      reference: string;
+      rust: string;
+      field: string;
+      index: number;
+      referenceValue: number | string | null;
+      rustValue: number | string | null;
+    }> | null,
+  };
   pendingWorkerGeneration = new Set<string>();
   completedWorkerGeneration: TerrainGenerationResult[] = [];
   staleWorkerGeneration = 0;
@@ -3046,7 +3090,8 @@ export class ChunkWorld {
     falling: boolean;
   }> | undefined) | null = null;
 
-  constructor() {
+  constructor(options: Readonly<{ rustTerrainMode?: RustTerrainMesherMode }> = {}) {
+    this.rustTerrainMode = options.rustTerrainMode ?? DEFAULT_RUST_TERRAIN_MESHER_MODE;
     this.atlas = typeof document === "undefined"
       ? new THREE.DataTexture(new Uint8Array([127, 127, 127, 255]), 1, 1, THREE.RGBAFormat)
       : createBlockAtlas();
@@ -3072,6 +3117,20 @@ export class ChunkWorld {
       getDefinition: (type) => BLOCKS[type],
       markLightDirty: (x, y, z) => this.queueLightSectionAt(x, y, z),
     });
+    this.rustTerrainMesher = this.rustTerrainMode === "off" ? null : new RustTerrainMesherBackend({
+      fallback: new TypeScriptTerrainMesherBackend({
+        mesh: (snapshot) => {
+          const packet = this.rustTerrainReferencePackets.get(snapshot.snapshotHash);
+          if (!packet) throw new Error(`TypeScript terrain packet ${snapshot.snapshotHash} is no longer available`);
+          return packet;
+        },
+      }),
+      ownsFallback: true,
+      requestTimeoutMs: 12_000,
+      startupTimeoutMs: 30_000,
+      maximumRestarts: 2,
+    });
+    this.installRustTerrainR2BrowserHarness();
   }
 
   /** Supplies sparse runtime flow metadata without coupling world storage to the simulator. */
@@ -3184,6 +3243,19 @@ export class ChunkWorld {
     this.edits.clear();
     this.chunkEditSignatureCache.clear();
     this.mutationRevision = 0;
+    this.rustTerrainReferencePackets.clear();
+    this.rustTerrainRevisions.clear();
+    this.rustTerrainShadow = {
+      submitted: 0,
+      rustEligible: 0,
+      exactMatches: 0,
+      parityMismatches: 0,
+      fallback: 0,
+      stale: 0,
+      promoted: 0,
+      installFailures: 0,
+      lastMismatch: null,
+    };
     this.structureMarkers.clear();
     this.settlementPlans.clear();
     this.settlementCandidateCache.clear();
@@ -4665,6 +4737,13 @@ export class ChunkWorld {
     const queueKey = `${key}:${section}`;
     if (this.lightSectionQueued.has(queueKey)) return;
     this.lightSectionQueued.add(queueKey);
+    const chunk = this.chunks.get(key);
+    if (this.rustTerrainMesher && chunk) {
+      // A queued light pass can change packed vertex light without rebuilding
+      // topology. Invalidate any in-flight Rust result before that pass runs so
+      // it can never promote lighting captured from an older section snapshot.
+      this.nextRustTerrainRevision(this.rustTerrainAddress(chunk, section));
+    }
     this.lightSectionsPendingByChunk.set(key, (this.lightSectionsPendingByChunk.get(key) ?? 0) + 1);
     this.lightSectionQueue.push({ key, section });
   }
@@ -7829,6 +7908,283 @@ export class ChunkWorld {
     return voxelInterfaceFaceOwner(type, neighbor) === "current";
   }
 
+  private rustTerrainAddress(chunk: Chunk, section: number): TerrainSectionAddressV1 {
+    const startY = MIN_Y + section * SECTION_HEIGHT;
+    return {
+      universeId: "blockwild",
+      locationId: `seed:${this.seed >>> 0}`,
+      chunkX: chunk.cx,
+      chunkZ: chunk.cz,
+      sectionY: Math.floor(startY / TERRAIN_SECTION_SIZE_V1),
+    };
+  }
+
+  private currentRustTerrainRevision = (address: TerrainSectionAddressV1) => {
+    return this.rustTerrainRevisions.get(terrainSectionAddressKeyV1(address)) ?? null;
+  };
+
+  private nextRustTerrainRevision(address: TerrainSectionAddressV1) {
+    this.rustTerrainRevisionSerial = (this.rustTerrainRevisionSerial + 1) >>> 0;
+    if (this.rustTerrainRevisionSerial === 0) this.rustTerrainRevisionSerial = 1;
+    const revision: TerrainSectionRevisionV1 = Object.freeze({
+      section: this.rustTerrainRevisionSerial,
+      halo: this.rustTerrainRevisionSerial,
+      lighting: this.rustTerrainRevisionSerial,
+    });
+    this.rustTerrainRevisions.set(terrainSectionAddressKeyV1(address), revision);
+    return revision;
+  }
+
+  private createRustTerrainSnapshot(chunk: Chunk, section: number): SectionSnapshotV1 {
+    const address = this.rustTerrainAddress(chunk, section);
+    const revision = this.nextRustTerrainRevision(address);
+    const blocks = new Uint16Array(TERRAIN_SECTION_HALO_CELL_COUNT_V1);
+    const light = new Uint16Array(TERRAIN_SECTION_HALO_CELL_COUNT_V1);
+    const facing = new Uint8Array(TERRAIN_SECTION_HALO_CELL_COUNT_V1);
+    const hidden = new Uint8Array(TERRAIN_SECTION_HALO_CELL_COUNT_V1);
+    const fluidLevel = new Uint8Array(TERRAIN_SECTION_HALO_CELL_COUNT_V1);
+    const fluidFlags = new Uint8Array(TERRAIN_SECTION_HALO_CELL_COUNT_V1);
+    const biomes = new Uint8Array(TERRAIN_SECTION_HALO_COLUMN_COUNT_V1);
+    const originX = chunk.cx * CHUNK_SIZE;
+    const originY = MIN_Y + section * SECTION_HEIGHT;
+    const originZ = chunk.cz * CHUNK_SIZE;
+    for (let haloY = 0; haloY < TERRAIN_SECTION_HALO_SIZE_V1; haloY += 1) {
+      const worldY = originY + haloY - 1;
+      for (let haloZ = 0; haloZ < TERRAIN_SECTION_HALO_SIZE_V1; haloZ += 1) {
+        const worldZ = originZ + haloZ - 1;
+        for (let haloX = 0; haloX < TERRAIN_SECTION_HALO_SIZE_V1; haloX += 1) {
+          const worldX = originX + haloX - 1;
+          const index = haloX + TERRAIN_SECTION_HALO_SIZE_V1 * (haloZ + TERRAIN_SECTION_HALO_SIZE_V1 * haloY);
+          const resolved = this.getBlock(worldX, worldY, worldZ);
+          const type = resolved ?? BlockId.Air;
+          blocks[index] = type;
+          light[index] = resolved === undefined ? 0 : this.lightEngine.getPacked(worldX, worldY, worldZ);
+          facing[index] = isDirectionallyPlacedBlock(type) ? this.blockFacingAt(worldX, worldY, worldZ) : BLOCK_FACING_NORTH;
+          if (resolved === undefined) hidden[index] |= TerrainHiddenFlagV1.UnknownHalo;
+          if (type === BlockId.Chest && this.hiddenChestVisuals.has(`${worldX},${worldY},${worldZ}`)) {
+            hidden[index] |= TerrainHiddenFlagV1.Geometry;
+          }
+          const definition = BLOCKS[type];
+          if (!definition?.liquid && !definition?.waterlogged) continue;
+          const cell = this.liquidCellProvider?.(worldX, worldY, worldZ);
+          fluidLevel[index] = Math.max(0, Math.min(255, Math.round(cell?.level ?? 0)));
+          fluidFlags[index] = TerrainFluidFlagV1.Present
+            | (cell?.source !== false ? TerrainFluidFlagV1.Source : 0)
+            | (cell?.falling ? TerrainFluidFlagV1.Falling : 0)
+            | (definition.waterlogged ? TerrainFluidFlagV1.Waterlogged : 0);
+        }
+      }
+    }
+    for (let haloZ = 0; haloZ < TERRAIN_SECTION_HALO_SIZE_V1; haloZ += 1) {
+      const worldZ = originZ + haloZ - 1;
+      for (let haloX = 0; haloX < TERRAIN_SECTION_HALO_SIZE_V1; haloX += 1) {
+        const worldX = originX + haloX - 1;
+        const sx = splitCoordinate(worldX);
+        const sz = splitCoordinate(worldZ);
+        const owner = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
+        biomes[haloX + haloZ * TERRAIN_SECTION_HALO_SIZE_V1] = owner
+          ? owner.biomes[sx.local + sz.local * CHUNK_SIZE]
+          : this.sampleColumn(worldX, worldZ).biome;
+      }
+    }
+    return createSectionSnapshotV1({
+      contentHash: canonicalTerrainMaterialRegistryV2().contentHash,
+      address,
+      revision,
+      streams: { blocks, light, facing, hidden, fluidLevel, fluidFlags, biomes },
+    });
+  }
+
+  private createTypeScriptTerrainPacket(snapshot: SectionSnapshotV1, buckets: Record<WorldRenderLayer, GeometryBucket>) {
+    const vertexCount = WORLD_RENDER_LAYERS.reduce((total, layer) => total + buckets[layer].positions.length / 3, 0);
+    const indexCount = WORLD_RENDER_LAYERS.reduce((total, layer) => total + buckets[layer].indices.length, 0);
+    const positions = new Float32Array(vertexCount * 3);
+    const normals = new Int8Array(vertexCount * 3);
+    const colors = new Uint8Array(vertexCount * 3);
+    const lights = new Uint8Array(vertexCount * 4);
+    const emissions = new Uint8Array(vertexCount);
+    const occlusions = new Uint8Array(vertexCount);
+    const uvs = new Uint16Array(vertexCount * 2);
+    const indices = vertexCount > 0xffff ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
+    const layers = [] as Array<{
+      layer: WorldRenderLayer;
+      vertexStart: number;
+      vertexCount: number;
+      indexStart: number;
+      indexCount: number;
+    }>;
+    let vertexStart = 0;
+    let indexStart = 0;
+    for (const layer of WORLD_RENDER_LAYERS) {
+      const bucket = buckets[layer];
+      const layerVertices = bucket.positions.length / 3;
+      if (!layerVertices) continue;
+      positions.set(bucket.positions, vertexStart * 3);
+      normals.set(packSnorm8(bucket.normals), vertexStart * 3);
+      colors.set(packColorUnorm8(bucket.colors), vertexStart * 3);
+      lights.set(packLightUnorm8(bucket.lights), vertexStart * 4);
+      emissions.set(packScalarUnorm8(bucket.emissions), vertexStart);
+      occlusions.set(packScalarUnorm8(bucket.occlusions), vertexStart);
+      uvs.set(packUnorm16(bucket.uvs), vertexStart * 2);
+      for (let offset = 0; offset < bucket.indices.length; offset += 1) {
+        indices[indexStart + offset] = bucket.indices[offset] + vertexStart;
+      }
+      layers.push({
+        layer,
+        vertexStart,
+        vertexCount: layerVertices,
+        indexStart,
+        indexCount: bucket.indices.length,
+      });
+      vertexStart += layerVertices;
+      indexStart += bucket.indices.length;
+    }
+    return createMeshPacketV1({
+      sourceSnapshotHash: snapshot.snapshotHash,
+      contentHash: snapshot.contentHash,
+      address: snapshot.address,
+      revision: snapshot.revision,
+      layers,
+      streams: { positions, normals, colors, lights, emissions, occlusions, uvs, indices },
+    });
+  }
+
+  private dispatchRustTerrainShadow(
+    chunk: Chunk,
+    section: number,
+    buckets: Record<WorldRenderLayer, GeometryBucket>,
+    slicedReference: boolean,
+  ) {
+    if (!this.rustTerrainMesher) return;
+    // A sliced TS build can span propagated-light updates. Compare Rust against
+    // one atomic oracle pass at the snapshot boundary so a mixed-age light
+    // stream cannot be misdiagnosed as meshing drift (or promoted as current).
+    const referenceBuckets = slicedReference
+      ? Object.fromEntries(WORLD_RENDER_LAYERS.map((layer) => [layer, emptyBucket()])) as Record<WorldRenderLayer, GeometryBucket>
+      : buckets;
+    if (slicedReference) {
+      this.rebuildSection(chunk, section, {
+        buckets: referenceBuckets,
+        startLocalX: 0,
+        endLocalX: CHUNK_SIZE,
+        finalize: false,
+      });
+    }
+    const snapshot = this.createRustTerrainSnapshot(chunk, section);
+    const reference = this.createTypeScriptTerrainPacket(snapshot, referenceBuckets);
+    this.rustTerrainReferencePackets.set(snapshot.snapshotHash, reference);
+    this.rustTerrainShadow.submitted += 1;
+    void this.rustTerrainMesher.mesh(snapshot, { currentRevision: this.currentRustTerrainRevision }).then((result) => {
+      if (result.status === "stale") {
+        this.rustTerrainShadow.stale += 1;
+        return;
+      }
+      if (result.fallbackFrom) {
+        this.rustTerrainShadow.fallback += 1;
+        return;
+      }
+      this.rustTerrainShadow.rustEligible += 1;
+      if (result.packet.packetHash !== reference.packetHash) {
+        this.rustTerrainShadow.parityMismatches += 1;
+        const difference = this.firstRustTerrainPacketDifference(reference, result.packet);
+        this.rustTerrainShadow.lastMismatch = {
+          address: terrainSectionAddressKeyV1(snapshot.address),
+          reference: reference.packetHash,
+          rust: result.packet.packetHash,
+          ...difference,
+        };
+        return;
+      }
+      this.rustTerrainShadow.exactMatches += 1;
+      if (this.rustTerrainMode !== "promote") return;
+      const current = this.currentRustTerrainRevision(snapshot.address);
+      if (!current || current.section !== snapshot.revision.section
+        || current.halo !== snapshot.revision.halo || current.lighting !== snapshot.revision.lighting) {
+        this.rustTerrainShadow.stale += 1;
+        return;
+      }
+      const currentChunk = this.chunks.get(chunk.key);
+      if (!currentChunk || currentChunk !== chunk) {
+        this.rustTerrainShadow.stale += 1;
+        return;
+      }
+      this.installRustTerrainPacket(chunk, section, result.packet);
+      this.rustTerrainShadow.promoted += 1;
+    }).catch(() => {
+      this.rustTerrainShadow.installFailures += 1;
+    }).finally(() => {
+      if (this.rustTerrainReferencePackets.get(snapshot.snapshotHash) === reference) {
+        this.rustTerrainReferencePackets.delete(snapshot.snapshotHash);
+      }
+    });
+  }
+
+  private firstRustTerrainPacketDifference(reference: MeshPacketV1, rust: MeshPacketV1) {
+    const referenceLayers = JSON.stringify(reference.layers);
+    const rustLayers = JSON.stringify(rust.layers);
+    if (referenceLayers !== rustLayers) {
+      return { field: "layers", index: -1, referenceValue: referenceLayers, rustValue: rustLayers } as const;
+    }
+    for (const field of ["positions", "normals", "colors", "lights", "emissions", "occlusions", "uvs", "indices"] as const) {
+      const expected = reference.streams[field];
+      const actual = rust.streams[field];
+      const length = Math.max(expected.length, actual.length);
+      for (let index = 0; index < length; index += 1) {
+        if (expected[index] !== actual[index]) {
+          return {
+            field: `streams.${field}`,
+            index,
+            referenceValue: expected[index] ?? null,
+            rustValue: actual[index] ?? null,
+          } as const;
+        }
+      }
+    }
+    return { field: "packetHash", index: -1, referenceValue: reference.packetHash, rustValue: rust.packetHash } as const;
+  }
+
+  private installRustTerrainPacket(chunk: Chunk, section: number, packet: MeshPacketV1) {
+    this.invalidateCombinedMeshesForImmediateEdit(chunk);
+    const old = chunk.sections.get(section);
+    if (old) for (const mesh of Object.values(old)) if (mesh) {
+      chunk.group.remove(mesh);
+      this.disposeTerrainGeometry(mesh.geometry);
+    }
+    const nextMeshes: ChunkMeshes = {};
+    const startY = MIN_Y + section * SECTION_HEIGHT;
+    const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
+    for (const span of packet.layers) {
+      const vertexEnd = span.vertexStart + span.vertexCount;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(packet.streams.positions.slice(span.vertexStart * 3, vertexEnd * 3), 3));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(packet.streams.normals.slice(span.vertexStart * 3, vertexEnd * 3), 3, true));
+      geometry.setAttribute("color", new THREE.BufferAttribute(packet.streams.colors.slice(span.vertexStart * 3, vertexEnd * 3), 3, true));
+      geometry.setAttribute("voxelLight", new THREE.BufferAttribute(packet.streams.lights.slice(span.vertexStart * 4, vertexEnd * 4), 4, true));
+      geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(packet.streams.emissions.slice(span.vertexStart, vertexEnd), 1, true));
+      geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(packet.streams.occlusions.slice(span.vertexStart, vertexEnd), 1, true));
+      geometry.setAttribute("uv", new THREE.BufferAttribute(packet.streams.uvs.slice(span.vertexStart * 2, vertexEnd * 2), 2, true));
+      const sourceIndices = packet.streams.indices.slice(span.indexStart, span.indexStart + span.indexCount);
+      const localIndices = span.vertexCount > 0xffff ? new Uint32Array(sourceIndices.length) : new Uint16Array(sourceIndices.length);
+      for (let index = 0; index < sourceIndices.length; index += 1) localIndices[index] = sourceIndices[index] - span.vertexStart;
+      geometry.setIndex(new THREE.BufferAttribute(localIndices, 1));
+      this.registerTerrainGeometry(geometry);
+      geometry.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3((CHUNK_SIZE - 1) / 2, (startY + endY) / 2, (CHUNK_SIZE - 1) / 2),
+        Math.sqrt(2 * (CHUNK_SIZE / 2) ** 2 + ((endY - startY + 1) / 2) ** 2),
+      );
+      const layer = span.layer as WorldRenderLayer;
+      const mesh = new THREE.Mesh(geometry, this.materials[layer]);
+      mesh.renderOrder = worldRenderOrder(layer);
+      mesh.visible = true;
+      chunk.group.add(mesh);
+      this.freezeTerrainTransform(mesh);
+      nextMeshes[layer] = mesh;
+    }
+    chunk.sections.set(section, nextMeshes);
+    chunk.dirty.delete(section);
+    this.queueChunkConsolidation(chunk, WORLD_RENDER_LAYERS.filter((layer) => Boolean(old?.[layer] || nextMeshes[layer])));
+  }
+
   setStreamingViewHint(forwardX: number, forwardZ: number) {
     const length = Math.hypot(forwardX, forwardZ);
     if (length <= 1e-6) return;
@@ -7864,18 +8220,14 @@ export class ChunkWorld {
       ?? { opaque: emptyBucket(), cutout: emptyBucket(), emissive: emptyBucket(), translucentSolid: emptyBucket(), water: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
-    const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
-    const east = this.chunks.get(chunkKey(chunk.cx + 1, chunk.cz));
-    const north = this.chunks.get(chunkKey(chunk.cx, chunk.cz - 1));
-    const south = this.chunks.get(chunkKey(chunk.cx, chunk.cz + 1));
     const neighborAt = (localX: number, y: number, localZ: number) => {
       if (y > MAX_Y) return BlockId.Air;
       if (y < MIN_Y) return BlockId.Bedrock;
       if (localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE) return chunk.blocks[blockIndex(localX, y, localZ)] as BlockId;
-      if (localX < 0) return west ? west.blocks[blockIndex(CHUNK_SIZE - 1, y, localZ)] as BlockId : BlockId.Air;
-      if (localX >= CHUNK_SIZE) return east ? east.blocks[blockIndex(0, y, localZ)] as BlockId : BlockId.Air;
-      if (localZ < 0) return north ? north.blocks[blockIndex(localX, y, CHUNK_SIZE - 1)] as BlockId : BlockId.Air;
-      return south ? south.blocks[blockIndex(localX, y, 0)] as BlockId : BlockId.Air;
+      // AO samples diagonal halo cells as well as face-adjacent cells. Resolve
+      // those through world coordinates so x/z corners cannot wrap through a
+      // typed-array row into the previous or next vertical layer.
+      return this.getBlock(chunk.cx * CHUNK_SIZE + localX, y, chunk.cz * CHUNK_SIZE + localZ) ?? BlockId.Air;
     };
     const liquidSurfaceInsetAt = (localX: number, y: number, localZ: number, type: BlockId) => {
       const cell = this.liquidCellProvider?.(
@@ -8781,6 +9133,7 @@ export class ChunkWorld {
       old?.[layer] || nextMeshes[layer] || invalidatedLayers.includes(layer),
     ));
     this.queueChunkConsolidation(chunk, changedLayers);
+    this.dispatchRustTerrainShadow(chunk, section, buckets, Boolean(slice));
     if (completingSeamRebuild) this.releaseSeamPresentationBlocker(queueKey);
   }
 
@@ -9090,6 +9443,144 @@ export class ChunkWorld {
     }
   }
 
+  private installRustTerrainR2BrowserHarness() {
+    if (typeof window === "undefined" || new URLSearchParams(window.location.search).get("rust-terrain-r2-audit") !== "1") return;
+    const diagnostics = () => this.streamingDiagnostics().rustTerrain;
+    const awaitSettled = async (timeoutMilliseconds = 12_000, submittedBefore = -1) => {
+      const started = performance.now();
+      let stablePolls = 0;
+      while (performance.now() - started <= timeoutMilliseconds) {
+        const current = diagnostics();
+        const resolved = current.exactMatches + current.parityMismatches + current.fallback
+          + current.stale + current.installFailures;
+        const backend = current.backend;
+        const backendResolved = !backend || backend.completed + backend.stale + backend.aborted >= backend.submitted;
+        const settled = (!this.rustTerrainMesher || (backend?.pending === 0 && backendResolved))
+          && (submittedBefore < 0 || current.submitted > submittedBefore)
+          && resolved >= current.submitted;
+        if (settled && ++stablePolls >= 3) return current;
+        if (!settled) stablePolls = 0;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 25));
+      }
+      throw new Error(`Rust terrain R2 audit did not settle: ${JSON.stringify(diagnostics())}`);
+    };
+    const buildGallery = async () => {
+      const registry = canonicalTerrainMaterialRegistryV2();
+      const selected = new Set<BlockId>();
+      const shapes = new Set<number>();
+      for (const [blockId, material] of registry.blocks.entries()) {
+        if (!material || material.kind !== "material" || shapes.has(material.shape)) continue;
+        shapes.add(material.shape);
+        selected.add(blockId as BlockId);
+      }
+      for (const blockId of [
+        BlockId.Water, BlockId.Lava, BlockId.Glass, BlockId.Ice, BlockId.WildwoodLeaves,
+        BlockId.Glowstone, BlockId.Torch, BlockId.Deepstone, BlockId.LumenKelp, BlockId.CaptureOrbRack,
+      ]) selected.add(blockId);
+      const playerChunkX = Number.isFinite(this.playerChunkX) ? this.playerChunkX : 0;
+      const playerChunkZ = Number.isFinite(this.playerChunkZ) ? this.playerChunkZ : 0;
+      const originX = playerChunkX * CHUNK_SIZE;
+      // Keep the gallery in the player's forward (-Z) view without coupling the
+      // audit to input focus or pointer-lock behavior in headless browsers.
+      const originZ = playerChunkZ * CHUNK_SIZE - 14;
+      const ids = [...selected].sort((left, right) => left - right);
+      const coordinates = ids.map((_blockId, index) => ({
+        x: originX + (index % 10) * 2,
+        z: originZ + Math.floor(index / 10) * 2,
+      }));
+      const maximumSurface = coordinates.reduce((value, position) => Math.max(value, this.surfaceAt(position.x, position.z)), MIN_Y);
+      const baseY = Math.max(MIN_Y + 2, Math.min(MAX_Y - 5, maximumSurface + 3));
+      const placements: Array<{ x: number; y: number; z: number; blockId: BlockId; name: string }> = ids.map((blockId, index) => ({
+        ...coordinates[index],
+        y: baseY,
+        blockId,
+        name: BLOCKS[blockId]?.name ?? `Block ${blockId}`,
+      }));
+      const seamX = playerChunkX * CHUNK_SIZE + CHUNK_SIZE - 1;
+      const seamZ = originZ + 11;
+      for (const [offsetY, blockId] of [
+        [0, BlockId.Water], [1, BlockId.Glass], [2, BlockId.WildwoodLeaves], [3, BlockId.WildwoodFence],
+      ] as const) {
+        for (const x of [seamX, seamX + 1]) placements.push({ x, y: baseY + offsetY, z: seamZ, blockId, name: `${BLOCKS[blockId].name} seam` });
+      }
+      const sectionSeamY = Math.min(MAX_Y - 1, MIN_Y + (sectionForY(baseY) + 1) * SECTION_HEIGHT - 1);
+      for (const [offsetX, blockId] of [
+        [0, BlockId.Water], [2, BlockId.Glass], [4, BlockId.LumenKelp], [6, BlockId.CaptureOrbRack],
+      ] as const) {
+        for (const y of [sectionSeamY, sectionSeamY + 1]) placements.push({
+          x: originX + offsetX,
+          y,
+          z: seamZ + 2,
+          blockId,
+          name: `${BLOCKS[blockId].name} section seam`,
+        });
+      }
+      const changes = new Map<string, { x: number; y: number; z: number; type: BlockId }>();
+      for (const placement of placements) {
+        changes.set(`${placement.x},${placement.y - 1},${placement.z}`, {
+          x: placement.x, y: placement.y - 1, z: placement.z, type: BlockId.Stone,
+        });
+        changes.set(`${placement.x},${placement.y},${placement.z}`, {
+          x: placement.x, y: placement.y, z: placement.z, type: placement.blockId,
+        });
+        if (isDirectionallyPlacedBlock(placement.blockId)) {
+          this.blockFacings.set(`${placement.x},${placement.y},${placement.z}`, normalizeBlockFacing(placement.blockId & 3));
+        }
+      }
+      const submittedBefore = diagnostics().submitted;
+      this.setBlocksBatch([...changes.values()], false, true, true);
+      this.rustTerrainR2AuditPosition = { x: originX + 18, y: baseY + 2, z: seamZ + 2 };
+      await awaitSettled(12_000, submittedBefore);
+      return Object.freeze({
+        anchor: Object.freeze({ x: originX + 8, y: baseY, z: originZ + 4 }),
+        placements: Object.freeze(placements.map((placement) => Object.freeze(placement))),
+        shapeFamilies: shapes.size,
+        sectionSeamY,
+      });
+    };
+    const exerciseImmediateEdit = async () => {
+      const position = this.rustTerrainR2AuditPosition;
+      if (!position) throw new Error("Build the R2 gallery before exercising edits");
+      const submittedBefore = diagnostics().submitted;
+      const revisionBefore = this.mutationRevision;
+      const started = performance.now();
+      const previous = this.getBlock(position.x, position.y, position.z) ?? BlockId.Air;
+      const next = previous === BlockId.Glowstone ? BlockId.Stone : BlockId.Glowstone;
+      this.setBlock(position.x, position.y, position.z, next, false, true);
+      const immediateMilliseconds = performance.now() - started;
+      const immediateVisible = this.getBlock(position.x, position.y, position.z) === next;
+      const settled = await awaitSettled(12_000, submittedBefore);
+      return Object.freeze({ position, previous, next, immediateVisible, immediateMilliseconds, revisionBefore,
+        revisionAfter: this.mutationRevision, playerEdits: this.playerEditFeedbackDiagnostics(), settled });
+    };
+    const exerciseCrashRecovery = async () => {
+      const position = this.rustTerrainR2AuditPosition;
+      if (!position || !this.rustTerrainMesher) throw new Error("Rust terrain browser audit is not active");
+      const before = diagnostics();
+      const first = this.getBlock(position.x, position.y, position.z) === BlockId.Stone ? BlockId.Glowstone : BlockId.Stone;
+      this.setBlock(position.x, position.y, position.z, first, false, true);
+      await Promise.resolve();
+      const crashed = this.rustTerrainMesher.simulateWorkerCrashForDiagnostics();
+      const afterCrash = await awaitSettled(12_000, before.submitted);
+      const recoveryBefore = diagnostics();
+      const second = first === BlockId.Stone ? BlockId.Glowstone : BlockId.Stone;
+      this.setBlock(position.x, position.y, position.z, second, false, true);
+      const recovered = await awaitSettled(12_000, recoveryBefore.submitted);
+      return Object.freeze({ crashed, before, afterCrash, recovered, finalBlock: this.getBlock(position.x, position.y, position.z) });
+    };
+    const harness: RustTerrainR2BrowserHarnessV1 = Object.freeze({
+      schemaVersion: 1,
+      mode: this.rustTerrainMode,
+      diagnostics,
+      buildGallery,
+      exerciseImmediateEdit,
+      exerciseCrashRecovery,
+      awaitSettled,
+    });
+    this.rustTerrainR2BrowserHarness = harness;
+    (window as Window & { blockwildRustTerrainR2?: RustTerrainR2BrowserHarnessV1 }).blockwildRustTerrainR2 = harness;
+  }
+
   streamingDiagnostics() {
     const playerState = this.playerChunkStreamingState();
     const now = performance.now();
@@ -9122,6 +9613,11 @@ export class ChunkWorld {
         coalescedRequests: this.coalescedConsolidations,
       },
       terrainSubmission: this.terrainSubmissionDiagnostics(),
+      rustTerrain: {
+        mode: this.rustTerrainMode,
+        ...this.rustTerrainShadow,
+        backend: this.rustTerrainMesher?.diagnostics() ?? null,
+      },
       playerEdits: this.playerEditFeedbackDiagnostics(),
       generationBudget: this.generationWorkPerFrame,
       meshSliceBudget: this.meshWorkPerFrame,
@@ -9158,7 +9654,13 @@ export class ChunkWorld {
   }
 
   dispose() {
+    if (typeof window !== "undefined") {
+      const target = window as Window & { blockwildRustTerrainR2?: RustTerrainR2BrowserHarnessV1 };
+      if (target.blockwildRustTerrainR2 === this.rustTerrainR2BrowserHarness) delete target.blockwildRustTerrainR2;
+    }
+    this.rustTerrainR2BrowserHarness = null;
     this.disposeChunks();
+    void this.rustTerrainMesher?.dispose();
     this.terrainBufferPipeline.dispose();
     this.terrainGenerationPipeline.dispose();
     this.atlas.dispose();

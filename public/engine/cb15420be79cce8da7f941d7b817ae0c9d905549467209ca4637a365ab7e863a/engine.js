@@ -130,6 +130,62 @@ export function blockwild_schema_version() {
     const ret = wasm.blockwild_schema_version();
     return ret >>> 0;
 }
+
+/**
+ * Rebuild packed sky/R/G/B light for one complete section. `direct_sky_above`
+ * is exactly 256 nibble levels in x + 16*z order. The result uses the same
+ * `BWL1`/`BWI1`/`BWE1` coarse-payload convention as meshing.
+ * @param {Uint8Array} snapshot_bytes
+ * @param {Uint8Array} registry_bytes
+ * @param {Uint8Array} direct_sky_above
+ * @returns {Uint8Array}
+ */
+export function blockwild_world_light_section_v1(snapshot_bytes, registry_bytes, direct_sky_above) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(snapshot_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(registry_bytes, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(direct_sky_above, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.blockwild_world_light_section_v1(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Validate and mesh one complete R2 section. The returned payload begins with
+ * `BWM1` on success, `BWI1` when the whole section must fall back to the
+ * TypeScript oracle, or `BWE1` on malformed input. This is intentionally one
+ * coarse call per section, never one call per voxel.
+ * @param {Uint8Array} snapshot_bytes
+ * @param {Uint8Array} registry_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_world_mesh_section_v1(snapshot_bytes, registry_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(snapshot_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(registry_bytes, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.blockwild_world_mesh_section_v1(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
