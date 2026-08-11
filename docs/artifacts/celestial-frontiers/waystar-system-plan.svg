@@ -1,0 +1,230 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Blockwild Celestial Frontiers — proposed Waystar System</title>
+  <desc id="desc">A schematic orbital map of the proposed Waystar System. Six primary worlds surround the Waystar: Cinderhymn, Blockwild with moon Morrow, Talon with moon Hope and station Ad Astra, Suno with moons Jun and Styx, gas giant Orison with moons Aerie, Rimehold and Vanta, and dwarf world Hollowmere with moon Wick. All bodies have orbital locations; solid bodies are landable.</desc>
+  <defs>
+    <radialGradient id="space" cx="43%" cy="50%" r="78%">
+      <stop offset="0" stop-color="#14242a"/>
+      <stop offset="0.58" stop-color="#0b1418"/>
+      <stop offset="1" stop-color="#060b0d"/>
+    </radialGradient>
+    <radialGradient id="star" cx="38%" cy="34%" r="62%">
+      <stop offset="0" stop-color="#fff4bc"/>
+      <stop offset="0.34" stop-color="#f6ca61"/>
+      <stop offset="0.72" stop-color="#d47b28"/>
+      <stop offset="1" stop-color="#7c3218"/>
+    </radialGradient>
+    <radialGradient id="blockwild" cx="36%" cy="30%" r="74%">
+      <stop offset="0" stop-color="#a4d9bd"/>
+      <stop offset="0.43" stop-color="#3e8a68"/>
+      <stop offset="0.7" stop-color="#2e5c68"/>
+      <stop offset="1" stop-color="#162b31"/>
+    </radialGradient>
+    <radialGradient id="talon" cx="35%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#e6a66e"/>
+      <stop offset="0.48" stop-color="#a95337"/>
+      <stop offset="1" stop-color="#482329"/>
+    </radialGradient>
+    <radialGradient id="suno" cx="36%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#9ce7e0"/>
+      <stop offset="0.38" stop-color="#2b91aa"/>
+      <stop offset="0.7" stop-color="#18546f"/>
+      <stop offset="1" stop-color="#0b2938"/>
+    </radialGradient>
+    <radialGradient id="orison" cx="36%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#ead9b1"/>
+      <stop offset="0.32" stop-color="#b88672"/>
+      <stop offset="0.58" stop-color="#756786"/>
+      <stop offset="0.82" stop-color="#38566b"/>
+      <stop offset="1" stop-color="#1b2b3a"/>
+    </radialGradient>
+    <radialGradient id="hollow" cx="36%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#d4eff2"/>
+      <stop offset="0.45" stop-color="#668ba4"/>
+      <stop offset="0.75" stop-color="#34425f"/>
+      <stop offset="1" stop-color="#171a31"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#152126" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#0e171a" stop-opacity="0.96"/>
+    </linearGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="stars" width="140" height="120" patternUnits="userSpaceOnUse">
+      <circle cx="19" cy="27" r="1.1" fill="#dbe7dd" opacity="0.6"/>
+      <circle cx="94" cy="18" r="0.8" fill="#f0d993" opacity="0.5"/>
+      <circle cx="58" cy="79" r="1.2" fill="#b9d7db" opacity="0.55"/>
+      <circle cx="126" cy="96" r="0.7" fill="#e7eee7" opacity="0.42"/>
+    </pattern>
+    <style>
+      .title { font-family: Georgia, 'Times New Roman', serif; font-size: 42px; font-weight: 700; fill: #f3dda0; letter-spacing: 1.5px; }
+      .subtitle { font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 15px; fill: #9db1a7; letter-spacing: 1.8px; }
+      .orbit { fill: none; stroke: #557067; stroke-width: 1.5; opacity: 0.55; }
+      .orbit-major { fill: none; stroke: #7b927f; stroke-width: 1.8; opacity: 0.7; }
+      .route { fill: none; stroke: #d4ad55; stroke-width: 2; stroke-dasharray: 6 9; opacity: 0.7; }
+      .body-label { font-family: Georgia, 'Times New Roman', serif; font-size: 21px; font-weight: 700; fill: #f3e7c1; }
+      .body-meta { font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 12px; fill: #9fb2aa; letter-spacing: 0.7px; }
+      .moon-label { font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 12px; fill: #d7dfd8; }
+      .panel-title { font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: 700; fill: #f2dc9f; }
+      .panel-text { font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 13px; fill: #b7c4bd; }
+      .panel-strong { font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 13px; font-weight: 700; fill: #f1e5bc; }
+      .fine { font-family: ui-monospace, 'Cascadia Mono', monospace; font-size: 11px; fill: #82978e; }
+      .callout { stroke: #788d82; stroke-width: 1.2; fill: none; opacity: 0.8; }
+      .station { fill: #f7e8a8; stroke: #8f6b2f; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#space)"/>
+  <rect width="1920" height="1080" fill="url(#stars)" opacity="0.65"/>
+  <path d="M0 925 C330 830 575 1015 925 936 C1280 856 1490 958 1920 862 L1920 1080 L0 1080Z" fill="#0b1716" opacity="0.5"/>
+
+  <text x="64" y="70" class="title">CELESTIAL FRONTIERS · THE WAYSTAR SYSTEM</text>
+  <text x="66" y="102" class="subtitle">PROPOSED SYSTEM MAP · BODY-SCOPED WORLDS · ORBITAL BUILDING · WAYWORKS LOGISTICS</text>
+
+  <!-- orbital architecture -->
+  <ellipse cx="790" cy="535" rx="112" ry="54" class="orbit"/>
+  <ellipse cx="790" cy="535" rx="220" ry="107" class="orbit-major"/>
+  <ellipse cx="790" cy="535" rx="334" ry="162" class="orbit-major"/>
+  <ellipse cx="790" cy="535" rx="458" ry="224" class="orbit-major"/>
+  <ellipse cx="790" cy="535" rx="590" ry="291" class="orbit"/>
+  <ellipse cx="790" cy="535" rx="716" ry="357" class="orbit"/>
+
+  <!-- star -->
+  <circle cx="790" cy="535" r="62" fill="#d47b28" opacity="0.23" filter="url(#glow)"/>
+  <circle cx="790" cy="535" r="44" fill="url(#star)" filter="url(#softGlow)"/>
+  <path d="M790 474v-23M790 619v-23M729 535h-23M874 535h-23M747 492l-17-17M850 595l-17-17M833 492l17-17M730 595l17-17" stroke="#e9b84f" stroke-width="5" stroke-linecap="square" opacity="0.75"/>
+  <text x="790" y="531" text-anchor="middle" class="body-label" style="font-size:16px;fill:#382112">WAYSTAR</text>
+  <text x="790" y="552" text-anchor="middle" class="body-meta" style="fill:#5b3621">GOLD-WHITE</text>
+
+  <!-- Cinderhymn -->
+  <circle cx="846" cy="488" r="16" fill="#d9813e" stroke="#f0b061" stroke-width="2"/>
+  <path d="M838 482l16 8M839 493l12-15" stroke="#72351f" stroke-width="3" opacity="0.8"/>
+  <path d="M856 477 L928 413" class="callout"/>
+  <text x="938" y="407" class="body-label">1 · Cinderhymn</text>
+  <text x="938" y="428" class="body-meta">0.66 g · THIN/HOT · SOLAR &amp; GLASS</text>
+
+  <!-- Blockwild and Morrow -->
+  <circle cx="951" cy="460" r="27" fill="url(#blockwild)" stroke="#bad9c2" stroke-width="2"/>
+  <path d="M936 453q14-15 29-4q-7 7-2 17q-15 7-28-1z" fill="#7cad6a" opacity="0.75"/>
+  <ellipse cx="951" cy="460" rx="43" ry="20" fill="none" stroke="#8aa098" stroke-width="1" opacity="0.7"/>
+  <circle cx="992" cy="454" r="7" fill="#9ca69b" stroke="#d8ddd2" stroke-width="1.2"/>
+  <text x="1002" y="448" class="moon-label">MORROW</text>
+  <path d="M967 439 L1020 369" class="callout"/>
+  <text x="1031" y="363" class="body-label">2 · Blockwild</text>
+  <text x="1031" y="384" class="body-meta">1.00 g · BREATHABLE · HOME WORLD</text>
+
+  <!-- Talon Hope Ad Astra -->
+  <circle cx="1042" cy="622" r="24" fill="url(#talon)" stroke="#d78962" stroke-width="2"/>
+  <path d="M1028 613q18-7 28 3M1030 630q14-9 28-2" fill="none" stroke="#6e342b" stroke-width="3" opacity="0.8"/>
+  <ellipse cx="1042" cy="622" rx="45" ry="22" fill="none" stroke="#926f65" stroke-width="1" opacity="0.75"/>
+  <circle cx="1084" cy="615" r="9" fill="#efe1a9" stroke="#fff1bd" stroke-width="1.6" filter="url(#softGlow)"/>
+  <text x="1097" y="610" class="moon-label">HOPE</text>
+  <rect x="1072" y="631" width="13" height="6" rx="1" class="station" transform="rotate(-12 1078 634)"/>
+  <path d="M1078 625v18M1067 634h22" stroke="#f7e8a8" stroke-width="2"/>
+  <text x="1097" y="640" class="moon-label" style="fill:#f3cf72">AD ASTRA</text>
+  <path d="M1028 642 L995 705" class="callout"/>
+  <text x="828" y="734" class="body-label">3 · Talon + Hope</text>
+  <text x="828" y="755" class="body-meta">0.39 / 0.35 g · FACTIONS · MAGIC-TECH</text>
+
+  <!-- Suno Jun Styx -->
+  <circle cx="715" cy="749" r="38" fill="url(#suno)" stroke="#9fe0dc" stroke-width="2.2"/>
+  <path d="M690 741q21-18 47-4M688 753q25 15 51-2M700 765q16-10 31 0" fill="none" stroke="#a3d9cf" stroke-width="3" opacity="0.6"/>
+  <ellipse cx="715" cy="749" rx="62" ry="28" fill="none" stroke="#6c9699" stroke-width="1.2"/>
+  <circle cx="763" cy="731" r="10" fill="#68a45f" stroke="#c5d895" stroke-width="1.4"/>
+  <circle cx="659" cy="760" r="7" fill="#233a59" stroke="#5674a3" stroke-width="1.4"/>
+  <text x="771" y="726" class="moon-label">JUN</text>
+  <text x="620" y="774" class="moon-label">STYX</text>
+  <path d="M748 770 L796 823" class="callout"/>
+  <text x="807" y="828" class="body-label">4 · Suno</text>
+  <text x="807" y="849" class="body-meta">0.92 g · WATER WORLD · SUBMERSIBLES</text>
+
+  <!-- Orison and moons -->
+  <g transform="translate(304 647)">
+    <ellipse cx="0" cy="0" rx="63" ry="20" fill="none" stroke="#b5a782" stroke-width="8" opacity="0.5" transform="rotate(-12)"/>
+    <circle cx="0" cy="0" r="43" fill="url(#orison)" stroke="#c8b79c" stroke-width="2"/>
+    <path d="M-35-13h70M-40 1h80M-32 16h64" stroke="#d2b78d" stroke-width="5" opacity="0.52"/>
+    <ellipse cx="0" cy="0" rx="76" ry="30" fill="none" stroke="#6e7e7f" stroke-width="1"/>
+    <circle cx="66" cy="-10" r="8" fill="#9cb48f" stroke="#d6e2c4"/>
+    <circle cx="-62" cy="14" r="9" fill="#a9c0ce" stroke="#e2edf0"/>
+    <circle cx="-20" cy="-33" r="7" fill="#292f49" stroke="#777b9a"/>
+  </g>
+  <text x="377" y="628" class="moon-label">AERIE</text>
+  <text x="198" y="678" class="moon-label">RIMEHOLD</text>
+  <text x="268" y="598" class="moon-label">VANTA</text>
+  <path d="M261 611 L220 563" class="callout"/>
+  <text x="94" y="532" class="body-label">5 · Orison</text>
+  <text x="94" y="553" class="body-meta">GAS GIANT · ORBITS, AEROSTATS &amp; RINGS</text>
+
+  <!-- Hollowmere Wick -->
+  <circle cx="220" cy="359" r="27" fill="url(#hollow)" stroke="#abcbd1" stroke-width="2"/>
+  <path d="M205 351q16-10 30 0M208 364q13-7 24 2" stroke="#d2e8e8" stroke-width="2.5" fill="none" opacity="0.65"/>
+  <ellipse cx="220" cy="359" rx="44" ry="19" fill="none" stroke="#6d7f8f" stroke-width="1"/>
+  <circle cx="258" cy="351" r="6" fill="#d7eef1" stroke="#ffffff" filter="url(#softGlow)"/>
+  <text x="269" y="348" class="moon-label">WICK</text>
+  <path d="M196 339 L155 293" class="callout"/>
+  <text x="72" y="262" class="body-label">6 · Hollowmere</text>
+  <text x="72" y="283" class="body-meta">0.45 g · ICE, UNDER-MERE &amp; STAR VAULTS</text>
+
+  <!-- progression route -->
+  <path d="M951 460 C1010 516 1070 545 1042 622 C948 716 842 758 715 749 C565 739 430 699 304 647" class="route"/>
+  <circle cx="951" cy="460" r="4" fill="#f3cf72"/>
+  <circle cx="1042" cy="622" r="4" fill="#f3cf72"/>
+  <circle cx="715" cy="749" r="4" fill="#f3cf72"/>
+  <circle cx="304" cy="647" r="4" fill="#f3cf72"/>
+
+  <!-- architecture legend -->
+  <g transform="translate(1452 155)">
+    <rect x="0" y="0" width="402" height="654" rx="18" fill="url(#panel)" stroke="#42584f" stroke-width="2"/>
+    <text x="30" y="48" class="panel-title">SYSTEM CONTRACT</text>
+    <text x="30" y="79" class="panel-text">Every body: orbitable</text>
+    <text x="30" y="101" class="panel-text">Every solid body: landable</text>
+    <text x="30" y="123" class="panel-text">Orbit/stations/asteroids: 0 G</text>
+    <line x1="30" y1="145" x2="372" y2="145" stroke="#384d45"/>
+
+    <text x="30" y="184" class="panel-title">MAP MODES</text>
+    <text x="30" y="215" class="panel-strong">01  LOCAL</text>
+    <text x="157" y="215" class="panel-text">chunks · POIs · players</text>
+    <text x="30" y="241" class="panel-strong">02  ATLAS</text>
+    <text x="157" y="241" class="panel-text">body regions · landing</text>
+    <text x="30" y="267" class="panel-strong">03  ORBIT</text>
+    <text x="157" y="267" class="panel-text">stations · asteroids</text>
+    <text x="30" y="293" class="panel-strong">04  SYSTEM</text>
+    <text x="157" y="293" class="panel-text">routes · phases · fuel</text>
+    <line x1="30" y1="317" x2="372" y2="317" stroke="#384d45"/>
+
+    <text x="30" y="356" class="panel-title">WAYWORKS</text>
+    <text x="30" y="386" class="panel-text">Power · rechargeable storage</text>
+    <text x="30" y="410" class="panel-text">Items · fluids · gases · heat</text>
+    <text x="30" y="434" class="panel-text">O₂ production · pressure zones</text>
+    <text x="30" y="458" class="panel-text">Vents · airlocks · Horizon Doors</text>
+    <text x="30" y="482" class="panel-text">Wayanchors · drills · Waylinks</text>
+    <line x1="30" y1="507" x2="372" y2="507" stroke="#384d45"/>
+
+    <text x="30" y="546" class="panel-title">TRAVEL LADDER</text>
+    <text x="30" y="577" class="panel-strong">BLOCKWILD → ORBIT / MORROW</text>
+    <text x="30" y="601" class="panel-strong">TALON / HOPE → SUNO SYSTEM</text>
+    <text x="30" y="625" class="panel-strong">ORISON → HOLLOWMERE → FUTURE</text>
+  </g>
+
+  <!-- lower system notes -->
+  <g transform="translate(64 913)">
+    <rect x="0" y="0" width="1328" height="112" rx="14" fill="#0d1718" stroke="#31483f" stroke-width="1.5"/>
+    <text x="26" y="34" class="panel-title" style="font-size:19px">ONE CATALOG · MANY FIRST-CLASS LOCATIONS</text>
+    <text x="26" y="61" class="panel-text">system/body/surface · body/orbit/band · stations · asteroid claims · vehicle interiors</text>
+    <text x="26" y="83" class="fine">Analytic ephemeris drives sky, phases and maps. Inactive locations collapse to summaries;</text>
+    <text x="26" y="99" class="fine">Wayanchors lease exact chunks without rendering them.</text>
+    <circle cx="968" cy="47" r="10" fill="none" stroke="#89a79b" stroke-width="2"/>
+    <text x="989" y="52" class="panel-text">orbital location</text>
+    <rect x="1144" y="38" width="16" height="10" class="station"/>
+    <text x="1171" y="52" class="panel-text">station</text>
+    <path d="M968 79h32" class="route"/>
+    <text x="1012" y="84" class="panel-text">progression route</text>
+  </g>
+
+  <text x="1852" y="1034" text-anchor="end" class="fine">SCHEMATIC · ORBITS NOT TO SCALE · 2026-08-11</text>
+</svg>
