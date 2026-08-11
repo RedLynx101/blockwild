@@ -27,6 +27,56 @@ export function blockwild_generation_parity_certificate_v2(): Uint8Array;
 
 export function blockwild_protocol_version(): number;
 
+/**
+ * Moves one Rust-owned platform attachment out of Wasm exactly once.
+ */
+export function blockwild_runtime_bulk_take_attachment_v2(handle: number, transfer_token: number): Uint8Array;
+
+/**
+ * Lower-priority detached platform lane. Rust owns request identity,
+ * backpressure, retry policy, durable receipt validation, and dispatcher
+ * revisions. TypeScript only executes one complete opaque BWPR and returns
+ * its exact BWPA under the Rust-issued transfer token.
+ */
+export function blockwild_runtime_bulk_v2(handle: number, control_bytes: Uint8Array, attachment_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Applies one reliable command envelope and returns one deterministic receipt.
+ * Unknown domain payloads reject rather than being silently discarded.
+ */
+export function blockwild_runtime_command_v2(handle: number, request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Creates the sole integrated runtime for this Worker generation. Restore
+ * remains fail-closed until R8's checkpoint codec is attached to this facade.
+ */
+export function blockwild_runtime_create_v2(request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Destroys the generational handle. A stale expected identity is rejected and
+ * leaves the authority alive for an explicit synchronized retry.
+ */
+export function blockwild_runtime_destroy_v2(handle: number, request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Checkpoint export is an explicit hard gate; no synthetic checkpoint is
+ * returned before the R8 canonical save codec is attached.
+ */
+export function blockwild_runtime_export_save_v2(handle: number, request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Returns one bounded renderer-neutral extraction. Entity/model identity,
+ * transforms, health, protection, input/HUD state, and diagnostics are copied
+ * once per coarse extraction rather than queried per object.
+ */
+export function blockwild_runtime_extract_v2(handle: number, request_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Advances bounded fixed steps after atomically accepting the complete,
+ * strictly sequenced input batch into Rust-owned authority.
+ */
+export function blockwild_runtime_step_v2(handle: number, request_bytes: Uint8Array): Uint8Array;
+
 export function blockwild_schema_version(): number;
 
 /**
@@ -74,6 +124,14 @@ export interface InitOutput {
     readonly blockwild_generate_chunk_v2: (a: number, b: number, c: number) => void;
     readonly blockwild_generation_parity_certificate_v2: (a: number) => void;
     readonly blockwild_protocol_version: () => number;
+    readonly blockwild_runtime_bulk_take_attachment_v2: (a: number, b: number, c: number) => void;
+    readonly blockwild_runtime_bulk_v2: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly blockwild_runtime_command_v2: (a: number, b: number, c: number, d: number) => void;
+    readonly blockwild_runtime_create_v2: (a: number, b: number, c: number) => void;
+    readonly blockwild_runtime_destroy_v2: (a: number, b: number, c: number, d: number) => void;
+    readonly blockwild_runtime_export_save_v2: (a: number, b: number, c: number, d: number) => void;
+    readonly blockwild_runtime_extract_v2: (a: number, b: number, c: number, d: number) => void;
+    readonly blockwild_runtime_step_v2: (a: number, b: number, c: number, d: number) => void;
     readonly blockwild_world_authority_create_r4: (a: number, b: number, c: number) => void;
     readonly blockwild_world_authority_destroy_r4: (a: number, b: number, c: number, d: number) => void;
     readonly blockwild_world_authority_request_r4: (a: number, b: number, c: number, d: number) => void;

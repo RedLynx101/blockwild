@@ -165,6 +165,192 @@ export function blockwild_protocol_version() {
 }
 
 /**
+ * Moves one Rust-owned platform attachment out of Wasm exactly once.
+ * @param {number} handle
+ * @param {number} transfer_token
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_bulk_take_attachment_v2(handle, transfer_token) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.blockwild_runtime_bulk_take_attachment_v2(retptr, handle, transfer_token);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Lower-priority detached platform lane. Rust owns request identity,
+ * backpressure, retry policy, durable receipt validation, and dispatcher
+ * revisions. TypeScript only executes one complete opaque BWPR and returns
+ * its exact BWPA under the Rust-issued transfer token.
+ * @param {number} handle
+ * @param {Uint8Array} control_bytes
+ * @param {Uint8Array} attachment_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_bulk_v2(handle, control_bytes, attachment_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(control_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(attachment_bytes, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_bulk_v2(retptr, handle, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Applies one reliable command envelope and returns one deterministic receipt.
+ * Unknown domain payloads reject rather than being silently discarded.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_command_v2(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_command_v2(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Creates the sole integrated runtime for this Worker generation. Restore
+ * remains fail-closed until R8's checkpoint codec is attached to this facade.
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_create_v2(request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_create_v2(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Destroys the generational handle. A stale expected identity is rejected and
+ * leaves the authority alive for an explicit synchronized retry.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_destroy_v2(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_destroy_v2(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Checkpoint export is an explicit hard gate; no synthetic checkpoint is
+ * returned before the R8 canonical save codec is attached.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_export_save_v2(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_export_save_v2(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Returns one bounded renderer-neutral extraction. Entity/model identity,
+ * transforms, health, protection, input/HUD state, and diagnostics are copied
+ * once per coarse extraction rather than queried per object.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_extract_v2(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_extract_v2(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Advances bounded fixed steps after atomically accepting the complete,
+ * strictly sequenced input batch into Rust-owned authority.
+ * @param {number} handle
+ * @param {Uint8Array} request_bytes
+ * @returns {Uint8Array}
+ */
+export function blockwild_runtime_step_v2(handle, request_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(request_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.blockwild_runtime_step_v2(retptr, handle, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * @returns {number}
  */
 export function blockwild_schema_version() {

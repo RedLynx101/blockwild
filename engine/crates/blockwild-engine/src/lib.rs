@@ -1,5 +1,11 @@
 //! Deterministic shadow engine used by R0/R1 worker and replay laboratories.
 
+mod runtime;
+mod runtime_domain_wire;
+
+pub use runtime::*;
+pub use runtime_domain_wire::*;
+
 use std::collections::BTreeMap;
 
 use blockwild_protocol::{Envelope, MessageKind, PROTOCOL_VERSION, ProtocolError, ProtocolErrorCode};

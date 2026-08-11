@@ -1,0 +1,167 @@
+import {
+  RustEngineLoadError,
+  RustEngineLoader,
+  type RustEngineBytes,
+  type RustEngineWasmExports,
+} from "./rust-engine-loader";
+import {
+  decodeRustIntegratedRuntimeResponseV1,
+  encodeRustIntegratedRuntimeRequestV1,
+} from "./rust-integrated-runtime-codec";
+import {
+  decodeRustIntegratedRuntimeBulkResponseV1,
+  encodeRustIntegratedRuntimeBulkRequestV1,
+  inspectRustIntegratedRuntimeBulkResponseAttachmentV1,
+  type RustIntegratedRuntimeBulkRequestV1,
+  type RustIntegratedRuntimeBulkResponseV1,
+} from "./rust-integrated-runtime-bulk-platform";
+import type {
+  RustIntegratedRuntimeRequestV1,
+  RustIntegratedRuntimeResponseV1,
+} from "./rust-integrated-runtime-contract";
+import {
+  installRustIntegratedRuntimeWorkerHandlerV1,
+  type RustIntegratedRuntimeWireKernelV1,
+  type RustIntegratedRuntimeWorkerScopeV1,
+} from "./rust-integrated-runtime-worker";
+
+export type RustIntegratedRuntimeWasmExportsV2 = RustEngineWasmExports & Readonly<{
+  blockwild_runtime_create_v2(request: Uint8Array): RustEngineBytes;
+  blockwild_runtime_command_v2(handle: number, request: Uint8Array): RustEngineBytes;
+  blockwild_runtime_step_v2(handle: number, request: Uint8Array): RustEngineBytes;
+  blockwild_runtime_extract_v2(handle: number, request: Uint8Array): RustEngineBytes;
+  blockwild_runtime_export_save_v2(handle: number, request: Uint8Array): RustEngineBytes;
+  blockwild_runtime_bulk_v2(handle: number, control: Uint8Array, attachment: Uint8Array): RustEngineBytes;
+  blockwild_runtime_bulk_take_attachment_v2(handle: number, transferToken: number): RustEngineBytes;
+  blockwild_runtime_destroy_v2(handle: number, request: Uint8Array): RustEngineBytes;
+}>;
+
+const integratedExportNames = Object.freeze([
+  "blockwild_runtime_create_v2",
+  "blockwild_runtime_command_v2",
+  "blockwild_runtime_step_v2",
+  "blockwild_runtime_extract_v2",
+  "blockwild_runtime_export_save_v2",
+  "blockwild_runtime_bulk_v2",
+  "blockwild_runtime_bulk_take_attachment_v2",
+  "blockwild_runtime_destroy_v2",
+] as const);
+
+export function assertRustIntegratedRuntimeWasmExportsV2(
+  exports: RustEngineWasmExports,
+): asserts exports is RustIntegratedRuntimeWasmExportsV2 {
+  for (const name of integratedExportNames) {
+    if (typeof (exports as Partial<RustIntegratedRuntimeWasmExportsV2>)[name] !== "function") {
+      throw new RustEngineLoadError("invalid-module", `Rust engine artifact is missing export ${name}`);
+    }
+  }
+}
+
+function asBytes(value: RustEngineBytes) {
+  return value instanceof Uint8Array ? value : new Uint8Array(value);
+}
+
+/**
+ * Real Wasm kernel. Tests may exercise codecs and transports with protocol
+ * fixtures, but production authority is granted only after this loader proves
+ * the content-addressed artifact and all six integrated exports.
+ */
+export class RustIntegratedRuntimeBrowserKernelV1 implements RustIntegratedRuntimeWireKernelV1 {
+  private exports: RustIntegratedRuntimeWasmExportsV2 | null = null;
+  private artifactHash: string | null = null;
+  private runtimeHandle = 0;
+
+  constructor(private readonly loader = new RustEngineLoader()) {}
+
+  async handle(request: RustIntegratedRuntimeRequestV1): Promise<RustIntegratedRuntimeResponseV1> {
+    const exports = await this.load();
+    const encoded = encodeRustIntegratedRuntimeRequestV1(request);
+    let raw: RustEngineBytes;
+    switch (request.type) {
+      case "runtime-create-v1":
+      case "runtime-restore-v1":
+        if (this.runtimeHandle !== 0) throw new Error("integrated runtime worker already owns a live Wasm handle");
+        raw = exports.blockwild_runtime_create_v2(encoded);
+        break;
+      case "runtime-command-v1":
+        raw = exports.blockwild_runtime_command_v2(this.requireHandle(), encoded);
+        break;
+      case "runtime-step-v1":
+        raw = exports.blockwild_runtime_step_v2(this.requireHandle(), encoded);
+        break;
+      case "runtime-extract-v1":
+        raw = exports.blockwild_runtime_extract_v2(this.requireHandle(), encoded);
+        break;
+      case "runtime-checkpoint-v1":
+        raw = exports.blockwild_runtime_export_save_v2(this.requireHandle(), encoded);
+        break;
+      case "runtime-shutdown-v1":
+        raw = exports.blockwild_runtime_destroy_v2(this.requireHandle(), encoded);
+        break;
+    }
+    let response = decodeRustIntegratedRuntimeResponseV1(asBytes(raw));
+    if (response.type === "runtime-ready-v1" || response.type === "runtime-restored-v1") {
+      if (response.runtimeHandle < 1) throw new Error("integrated runtime create returned an invalid generational handle");
+      // The manifest-selected loader, not Wasm self-reporting, is the source
+      // of truth for the immutable artifact that supplied these exports.
+      response = Object.freeze({ ...response, artifactHash: this.requireArtifactHash() });
+      this.runtimeHandle = response.runtimeHandle;
+    }
+    if (response.type === "runtime-shutdown-v1") this.runtimeHandle = 0;
+    return response;
+  }
+
+  async handleBulk(request: RustIntegratedRuntimeBulkRequestV1): Promise<RustIntegratedRuntimeBulkResponseV1> {
+    const exports = await this.load();
+    const encoded = encodeRustIntegratedRuntimeBulkRequestV1(request);
+    const control = asBytes(exports.blockwild_runtime_bulk_v2(
+      this.requireHandle(),
+      encoded.control,
+      encoded.attachment,
+    ));
+    const metadata = inspectRustIntegratedRuntimeBulkResponseAttachmentV1(control);
+    const attachment = metadata.attachmentLength > 0
+      ? asBytes(exports.blockwild_runtime_bulk_take_attachment_v2(this.requireHandle(), metadata.transferToken))
+      : new Uint8Array();
+    if (attachment.byteLength !== metadata.attachmentLength) throw new Error("integrated runtime bulk attachment export returned the wrong byte length");
+    return decodeRustIntegratedRuntimeBulkResponseV1(control, attachment);
+  }
+
+  dispose() {
+    this.runtimeHandle = 0;
+    this.exports = null;
+    this.artifactHash = null;
+  }
+
+  private async load() {
+    if (this.exports) return this.exports;
+    const loaded = await this.loader.load();
+    assertRustIntegratedRuntimeWasmExportsV2(loaded.exports);
+    this.exports = loaded.exports;
+    this.artifactHash = loaded.artifact.buildHash;
+    return loaded.exports;
+  }
+
+  private requireHandle() {
+    if (this.runtimeHandle < 1) throw new Error("integrated runtime Wasm handle is not initialized");
+    return this.runtimeHandle;
+  }
+
+  private requireArtifactHash() {
+    if (!this.artifactHash) throw new Error("integrated runtime artifact was not attested by the loader");
+    return this.artifactHash;
+  }
+}
+
+export function installRustIntegratedRuntimeBrowserWorkerV1(
+  scope: RustIntegratedRuntimeWorkerScopeV1,
+  loader?: RustEngineLoader,
+) {
+  return installRustIntegratedRuntimeWorkerHandlerV1(scope, new RustIntegratedRuntimeBrowserKernelV1(loader));
+}
+
+declare const self: RustIntegratedRuntimeWorkerScopeV1 | undefined;
+
+if (typeof self !== "undefined" && typeof self.addEventListener === "function") {
+  installRustIntegratedRuntimeBrowserWorkerV1(self);
+}

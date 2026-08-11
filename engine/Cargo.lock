@@ -70,7 +70,15 @@ dependencies = [
 name = "blockwild-engine"
 version = "0.1.0"
 dependencies = [
+ "blockwild-authority",
+ "blockwild-entity",
+ "blockwild-gameplay",
+ "blockwild-generation",
+ "blockwild-network",
+ "blockwild-persistence",
  "blockwild-protocol",
+ "blockwild-runtime-wire",
+ "blockwild-simulation",
  "blockwild-types",
 ]
 
@@ -139,6 +147,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockwild-runtime-wire"
+version = "0.1.0"
+
+[[package]]
 name = "blockwild-simulation"
 version = "0.1.0"
 dependencies = [
@@ -166,9 +178,13 @@ version = "0.1.0"
 dependencies = [
  "blockwild-authority",
  "blockwild-engine",
+ "blockwild-entity",
  "blockwild-generation",
+ "blockwild-network",
+ "blockwild-persistence",
  "blockwild-protocol",
  "blockwild-render",
+ "blockwild-runtime-wire",
  "blockwild-types",
  "blockwild-world",
  "wasm-bindgen",

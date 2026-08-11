@@ -1,0 +1,173 @@
+import {
+  createRustIntegratedRuntimeCommandBatchV1,
+  createRustIntegratedRuntimeDomainOperationV1,
+  rustIntegratedRuntimeWireChecksumV1,
+} from "./rust-integrated-runtime-codec";
+import { RustIntegratedRuntimeServiceError, RustIntegratedRuntimeServiceV1 } from "./rust-integrated-runtime-service";
+
+export const RUST_INTEGRATED_PERSISTENCE_DISPATCH_TYPE_V1 = "blockwild.persistence.dispatch.r8.v1";
+export const RUST_INTEGRATED_PERSISTENCE_DISPATCH_RECEIPT_TYPE_V1 = "blockwild.persistence.dispatch-receipt.r8.v1";
+export const RUST_INTEGRATED_PERSISTENCE_CONTROL_MAX_BYTES_V1 = 1024 * 1024 - 64;
+export const RUST_PERSISTENCE_PLATFORM_PAGE_BYTES_V1 = 4 * 1024 * 1024;
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder("utf-8", { fatal: true });
+const HASH = /^[0-9a-f]{32}$/u;
+
+export type RustIntegratedPersistenceDispatchV1 =
+  | Readonly<{ kind: "commit"; browserRequest: Uint8Array }>
+  | Readonly<{ kind: "recover"; worldId: string; checkpointId?: string }>
+  | Readonly<{ kind: "read-recovery-page"; worldId: string; checkpointId: string; startRecord: number; maxRecords: number; maxBytes: number }>
+  | Readonly<{ kind: "estimate"; worldId: string }>
+  | Readonly<{ kind: "compact"; worldId: string; checkpointId: string; expectedHeadHash: string; retainParentCount: number }>
+  | Readonly<{ kind: "delete"; worldId: string; expectedHeadHash?: string; tombstone: string }>
+  | Readonly<{ kind: "preserve-legacy-backup-chunk"; worldId: string; backupId: string; offset: number; totalBytes: number; bytes: Uint8Array }>
+  | Readonly<{ kind: "export-page"; worldId: string; checkpointId: string; cursor: number; maxBytes: number }>
+  | Readonly<{ kind: "import-chunk"; worldId: string; importId: string; offset: number; totalBytes: number; bytes: Uint8Array }>
+  | Readonly<{ kind: "finalize-import"; worldId: string; importId: string; archiveHash: string; totalBytes: number }>
+  | Readonly<{ kind: "retry"; previousRequestId: number }>
+  | Readonly<{ kind: "close" }>;
+
+export type RustIntegratedPersistenceDispatchReceiptV1 = Readonly<{
+  requestId: number | null;
+  persistenceRevision: number;
+  pending: number;
+  queuedBytes: number;
+  stateHash: string;
+  closed: boolean;
+}>;
+
+class Writer {
+  private readonly parts: Uint8Array[] = [];
+  private length = 0;
+  private append(value: Uint8Array) { this.parts.push(value); this.length += value.byteLength; }
+  u8(value: number) { this.append(Uint8Array.of(value)); }
+  flag(value: boolean) { this.u8(value ? 1 : 0); }
+  u16(value: number) { integer(value, 0xffff, "u16"); const bytes = new Uint8Array(2); new DataView(bytes.buffer).setUint16(0, value, true); this.append(bytes); }
+  u32(value: number) { integer(value, 0xffff_ffff, "u32"); const bytes = new Uint8Array(4); new DataView(bytes.buffer).setUint32(0, value, true); this.append(bytes); }
+  u64(value: number) {
+    integer(value, Number.MAX_SAFE_INTEGER, "u64");
+    const bytes = new Uint8Array(8); const view = new DataView(bytes.buffer);
+    view.setUint32(0, value >>> 0, true); view.setUint32(4, Math.floor(value / 0x1_0000_0000), true); this.append(bytes);
+  }
+  raw(value: Uint8Array) { this.append(value); }
+  hash(value: string) {
+    if (!HASH.test(value)) throw new Error("persistence hash must be 32 lowercase hexadecimal characters");
+    this.append(Uint8Array.from({ length: 16 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16)));
+  }
+  bytes(value: Uint8Array, maximum = RUST_INTEGRATED_PERSISTENCE_CONTROL_MAX_BYTES_V1) {
+    if (value.byteLength > maximum) throw new Error("persistence control payload exceeds the normal BWRQ byte ceiling");
+    this.u32(value.byteLength); this.append(value);
+  }
+  string(value: string) {
+    if (!value || [...value].some((character) => character < " ") || decoder.decode(encoder.encode(value)) !== value) {
+      throw new Error("persistence identifier is empty, contains controls, or has an unpaired surrogate");
+    }
+    const bytes = encoder.encode(value);
+    if (bytes.byteLength > 16 * 1024) throw new Error("persistence identifier exceeds its UTF-8 byte budget");
+    this.bytes(bytes, 16 * 1024);
+  }
+  finish() { const output = new Uint8Array(this.length); let offset = 0; for (const part of this.parts) { output.set(part, offset); offset += part.byteLength; } return output; }
+}
+
+class Reader {
+  private offset = 0;
+  constructor(private readonly bytes: Uint8Array) {}
+  take(length: number) { const end = this.offset + length; if (end > this.bytes.byteLength) throw new Error("persistence receipt is truncated"); const value = this.bytes.subarray(this.offset, end); this.offset = end; return value; }
+  u8() { return this.take(1)[0]; }
+  flag() { const value = this.u8(); if (value > 1) throw new Error("persistence receipt boolean is invalid"); return value === 1; }
+  u16() { const bytes = this.take(2); return new DataView(bytes.buffer, bytes.byteOffset, 2).getUint16(0, true); }
+  u32() { const bytes = this.take(4); return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true); }
+  u64() { const bytes = this.take(8); const view = new DataView(bytes.buffer, bytes.byteOffset, 8); const value = view.getUint32(0, true) + view.getUint32(4, true) * 0x1_0000_0000; if (!Number.isSafeInteger(value)) throw new Error("persistence receipt u64 exceeds JavaScript exact range"); return value; }
+  hash() { return [...this.take(16)].map((value) => value.toString(16).padStart(2, "0")).join(""); }
+  finish() { if (this.offset !== this.bytes.byteLength) throw new Error("persistence receipt contains trailing bytes"); }
+}
+
+function integer(value: number, maximum: number, label: string) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) throw new RangeError(`persistence ${label} is outside its wire range`);
+}
+
+function wrap(magic: string, body: Uint8Array) {
+  const writer = new Writer(); writer.raw(encoder.encode(magic)); writer.u16(1); writer.u16(1); writer.u32(body.byteLength);
+  writer.hash(rustIntegratedRuntimeWireChecksumV1(body)); writer.raw(body); return writer.finish();
+}
+
+function writeChunk(writer: Writer, worldId: string, objectId: string, offset: number, totalBytes: number, bytes: Uint8Array) {
+  if (bytes.byteLength > RUST_PERSISTENCE_PLATFORM_PAGE_BYTES_V1) throw new Error("persistence platform chunk exceeds 4 MiB");
+  writer.string(worldId); writer.string(objectId); writer.u64(offset); writer.u64(totalBytes); writer.bytes(bytes);
+}
+
+export function encodeRustIntegratedPersistenceDispatchV1(value: RustIntegratedPersistenceDispatchV1) {
+  const writer = new Writer();
+  switch (value.kind) {
+    case "commit": writer.u8(1); writer.bytes(value.browserRequest); break;
+    case "recover": writer.u8(4); writer.string(value.worldId); writer.flag(value.checkpointId !== undefined); if (value.checkpointId !== undefined) writer.string(value.checkpointId); break;
+    case "read-recovery-page": writer.u8(5); writer.string(value.worldId); writer.string(value.checkpointId); writer.u64(value.startRecord); writer.u32(value.maxRecords); writer.u32(value.maxBytes); break;
+    case "estimate": writer.u8(6); writer.string(value.worldId); break;
+    case "compact": writer.u8(7); writer.string(value.worldId); writer.string(value.checkpointId); writer.hash(value.expectedHeadHash); writer.u16(value.retainParentCount); break;
+    case "delete": writer.u8(8); writer.string(value.worldId); writer.flag(value.expectedHeadHash !== undefined); if (value.expectedHeadHash !== undefined) writer.hash(value.expectedHeadHash); writer.hash(value.tombstone); break;
+    case "preserve-legacy-backup-chunk": writer.u8(9); writeChunk(writer, value.worldId, value.backupId, value.offset, value.totalBytes, value.bytes); break;
+    case "export-page": writer.u8(10); writer.string(value.worldId); writer.string(value.checkpointId); writer.u64(value.cursor); writer.u32(value.maxBytes); break;
+    case "import-chunk": writer.u8(11); writeChunk(writer, value.worldId, value.importId, value.offset, value.totalBytes, value.bytes); break;
+    case "finalize-import": writer.u8(12); writer.string(value.worldId); writer.string(value.importId); writer.hash(value.archiveHash); writer.u64(value.totalBytes); break;
+    case "retry": writer.u8(13); writer.u64(value.previousRequestId); break;
+    case "close": writer.u8(14); break;
+  }
+  return wrap("BWD8", writer.finish());
+}
+
+export function decodeRustIntegratedPersistenceDispatchReceiptV1(packet: Uint8Array): RustIntegratedPersistenceDispatchReceiptV1 {
+  const reader = new Reader(packet);
+  if (decoder.decode(reader.take(4)) !== "BWA8" || reader.u16() !== 1 || reader.u16() !== 1) throw new Error("persistence receipt header mismatch");
+  const bodyLength = reader.u32(); const checksum = reader.hash(); const body = reader.take(bodyLength); reader.finish();
+  if (rustIntegratedRuntimeWireChecksumV1(body) !== checksum) throw new Error("persistence receipt checksum mismatch");
+  const bodyReader = new Reader(body); const hasRequestId = bodyReader.flag();
+  const receipt = Object.freeze({
+    requestId: hasRequestId ? bodyReader.u64() : null,
+    persistenceRevision: bodyReader.u64(),
+    pending: bodyReader.u32(),
+    queuedBytes: bodyReader.u64(),
+    stateHash: bodyReader.hash(),
+    closed: bodyReader.flag(),
+  });
+  bodyReader.finish(); return receipt;
+}
+
+/** Coarse awaited control port; actual BWPR/BWPA bytes use the bulk pump. */
+export class RustIntegratedPersistenceRuntimePortV1 {
+  private serial = Promise.resolve<unknown>(undefined);
+  private nextCommand = 1;
+  constructor(private readonly runtime: RustIntegratedRuntimeServiceV1, private readonly actorId = "platform:persistence") {}
+
+  dispatch(value: RustIntegratedPersistenceDispatchV1, idempotencyKey?: string) {
+    const payload = encodeRustIntegratedPersistenceDispatchV1(value);
+    const sequence = this.nextCommand++;
+    const key = idempotencyKey ?? `persistence:${sequence}:${rustIntegratedRuntimeWireChecksumV1(payload)}`;
+    return this.enqueue(async () => {
+      const operation = createRustIntegratedRuntimeDomainOperationV1({ domain: "persistence", typeId: RUST_INTEGRATED_PERSISTENCE_DISPATCH_TYPE_V1, schema: 1, payload });
+      const batch = createRustIntegratedRuntimeCommandBatchV1({ commandId: key, idempotencyKey: key, actorId: this.actorId, expected: this.runtime.identity(), operations: [operation] });
+      const receipt = await this.runtime.command(batch);
+      if (receipt.status === "rejected") throw new RustIntegratedRuntimeServiceError("invalid-response", `${receipt.code}: ${receipt.message}`);
+      const response = receipt.domainReceipts[0];
+      if (receipt.domainReceipts.length !== 1 || response.domain !== "persistence" || response.typeId !== RUST_INTEGRATED_PERSISTENCE_DISPATCH_RECEIPT_TYPE_V1 || response.schema !== 1) {
+        throw new Error("integrated persistence dispatch returned the wrong native receipt");
+      }
+      return decodeRustIntegratedPersistenceDispatchReceiptV1(response.payload);
+    });
+  }
+
+  commit(browserRequest: Uint8Array, key?: string) { return this.dispatch({ kind: "commit", browserRequest }, key); }
+  recover(worldId: string, checkpointId?: string) { return this.dispatch({ kind: "recover", worldId, checkpointId }); }
+  readRecoveryPage(worldId: string, checkpointId: string, startRecord: number, maxRecords: number, maxBytes = RUST_PERSISTENCE_PLATFORM_PAGE_BYTES_V1) { return this.dispatch({ kind: "read-recovery-page", worldId, checkpointId, startRecord, maxRecords, maxBytes }); }
+  estimate(worldId: string) { return this.dispatch({ kind: "estimate", worldId }); }
+  compact(worldId: string, checkpointId: string, expectedHeadHash: string, retainParentCount: number, key?: string) { return this.dispatch({ kind: "compact", worldId, checkpointId, expectedHeadHash, retainParentCount }, key); }
+  delete(worldId: string, tombstone: string, expectedHeadHash?: string, key?: string) { return this.dispatch({ kind: "delete", worldId, expectedHeadHash, tombstone }, key); }
+  preserveLegacyBackupChunk(worldId: string, backupId: string, offset: number, totalBytes: number, bytes: Uint8Array, key?: string) { return this.dispatch({ kind: "preserve-legacy-backup-chunk", worldId, backupId, offset, totalBytes, bytes }, key); }
+  exportPage(worldId: string, checkpointId: string, cursor: number, maxBytes = RUST_PERSISTENCE_PLATFORM_PAGE_BYTES_V1) { return this.dispatch({ kind: "export-page", worldId, checkpointId, cursor, maxBytes }); }
+  importChunk(worldId: string, importId: string, offset: number, totalBytes: number, bytes: Uint8Array, key?: string) { return this.dispatch({ kind: "import-chunk", worldId, importId, offset, totalBytes, bytes }, key); }
+  finalizeImport(worldId: string, importId: string, archiveHash: string, totalBytes: number, key?: string) { return this.dispatch({ kind: "finalize-import", worldId, importId, archiveHash, totalBytes }, key); }
+  retry(previousRequestId: number) { return this.dispatch({ kind: "retry", previousRequestId }); }
+  close() { return this.dispatch({ kind: "close" }); }
+
+  private enqueue<T>(work: () => Promise<T>) { const next = this.serial.then(work, work); this.serial = next.then(() => undefined, () => undefined); return next; }
+}

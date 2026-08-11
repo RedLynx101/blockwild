@@ -1,0 +1,401 @@
+use std::fmt;
+
+pub const RUNTIME_WIRE_V1: u16 = 1;
+pub const RUNTIME_SCHEMA_V2: u16 = 2;
+pub const RUNTIME_FIXED_STEP_US: u64 = 50_000;
+pub const MAX_WIRE_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_DOMAIN_PAYLOAD_BYTES: usize = 1024 * 1024;
+pub const MAX_EXTRACTION_BYTES: usize = 6 * 1024 * 1024;
+pub const MAX_OPERATIONS: usize = 256;
+pub const MAX_INPUT_FRAMES: usize = 128;
+pub const MAX_SAFE_U64: u64 = 9_007_199_254_740_991;
+
+// RuntimeInputFrameV1 is a public cross-language ABI. Buttons are a sampled
+// bitset; consumers detect rising edges for toggle actions rather than relying
+// on browser event timing. Axes are signed-normalized i16 values and lookYaw
+// is an absolute wrapped heading (-32768..32767 maps to -PI..PI).
+pub const RUNTIME_INPUT_BUTTON_JUMP_V1: u32 = 1 << 0;
+pub const RUNTIME_INPUT_BUTTON_CROUCH_V1: u32 = 1 << 1;
+pub const RUNTIME_INPUT_BUTTON_SPRINT_V1: u32 = 1 << 2;
+pub const RUNTIME_INPUT_BUTTON_ASCEND_V1: u32 = 1 << 3;
+pub const RUNTIME_INPUT_BUTTON_DESCEND_V1: u32 = 1 << 4;
+pub const RUNTIME_INPUT_BUTTON_PRIMARY_ATTACK_V1: u32 = 1 << 5;
+pub const RUNTIME_INPUT_BUTTON_SECONDARY_USE_V1: u32 = 1 << 6;
+pub const RUNTIME_INPUT_BUTTON_INTERACT_V1: u32 = 1 << 7;
+pub const RUNTIME_INPUT_BUTTON_MOUNT_TOGGLE_V1: u32 = 1 << 8;
+pub const RUNTIME_INPUT_BUTTON_CREATIVE_FLIGHT_TOGGLE_V1: u32 = 1 << 9;
+pub const RUNTIME_INPUT_BUTTON_DROP_V1: u32 = 1 << 10;
+pub const RUNTIME_INPUT_BUTTON_MASK_V1: u32 = (1 << 11) - 1;
+pub const RUNTIME_INPUT_LIVE_MOVEMENT_BUTTON_MASK_V1: u32 = RUNTIME_INPUT_BUTTON_JUMP_V1
+    | RUNTIME_INPUT_BUTTON_CROUCH_V1
+    | RUNTIME_INPUT_BUTTON_SPRINT_V1
+    | RUNTIME_INPUT_BUTTON_ASCEND_V1
+    | RUNTIME_INPUT_BUTTON_DESCEND_V1;
+
+pub const RUNTIME_INPUT_FLAG_CREATIVE_V1: u8 = 1 << 0;
+pub const RUNTIME_INPUT_FLAG_FLYING_V1: u8 = 1 << 1;
+pub const RUNTIME_INPUT_FLAG_MOUNTED_V1: u8 = 1 << 2;
+pub const RUNTIME_INPUT_FLAG_MASK_V1: u8 = (1 << 3) - 1;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WireError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl WireError {
+    #[must_use]
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for WireError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for WireError {}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct WireHash(pub [u8; 16]);
+
+impl WireHash {
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    pub fn from_hex(value: &str) -> Result<Self, WireError> {
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(WireError::new(
+                "invalid-hash",
+                "wire hash must be 32 lowercase hexadecimal characters",
+            ));
+        }
+        let mut output = [0_u8; 16];
+        for (index, target) in output.iter_mut().enumerate() {
+            *target = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+                .map_err(|_| WireError::new("invalid-hash", "wire hash is not hexadecimal"))?;
+        }
+        Ok(Self(output))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RuntimeDomainV1 {
+    World = 0,
+    Simulation = 1,
+    Entities = 2,
+    Gameplay = 3,
+    Persistence = 4,
+    Network = 5,
+}
+
+impl RuntimeDomainV1 {
+    pub fn from_code(code: u8) -> Result<Self, WireError> {
+        match code {
+            0 => Ok(Self::World),
+            1 => Ok(Self::Simulation),
+            2 => Ok(Self::Entities),
+            3 => Ok(Self::Gameplay),
+            4 => Ok(Self::Persistence),
+            5 => Ok(Self::Network),
+            _ => Err(WireError::new("invalid-domain", "runtime domain code is unknown")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeRevisionV1 {
+    pub epoch: u64,
+    pub world: u64,
+    pub entities: u64,
+    pub gameplay: u64,
+    pub persistence: u64,
+    pub network: u64,
+    pub simulation: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeIdentityV1 {
+    pub universe_id: String,
+    pub location_id: String,
+    pub revision: RuntimeRevisionV1,
+    pub tick: u64,
+    pub state_hash: WireHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeConfigV1 {
+    pub world_seed: String,
+    pub universe_id: String,
+    pub location_id: String,
+    pub session_id: String,
+    pub content_hash: WireHash,
+    pub generator_hash: WireHash,
+    pub water_block_id: u16,
+    pub directional_block_ids: Vec<u16>,
+    pub waterlogged_block_ids: Vec<u16>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeInputFrameV1 {
+    pub sequence: u64,
+    pub target_tick: u64,
+    pub move_x: i16,
+    pub move_z: i16,
+    pub look_yaw: i16,
+    pub look_pitch: i16,
+    pub buttons: u32,
+    pub selected_slot: u8,
+    pub flags: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeDomainOperationV1 {
+    pub domain: RuntimeDomainV1,
+    pub type_id: String,
+    pub schema: u16,
+    pub payload: Vec<u8>,
+    pub payload_hash: WireHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeCommandBatchV1 {
+    pub command_id: String,
+    pub idempotency_key: String,
+    pub actor_id: String,
+    pub expected: RuntimeIdentityV1,
+    pub operations: Vec<RuntimeDomainOperationV1>,
+    pub command_hash: WireHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeRequestV1 {
+    Create {
+        request_id: u32,
+        client_epoch: u32,
+        config: RuntimeConfigV1,
+    },
+    Command {
+        request_id: u32,
+        client_epoch: u32,
+        batch: RuntimeCommandBatchV1,
+    },
+    Step {
+        request_id: u32,
+        client_epoch: u32,
+        expected: RuntimeIdentityV1,
+        monotonic_time_us: u64,
+        budget_us: u32,
+        inputs: Vec<RuntimeInputFrameV1>,
+    },
+    Extract {
+        request_id: u32,
+        client_epoch: u32,
+        expected: RuntimeIdentityV1,
+        after_revision: u64,
+        max_bytes: u32,
+    },
+    Restore {
+        request_id: u32,
+        client_epoch: u32,
+        expected_checkpoint_hash: WireHash,
+        checkpoint: Vec<u8>,
+    },
+    Shutdown {
+        request_id: u32,
+        client_epoch: u32,
+        expected: Option<RuntimeIdentityV1>,
+    },
+    Checkpoint {
+        request_id: u32,
+        client_epoch: u32,
+        expected: RuntimeIdentityV1,
+    },
+}
+
+impl RuntimeRequestV1 {
+    #[must_use]
+    pub const fn request_id(&self) -> u32 {
+        match self {
+            Self::Create { request_id, .. }
+            | Self::Command { request_id, .. }
+            | Self::Step { request_id, .. }
+            | Self::Extract { request_id, .. }
+            | Self::Restore { request_id, .. }
+            | Self::Shutdown { request_id, .. }
+            | Self::Checkpoint { request_id, .. } => *request_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn client_epoch(&self) -> u32 {
+        match self {
+            Self::Create { client_epoch, .. }
+            | Self::Command { client_epoch, .. }
+            | Self::Step { client_epoch, .. }
+            | Self::Extract { client_epoch, .. }
+            | Self::Restore { client_epoch, .. }
+            | Self::Shutdown { client_epoch, .. }
+            | Self::Checkpoint { client_epoch, .. } => *client_epoch,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeCommandReceiptV1 {
+    Accepted {
+        command_id: String,
+        idempotency_key: String,
+        command_hash: WireHash,
+        before: RuntimeIdentityV1,
+        after: RuntimeIdentityV1,
+        domain_receipts: Vec<RuntimeDomainOperationV1>,
+        receipt_hash: WireHash,
+    },
+    Rejected {
+        command_id: String,
+        idempotency_key: String,
+        command_hash: WireHash,
+        code: String,
+        message: String,
+        current: RuntimeIdentityV1,
+        receipt_hash: WireHash,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeExtractionV1 {
+    pub identity: RuntimeIdentityV1,
+    pub extraction_revision: u64,
+    pub render: Vec<u8>,
+    pub hud: Vec<u8>,
+    pub audio: Vec<u8>,
+    pub platform_requests: Vec<u8>,
+    pub diagnostics: Vec<u8>,
+    pub extraction_hash: WireHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeResponseV1 {
+    Ready {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        runtime_handle: u32,
+        identity: RuntimeIdentityV1,
+        artifact_hash: String,
+        instance_id: String,
+        capabilities: Vec<String>,
+    },
+    CommandReceipt {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        receipt: RuntimeCommandReceiptV1,
+    },
+    StepResult {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        identity: RuntimeIdentityV1,
+        fixed_steps: u16,
+        inputs_applied: u16,
+        commands_processed: u16,
+        commands_accepted: u16,
+        replay_hash: WireHash,
+    },
+    Extraction {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        extraction: RuntimeExtractionV1,
+    },
+    Restored {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        runtime_handle: u32,
+        identity: RuntimeIdentityV1,
+        checkpoint_hash: WireHash,
+        artifact_hash: String,
+        instance_id: String,
+        capabilities: Vec<String>,
+    },
+    Shutdown {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+    },
+    Checkpoint {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        identity: RuntimeIdentityV1,
+        checkpoint: Vec<u8>,
+        checkpoint_hash: WireHash,
+    },
+    Error {
+        request_id: u32,
+        client_epoch: u32,
+        worker_epoch: u32,
+        code: String,
+        message: String,
+        current: Option<RuntimeIdentityV1>,
+    },
+}
+
+impl RuntimeResponseV1 {
+    #[must_use]
+    pub const fn request_id(&self) -> u32 {
+        match self {
+            Self::Ready { request_id, .. }
+            | Self::CommandReceipt { request_id, .. }
+            | Self::StepResult { request_id, .. }
+            | Self::Extraction { request_id, .. }
+            | Self::Restored { request_id, .. }
+            | Self::Shutdown { request_id, .. }
+            | Self::Checkpoint { request_id, .. }
+            | Self::Error { request_id, .. } => *request_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn client_epoch(&self) -> u32 {
+        match self {
+            Self::Ready { client_epoch, .. }
+            | Self::CommandReceipt { client_epoch, .. }
+            | Self::StepResult { client_epoch, .. }
+            | Self::Extraction { client_epoch, .. }
+            | Self::Restored { client_epoch, .. }
+            | Self::Shutdown { client_epoch, .. }
+            | Self::Checkpoint { client_epoch, .. }
+            | Self::Error { client_epoch, .. } => *client_epoch,
+        }
+    }
+
+    #[must_use]
+    pub const fn worker_epoch(&self) -> u32 {
+        match self {
+            Self::Ready { worker_epoch, .. }
+            | Self::CommandReceipt { worker_epoch, .. }
+            | Self::StepResult { worker_epoch, .. }
+            | Self::Extraction { worker_epoch, .. }
+            | Self::Restored { worker_epoch, .. }
+            | Self::Shutdown { worker_epoch, .. }
+            | Self::Checkpoint { worker_epoch, .. }
+            | Self::Error { worker_epoch, .. } => *worker_epoch,
+        }
+    }
+}

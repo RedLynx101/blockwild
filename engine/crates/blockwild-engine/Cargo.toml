@@ -9,10 +9,17 @@ repository.workspace = true
 [dependencies]
 blockwild-types.workspace = true
 blockwild-protocol.workspace = true
+blockwild-authority.workspace = true
+blockwild-generation.workspace = true
+blockwild-simulation.workspace = true
+blockwild-entity.workspace = true
+blockwild-persistence.workspace = true
+blockwild-gameplay.workspace = true
+blockwild-network.workspace = true
+blockwild-runtime-wire.workspace = true
 
 [lib]
 path = "src/lib.rs"
 
 [lints]
 workspace = true
-

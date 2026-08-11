@@ -144,6 +144,13 @@ impl NetworkBrowserAuthorityRuntimeV1 {
             .retain(|(_, receiver_peer_id, _), _| receiver_peer_id != peer_id);
     }
 
+    /// Release the resource leases held by one completed or cancelled command.
+    /// The command receipt remains cached, so a network retry is still
+    /// idempotent and cannot execute the command a second time.
+    pub fn release_command(&mut self, command_id: &str) {
+        self.network.release_command(command_id);
+    }
+
     #[must_use]
     pub fn authority_fingerprint(&self) -> CanonicalHash {
         self.network.authority_fingerprint()
