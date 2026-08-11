@@ -1,0 +1,7 @@
+schema=1
+entries=13
+manifest=e570a5237731ff5c40e18e3040b789f8
+registry=ced40d3507c88cd94028d20de69243dd
+references=13
+executable_bytes=1186
+opaque_extension_bytes=4

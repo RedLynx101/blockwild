@@ -1,0 +1,3401 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use blockwild_types::{CanonicalHash, CanonicalHasher};
+
+use crate::{
+    ALL_CONTENT_DOMAINS, CONTENT_MANIFEST_SCHEMA_VERSION, ContentDomain, ContentManifestEntry, MAX_CONTENT_ENTRIES,
+    MAX_ITEM_STACK, MetadataBlob, MetadataBlobStore, ProductionContentManifest,
+};
+
+pub const CONTENT_RUNTIME_SCHEMA_VERSION: u16 = 1;
+pub const MAX_CONTENT_JSON_DEPTH: usize = 64;
+pub const MAX_CONTENT_JSON_NODES: usize = 65_536;
+pub const MAX_CONTENT_REFERENCES: usize = 262_144;
+pub const MAX_CONTENT_RESOURCES_PER_ENTRY: usize = 4_096;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ContentSchema {
+    ItemDefinition,
+    CraftingRecipe,
+    BlueprintDefinition,
+    AlchemyRecipe,
+    DistilleryRecipe,
+    SugarworksRecipe,
+    FurnaceRecipe,
+    OrbMorphRecipe,
+    GolemForgeRecipe,
+    WheatMillProcess,
+    MachineProfileV1,
+    MachineProfileV2,
+    SpellDefinition,
+    CreatureMove,
+    CreatureStatus,
+    CreatureReaction,
+    CreatureProfile,
+    CreatureType,
+    CreatureTypeChart,
+    QuestDefinition,
+    QuestlineDefinition,
+    GuildDefinition,
+    GuildQuest,
+    GuildNpc,
+    FactionDefinition,
+    CommerceItem,
+    MerchantOffer,
+    StockDefinition,
+    TcgCardDefinition,
+    TcgPrinting,
+    TcgPack,
+    TcgSet,
+}
+
+impl ContentSchema {
+    #[must_use]
+    pub const fn as_id(self) -> &'static str {
+        match self {
+            Self::ItemDefinition => "item-definition@1",
+            Self::CraftingRecipe => "crafting-recipe@1",
+            Self::BlueprintDefinition => "blueprint-definition@1",
+            Self::AlchemyRecipe => "alchemy-recipe@1",
+            Self::DistilleryRecipe => "distillery-recipe@1",
+            Self::SugarworksRecipe => "sugarworks-recipe@1",
+            Self::FurnaceRecipe => "furnace-recipe@1",
+            Self::OrbMorphRecipe => "orb-morph-recipe@2",
+            Self::GolemForgeRecipe => "golem-forge-recipe@1",
+            Self::WheatMillProcess => "wheat-mill-process@1",
+            Self::MachineProfileV1 => "machine-profile@1",
+            Self::MachineProfileV2 => "machine-profile@2",
+            Self::SpellDefinition => "spell-definition@1",
+            Self::CreatureMove => "creature-move@1",
+            Self::CreatureStatus => "creature-status@1",
+            Self::CreatureReaction => "creature-reaction@1",
+            Self::CreatureProfile => "creature-profile@1",
+            Self::CreatureType => "creature-type@1",
+            Self::CreatureTypeChart => "creature-type-chart@1",
+            Self::QuestDefinition => "quest-definition@1",
+            Self::QuestlineDefinition => "questline-definition@1",
+            Self::GuildDefinition => "guild-definition@1",
+            Self::GuildQuest => "guild-quest@1",
+            Self::GuildNpc => "guild-npc@1",
+            Self::FactionDefinition => "faction-definition@1",
+            Self::CommerceItem => "commerce-item@1",
+            Self::MerchantOffer => "merchant-offer@1",
+            Self::StockDefinition => "stock-definition@1",
+            Self::TcgCardDefinition => "tcg-card-definition@1",
+            Self::TcgPrinting => "tcg-printing@1",
+            Self::TcgPack => "tcg-pack@1",
+            Self::TcgSet => "tcg-set@1",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ContentRuntimeStage {
+    Manifest,
+    BlobResolution,
+    SchemaDecode,
+    Invariants,
+    References,
+    Materialization,
+    Attestation,
+}
+
+pub const CONTENT_RUNTIME_STAGES: [ContentRuntimeStage; 7] = [
+    ContentRuntimeStage::Manifest,
+    ContentRuntimeStage::BlobResolution,
+    ContentRuntimeStage::SchemaDecode,
+    ContentRuntimeStage::Invariants,
+    ContentRuntimeStage::References,
+    ContentRuntimeStage::Materialization,
+    ContentRuntimeStage::Attestation,
+];
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ContentRuntimeBlockerCode {
+    Manifest,
+    Capacity,
+    MissingBlob,
+    DescriptorMismatch,
+    UnsupportedSchema,
+    InvalidJson,
+    MissingField,
+    InvalidType,
+    InvalidEnum,
+    Range,
+    DuplicateAlias,
+    MissingDependency,
+    ResourceConservation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentRuntimeBlocker {
+    pub code: ContentRuntimeBlockerCode,
+    pub stage: ContentRuntimeStage,
+    pub domain: Option<ContentDomain>,
+    pub id: Option<String>,
+    pub path: String,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalJson {
+    Null,
+    Bool(bool),
+    Number(String),
+    String(String),
+    Array(Vec<Self>),
+    Object(BTreeMap<String, Self>),
+}
+
+impl CanonicalJson {
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&Self> {
+        self.as_object().and_then(|object| object.get(key))
+    }
+
+    #[must_use]
+    pub const fn as_bool(&self) -> Option<bool> {
+        if let Self::Bool(value) = self {
+            Some(*value)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        if let Self::String(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn as_array(&self) -> Option<&[Self]> {
+        if let Self::Array(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn as_object(&self) -> Option<&BTreeMap<String, Self>> {
+        if let Self::Object(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn as_f64(&self) -> Option<f64> {
+        let Self::Number(value) = self else {
+            return None;
+        };
+        value.parse::<f64>().ok().filter(|number| number.is_finite())
+    }
+
+    #[must_use]
+    pub fn as_u64(&self) -> Option<u64> {
+        let value = self.as_f64()?;
+        if value < 0.0 || value.fract() != 0.0 || value > u64::MAX as f64 {
+            return None;
+        }
+        Some(value as u64)
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ContentResourceKey {
+    ItemCode(u32),
+    ItemChoice(Vec<u32>),
+    Symbolic(String),
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ContentResourceAmount {
+    pub resource: ContentResourceKey,
+    pub amount: u32,
+    pub consumed: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContentResourceFlow {
+    pub inputs: Vec<ContentResourceAmount>,
+    pub outputs: Vec<ContentResourceAmount>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ContentReference {
+    pub domain: ContentDomain,
+    pub id: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentRecordCore {
+    pub id: String,
+    pub schema: ContentSchema,
+    pub content_version: u32,
+    pub blob_hash: CanonicalHash,
+    pub aliases: Vec<String>,
+    pub document: CanonicalJson,
+    pub unknown_extension_bytes: Vec<u8>,
+    pub references: Vec<ContentReference>,
+    pub resources: ContentResourceFlow,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentItemRecord {
+    pub core: ContentRecordCore,
+    pub item_code: u32,
+    pub max_stack: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentRecipeRecord {
+    pub core: ContentRecordCore,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentMachineProfileRecord {
+    pub core: ContentRecordCore,
+    pub capacity_fields: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentAbilityRecord {
+    pub core: ContentRecordCore,
+    pub cooldown_millis: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentCreatureRecord {
+    pub core: ContentRecordCore,
+    pub natural_types: Vec<String>,
+    pub move_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentTypedRecord {
+    pub core: ContentRecordCore,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentRuntimeRegistry {
+    pub manifest_hash: CanonicalHash,
+    pub registry_hash: CanonicalHash,
+    pub source_revision: String,
+    pub items: BTreeMap<String, ContentItemRecord>,
+    pub crafting_recipes: BTreeMap<String, ContentRecipeRecord>,
+    pub machine_recipes: BTreeMap<String, ContentRecipeRecord>,
+    pub machine_profiles: BTreeMap<String, ContentMachineProfileRecord>,
+    pub abilities_spells: BTreeMap<String, ContentAbilityRecord>,
+    pub creature_profiles: BTreeMap<String, ContentCreatureRecord>,
+    pub creature_type_chart: BTreeMap<String, ContentTypedRecord>,
+    pub quests_guilds: BTreeMap<String, ContentTypedRecord>,
+    pub economy: BTreeMap<String, ContentTypedRecord>,
+    pub cardforge_cards: BTreeMap<String, ContentTypedRecord>,
+    pub cardforge_packs: BTreeMap<String, ContentTypedRecord>,
+    pub aliases: BTreeMap<String, (ContentDomain, String)>,
+}
+
+impl Default for ContentRuntimeRegistry {
+    fn default() -> Self {
+        Self {
+            manifest_hash: CanonicalHash([0; 16]),
+            registry_hash: CanonicalHash([0; 16]),
+            source_revision: String::new(),
+            items: BTreeMap::new(),
+            crafting_recipes: BTreeMap::new(),
+            machine_recipes: BTreeMap::new(),
+            machine_profiles: BTreeMap::new(),
+            abilities_spells: BTreeMap::new(),
+            creature_profiles: BTreeMap::new(),
+            creature_type_chart: BTreeMap::new(),
+            quests_guilds: BTreeMap::new(),
+            economy: BTreeMap::new(),
+            cardforge_cards: BTreeMap::new(),
+            cardforge_packs: BTreeMap::new(),
+            aliases: BTreeMap::new(),
+        }
+    }
+}
+
+impl ContentRuntimeRegistry {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.items.len()
+            + self.crafting_recipes.len()
+            + self.machine_recipes.len()
+            + self.machine_profiles.len()
+            + self.abilities_spells.len()
+            + self.creature_profiles.len()
+            + self.creature_type_chart.len()
+            + self.quests_guilds.len()
+            + self.economy.len()
+            + self.cardforge_cards.len()
+            + self.cardforge_packs.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn install(
+        &mut self,
+        manifest: &ProductionContentManifest,
+        store: &MetadataBlobStore,
+    ) -> Result<ContentRuntimeInstallReport, Vec<ContentRuntimeBlocker>> {
+        let (staged, report) = materialize_content_runtime(manifest, store)?;
+        *self = staged;
+        Ok(report)
+    }
+
+    #[must_use]
+    pub fn get(&self, domain: ContentDomain, id: &str) -> Option<&ContentRecordCore> {
+        match domain {
+            ContentDomain::Item => self.items.get(id).map(|record| &record.core),
+            ContentDomain::CraftingRecipe => self.crafting_recipes.get(id).map(|record| &record.core),
+            ContentDomain::MachineRecipe => self.machine_recipes.get(id).map(|record| &record.core),
+            ContentDomain::MachineProfile => self.machine_profiles.get(id).map(|record| &record.core),
+            ContentDomain::AbilitySpell => self.abilities_spells.get(id).map(|record| &record.core),
+            ContentDomain::CreatureProfile => self.creature_profiles.get(id).map(|record| &record.core),
+            ContentDomain::CreatureTypeChart => self.creature_type_chart.get(id).map(|record| &record.core),
+            ContentDomain::QuestGuild => self.quests_guilds.get(id).map(|record| &record.core),
+            ContentDomain::Economy => self.economy.get(id).map(|record| &record.core),
+            ContentDomain::CardforgeCard => self.cardforge_cards.get(id).map(|record| &record.core),
+            ContentDomain::CardforgePack => self.cardforge_packs.get(id).map(|record| &record.core),
+        }
+    }
+
+    #[must_use]
+    pub fn get_by_alias(&self, alias: &str) -> Option<&ContentRecordCore> {
+        let (domain, id) = self.aliases.get(alias)?;
+        self.get(*domain, id)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentRuntimeInstallReport {
+    pub schema_version: u16,
+    pub manifest_hash: CanonicalHash,
+    pub registry_hash: CanonicalHash,
+    pub installed_entries: u32,
+    pub executable_bytes: u64,
+    pub opaque_extension_bytes: u64,
+    pub references: u32,
+    pub domain_counts: BTreeMap<ContentDomain, u32>,
+    pub completed_stages: Vec<ContentRuntimeStage>,
+}
+
+#[derive(Clone, Debug)]
+struct DecodedRecord {
+    domain: ContentDomain,
+    id: String,
+    schema: ContentSchema,
+    content_version: u32,
+    blob_hash: CanonicalHash,
+    aliases: Vec<String>,
+    document: CanonicalJson,
+    unknown_extension_bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+struct RecordFacts {
+    references: Vec<ContentReference>,
+    reference_choices: Vec<ContentReferenceChoice>,
+    resources: ContentResourceFlow,
+    item_code: Option<u32>,
+    max_stack: Option<u32>,
+    capacity_fields: BTreeMap<String, u64>,
+    cooldown_millis: u64,
+    natural_types: Vec<String>,
+    move_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct ContentReferenceChoice {
+    targets: Vec<(ContentDomain, String)>,
+    path: String,
+}
+
+struct JsonParser<'a> {
+    source: &'a [u8],
+    cursor: usize,
+    nodes: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    fn parse(source: &'a [u8]) -> Result<CanonicalJson, String> {
+        std::str::from_utf8(source).map_err(|_| "content JSON is not UTF-8".to_owned())?;
+        let mut parser = Self {
+            source,
+            cursor: 0,
+            nodes: 0,
+        };
+        let value = parser.value(0)?;
+        if parser.cursor != source.len() {
+            return Err(format!("trailing bytes begin at {}", parser.cursor));
+        }
+        Ok(value)
+    }
+
+    fn value(&mut self, depth: usize) -> Result<CanonicalJson, String> {
+        if depth > MAX_CONTENT_JSON_DEPTH {
+            return Err("content JSON exceeds maximum depth".to_owned());
+        }
+        self.nodes += 1;
+        if self.nodes > MAX_CONTENT_JSON_NODES {
+            return Err("content JSON exceeds maximum node count".to_owned());
+        }
+        match self.peek() {
+            Some(b'n') => {
+                self.literal(b"null")?;
+                Ok(CanonicalJson::Null)
+            }
+            Some(b't') => {
+                self.literal(b"true")?;
+                Ok(CanonicalJson::Bool(true))
+            }
+            Some(b'f') => {
+                self.literal(b"false")?;
+                Ok(CanonicalJson::Bool(false))
+            }
+            Some(b'"') => self.string().map(CanonicalJson::String),
+            Some(b'[') => self.array(depth + 1),
+            Some(b'{') => self.object(depth + 1),
+            Some(b'-' | b'0'..=b'9') => self.number().map(CanonicalJson::Number),
+            Some(value) => Err(format!("unexpected byte {value} at {}", self.cursor)),
+            None => Err("unexpected end of content JSON".to_owned()),
+        }
+    }
+
+    fn array(&mut self, depth: usize) -> Result<CanonicalJson, String> {
+        self.expect(b'[')?;
+        let mut values = Vec::new();
+        if self.consume(b']') {
+            return Ok(CanonicalJson::Array(values));
+        }
+        loop {
+            values.push(self.value(depth)?);
+            if self.consume(b']') {
+                break;
+            }
+            self.expect(b',')?;
+        }
+        Ok(CanonicalJson::Array(values))
+    }
+
+    fn object(&mut self, depth: usize) -> Result<CanonicalJson, String> {
+        self.expect(b'{')?;
+        let mut fields = BTreeMap::new();
+        if self.consume(b'}') {
+            return Ok(CanonicalJson::Object(fields));
+        }
+        loop {
+            let key = self.string()?;
+            self.expect(b':')?;
+            let value = self.value(depth)?;
+            if fields.insert(key.clone(), value).is_some() {
+                return Err(format!("duplicate object key {key:?}"));
+            }
+            if self.consume(b'}') {
+                break;
+            }
+            self.expect(b',')?;
+        }
+        Ok(CanonicalJson::Object(fields))
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        self.expect(b'"')?;
+        let mut result = String::new();
+        let mut segment = self.cursor;
+        loop {
+            let Some(byte) = self.peek() else {
+                return Err("unterminated JSON string".to_owned());
+            };
+            match byte {
+                b'"' => {
+                    self.push_utf8_segment(&mut result, segment, self.cursor)?;
+                    self.cursor += 1;
+                    return Ok(result);
+                }
+                b'\\' => {
+                    self.push_utf8_segment(&mut result, segment, self.cursor)?;
+                    self.cursor += 1;
+                    let escaped = self.next().ok_or_else(|| "unterminated JSON escape".to_owned())?;
+                    match escaped {
+                        b'"' => result.push('"'),
+                        b'\\' => result.push('\\'),
+                        b'/' => result.push('/'),
+                        b'b' => result.push('\u{0008}'),
+                        b'f' => result.push('\u{000c}'),
+                        b'n' => result.push('\n'),
+                        b'r' => result.push('\r'),
+                        b't' => result.push('\t'),
+                        b'u' => self.push_unicode_escape(&mut result)?,
+                        _ => return Err(format!("invalid JSON escape at {}", self.cursor - 1)),
+                    }
+                    segment = self.cursor;
+                }
+                0..=0x1f => return Err(format!("control byte in JSON string at {}", self.cursor)),
+                _ => self.cursor += 1,
+            }
+        }
+    }
+
+    fn push_unicode_escape(&mut self, target: &mut String) -> Result<(), String> {
+        let first = self.hex_quad()?;
+        let scalar = if (0xd800..=0xdbff).contains(&first) {
+            self.expect(b'\\')?;
+            self.expect(b'u')?;
+            let second = self.hex_quad()?;
+            if !(0xdc00..=0xdfff).contains(&second) {
+                return Err("high surrogate is not followed by a low surrogate".to_owned());
+            }
+            0x1_0000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
+        } else if (0xdc00..=0xdfff).contains(&first) {
+            return Err("unpaired low surrogate".to_owned());
+        } else {
+            u32::from(first)
+        };
+        target.push(char::from_u32(scalar).ok_or_else(|| "invalid Unicode scalar".to_owned())?);
+        Ok(())
+    }
+
+    fn hex_quad(&mut self) -> Result<u16, String> {
+        let mut value = 0_u16;
+        for _ in 0..4 {
+            let byte = self.next().ok_or_else(|| "truncated Unicode escape".to_owned())?;
+            value = (value << 4)
+                | u16::from(match byte {
+                    b'0'..=b'9' => byte - b'0',
+                    b'a'..=b'f' => byte - b'a' + 10,
+                    b'A'..=b'F' => byte - b'A' + 10,
+                    _ => return Err("invalid Unicode escape".to_owned()),
+                });
+        }
+        Ok(value)
+    }
+
+    fn push_utf8_segment(&self, target: &mut String, start: usize, end: usize) -> Result<(), String> {
+        let segment =
+            std::str::from_utf8(&self.source[start..end]).map_err(|_| "invalid UTF-8 in JSON string".to_owned())?;
+        target.push_str(segment);
+        Ok(())
+    }
+
+    fn number(&mut self) -> Result<String, String> {
+        let start = self.cursor;
+        self.consume(b'-');
+        match self.peek() {
+            Some(b'0') => {
+                self.cursor += 1;
+                if self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                    return Err("JSON number has a leading zero".to_owned());
+                }
+            }
+            Some(b'1'..=b'9') => {
+                self.cursor += 1;
+                while self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                    self.cursor += 1;
+                }
+            }
+            _ => return Err("invalid JSON number integer".to_owned()),
+        }
+        if self.consume(b'.') {
+            if !self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                return Err("JSON fraction has no digits".to_owned());
+            }
+            while self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                self.cursor += 1;
+            }
+        }
+        if self.peek().is_some_and(|value| matches!(value, b'e' | b'E')) {
+            self.cursor += 1;
+            if self.peek().is_some_and(|value| matches!(value, b'+' | b'-')) {
+                self.cursor += 1;
+            }
+            if !self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                return Err("JSON exponent has no digits".to_owned());
+            }
+            while self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                self.cursor += 1;
+            }
+        }
+        let raw = std::str::from_utf8(&self.source[start..self.cursor])
+            .map_err(|_| "invalid UTF-8 in JSON number".to_owned())?
+            .to_owned();
+        raw.parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| "JSON number is not finite".to_owned())?;
+        Ok(raw)
+    }
+
+    fn literal(&mut self, expected: &[u8]) -> Result<(), String> {
+        if self.source.get(self.cursor..self.cursor + expected.len()) == Some(expected) {
+            self.cursor += expected.len();
+            Ok(())
+        } else {
+            Err(format!("invalid literal at {}", self.cursor))
+        }
+    }
+
+    fn expect(&mut self, expected: u8) -> Result<(), String> {
+        if self.consume(expected) {
+            Ok(())
+        } else {
+            Err(format!("expected byte {expected} at {}", self.cursor))
+        }
+    }
+
+    fn consume(&mut self, expected: u8) -> bool {
+        if self.peek() == Some(expected) {
+            self.cursor += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn next(&mut self) -> Option<u8> {
+        let value = self.peek()?;
+        self.cursor += 1;
+        Some(value)
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.source.get(self.cursor).copied()
+    }
+}
+
+pub fn materialize_content_runtime(
+    manifest: &ProductionContentManifest,
+    store: &MetadataBlobStore,
+) -> Result<(ContentRuntimeRegistry, ContentRuntimeInstallReport), Vec<ContentRuntimeBlocker>> {
+    let mut blockers = validate_manifest(manifest);
+    if !blockers.is_empty() {
+        sort_blockers(&mut blockers);
+        return Err(blockers);
+    }
+
+    let mut decoded = Vec::with_capacity(manifest.entries.len());
+    let mut aliases = BTreeMap::<String, (ContentDomain, String)>::new();
+    let mut executable_bytes = 0_u64;
+    let mut opaque_extension_bytes = 0_u64;
+    for entry in &manifest.entries {
+        let Some(blob) = store.get(entry.blob_hash) else {
+            blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::MissingBlob,
+                ContentRuntimeStage::BlobResolution,
+                Some(entry.domain),
+                Some(entry.id.clone()),
+                "$.blobHash",
+                Some(entry.blob_hash.to_hex()),
+                None,
+            ));
+            continue;
+        };
+        validate_blob_descriptor(entry, blob, &mut blockers);
+        let Some(schema) = resolve_schema(entry, blob, &mut blockers) else {
+            continue;
+        };
+        let document = match JsonParser::parse(&blob.bytes) {
+            Ok(document) => document,
+            Err(error) => {
+                blockers.push(runtime_blocker(
+                    ContentRuntimeBlockerCode::InvalidJson,
+                    ContentRuntimeStage::SchemaDecode,
+                    Some(entry.domain),
+                    Some(entry.id.clone()),
+                    "$.canonicalBytes",
+                    Some("bounded canonical JSON".to_owned()),
+                    Some(error),
+                ));
+                continue;
+            }
+        };
+        for alias in &blob.aliases {
+            let key = (entry.domain, entry.id.clone());
+            if let Some(previous) = aliases.insert(alias.clone(), key.clone())
+                && previous != key
+            {
+                blockers.push(runtime_blocker(
+                    ContentRuntimeBlockerCode::DuplicateAlias,
+                    ContentRuntimeStage::BlobResolution,
+                    Some(entry.domain),
+                    Some(entry.id.clone()),
+                    "$.aliases",
+                    Some(format!("{}:{}", previous.0.as_id(), previous.1)),
+                    Some(alias.clone()),
+                ));
+            }
+        }
+        let canonical_alias = format!("{}:{}", entry.domain.as_id(), entry.id);
+        if !blob.aliases.iter().any(|alias| alias == &canonical_alias) {
+            blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::DescriptorMismatch,
+                ContentRuntimeStage::BlobResolution,
+                Some(entry.domain),
+                Some(entry.id.clone()),
+                "$.aliases",
+                Some(canonical_alias),
+                Some(blob.aliases.join(",")),
+            ));
+        }
+        executable_bytes += u64::try_from(blob.bytes.len()).expect("metadata size fits u64");
+        opaque_extension_bytes +=
+            u64::try_from(blob.unknown_extension_bytes.len()).expect("metadata extension size fits u64");
+        decoded.push(DecodedRecord {
+            domain: entry.domain,
+            id: entry.id.clone(),
+            schema,
+            content_version: blob.content_version,
+            blob_hash: blob.hash,
+            aliases: blob.aliases.clone(),
+            document,
+            unknown_extension_bytes: blob.unknown_extension_bytes.clone(),
+        });
+    }
+    if !blockers.is_empty() {
+        sort_blockers(&mut blockers);
+        return Err(blockers);
+    }
+
+    let all_ids = decoded
+        .iter()
+        .map(|record| (record.domain, record.id.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut registry = ContentRuntimeRegistry {
+        manifest_hash: manifest.manifest_hash,
+        registry_hash: CanonicalHash([0; 16]),
+        source_revision: manifest.source_revision.clone(),
+        aliases,
+        ..ContentRuntimeRegistry::default()
+    };
+    let mut reference_count = 0_usize;
+    for record in decoded {
+        let before = blockers.len();
+        let mut facts = validate_record(&record, &mut blockers);
+        if blockers.len() != before {
+            continue;
+        }
+        resolve_reference_choices(&record, &mut facts, &all_ids, &mut blockers);
+        reference_count = reference_count.saturating_add(facts.references.len());
+        if reference_count > MAX_CONTENT_REFERENCES {
+            blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::Capacity,
+                ContentRuntimeStage::References,
+                Some(record.domain),
+                Some(record.id.clone()),
+                "$.references",
+                Some(MAX_CONTENT_REFERENCES.to_string()),
+                Some(reference_count.to_string()),
+            ));
+            continue;
+        }
+        for reference in &facts.references {
+            if !all_ids.contains(&(reference.domain, reference.id.clone())) {
+                blockers.push(runtime_blocker(
+                    ContentRuntimeBlockerCode::MissingDependency,
+                    ContentRuntimeStage::References,
+                    Some(record.domain),
+                    Some(record.id.clone()),
+                    &reference.path,
+                    Some(format!("{}:{}", reference.domain.as_id(), reference.id)),
+                    None,
+                ));
+            }
+        }
+        if blockers.len() != before {
+            continue;
+        }
+        insert_record(&mut registry, record, facts);
+    }
+    if !blockers.is_empty() {
+        sort_blockers(&mut blockers);
+        return Err(blockers);
+    }
+    if registry.len() != manifest.entries.len() {
+        blockers.push(runtime_blocker(
+            ContentRuntimeBlockerCode::Manifest,
+            ContentRuntimeStage::Materialization,
+            None,
+            None,
+            "$.entries",
+            Some(manifest.entries.len().to_string()),
+            Some(registry.len().to_string()),
+        ));
+        return Err(blockers);
+    }
+    registry.registry_hash = canonical_registry_hash(&registry);
+    let domain_counts = ALL_CONTENT_DOMAINS
+        .into_iter()
+        .map(|domain| {
+            (
+                domain,
+                u32::try_from(manifest.entries.iter().filter(|entry| entry.domain == domain).count())
+                    .expect("content bound fits u32"),
+            )
+        })
+        .collect();
+    let report = ContentRuntimeInstallReport {
+        schema_version: CONTENT_RUNTIME_SCHEMA_VERSION,
+        manifest_hash: registry.manifest_hash,
+        registry_hash: registry.registry_hash,
+        installed_entries: u32::try_from(registry.len()).expect("content bound fits u32"),
+        executable_bytes,
+        opaque_extension_bytes,
+        references: u32::try_from(reference_count).expect("reference bound fits u32"),
+        domain_counts,
+        completed_stages: CONTENT_RUNTIME_STAGES.to_vec(),
+    };
+    Ok((registry, report))
+}
+
+fn validate_manifest(manifest: &ProductionContentManifest) -> Vec<ContentRuntimeBlocker> {
+    let mut blockers = Vec::new();
+    if manifest.schema_version != CONTENT_MANIFEST_SCHEMA_VERSION {
+        blockers.push(runtime_blocker(
+            ContentRuntimeBlockerCode::Manifest,
+            ContentRuntimeStage::Manifest,
+            None,
+            None,
+            "$.schemaVersion",
+            Some(CONTENT_MANIFEST_SCHEMA_VERSION.to_string()),
+            Some(manifest.schema_version.to_string()),
+        ));
+    }
+    if manifest.source_revision.is_empty()
+        || manifest.source_revision.len() > 160
+        || manifest.source_revision.chars().any(char::is_control)
+    {
+        blockers.push(runtime_blocker(
+            ContentRuntimeBlockerCode::Manifest,
+            ContentRuntimeStage::Manifest,
+            None,
+            None,
+            "$.sourceRevision",
+            Some("1..160 non-control characters".to_owned()),
+            Some(manifest.source_revision.clone()),
+        ));
+    }
+    if manifest.entries.len() > MAX_CONTENT_ENTRIES {
+        blockers.push(runtime_blocker(
+            ContentRuntimeBlockerCode::Capacity,
+            ContentRuntimeStage::Manifest,
+            None,
+            None,
+            "$.entries",
+            Some(MAX_CONTENT_ENTRIES.to_string()),
+            Some(manifest.entries.len().to_string()),
+        ));
+    }
+    let mut previous: Option<(ContentDomain, &str)> = None;
+    let mut grouped = BTreeMap::<ContentDomain, Vec<&ContentManifestEntry>>::new();
+    for entry in &manifest.entries {
+        if entry.id.is_empty() || entry.id.len() > 160 || entry.id.chars().any(char::is_control) {
+            blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::Manifest,
+                ContentRuntimeStage::Manifest,
+                Some(entry.domain),
+                Some(entry.id.clone()),
+                "$.entries[].id",
+                Some("1..160 non-control characters".to_owned()),
+                Some(entry.id.clone()),
+            ));
+        }
+        let current = (entry.domain, entry.id.as_str());
+        if previous.is_some_and(|prior| prior >= current) {
+            blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::Manifest,
+                ContentRuntimeStage::Manifest,
+                Some(entry.domain),
+                Some(entry.id.clone()),
+                "$.entries",
+                Some("strict domain/id order with unique ids".to_owned()),
+                previous.map(|value| format!("{}:{}", value.0.as_id(), value.1)),
+            ));
+        }
+        previous = Some(current);
+        grouped.entry(entry.domain).or_default().push(entry);
+    }
+    let mut canonical_domains = BTreeMap::new();
+    for domain in ALL_CONTENT_DOMAINS {
+        let entries = grouped.get(&domain).cloned().unwrap_or_default();
+        let mut hasher = CanonicalHasher::new("blockwild.gameplay.content-domain.v1");
+        hasher.write_str(domain.as_id());
+        hasher.write_u64(entries.len() as u64);
+        for entry in &entries {
+            hasher.write_str(&entry.id);
+            hasher.write_bytes(entry.blob_hash.as_bytes());
+            hasher.write_u32(entry.byte_length);
+        }
+        let digest = hasher.finish();
+        canonical_domains.insert(
+            domain,
+            (u32::try_from(entries.len()).expect("content bound fits u32"), digest),
+        );
+        match manifest.domains.get(&domain) {
+            Some(declared) if declared.count == entries.len() as u32 && declared.hash == digest => {}
+            Some(declared) => blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::Manifest,
+                ContentRuntimeStage::Manifest,
+                Some(domain),
+                None,
+                "$.domains",
+                Some(format!("{}:{}", entries.len(), digest.to_hex())),
+                Some(format!("{}:{}", declared.count, declared.hash.to_hex())),
+            )),
+            None => blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::Manifest,
+                ContentRuntimeStage::Manifest,
+                Some(domain),
+                None,
+                "$.domains",
+                Some("domain digest".to_owned()),
+                None,
+            )),
+        }
+    }
+    let mut hasher = CanonicalHasher::new("blockwild.gameplay.content-manifest.v1");
+    hasher.write_u16(CONTENT_MANIFEST_SCHEMA_VERSION);
+    hasher.write_str(&manifest.source_revision);
+    hasher.write_u64(canonical_domains.len() as u64);
+    for (domain, (count, hash)) in canonical_domains {
+        hasher.write_str(domain.as_id());
+        hasher.write_u32(count);
+        hasher.write_bytes(hash.as_bytes());
+    }
+    let actual = hasher.finish();
+    if actual != manifest.manifest_hash {
+        blockers.push(runtime_blocker(
+            ContentRuntimeBlockerCode::Manifest,
+            ContentRuntimeStage::Manifest,
+            None,
+            None,
+            "$.manifestHash",
+            Some(actual.to_hex()),
+            Some(manifest.manifest_hash.to_hex()),
+        ));
+    }
+    blockers
+}
+
+fn validate_blob_descriptor(
+    entry: &ContentManifestEntry,
+    blob: &MetadataBlob,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let expected_type = format!("blockwild.content.{}", entry.domain.as_id());
+    let expected_length = usize::try_from(entry.byte_length).expect("u32 fits usize");
+    let actual_length = blob.bytes.len() + blob.unknown_extension_bytes.len();
+    if blob.hash != entry.blob_hash || blob.type_id != expected_type || expected_length != actual_length {
+        blockers.push(runtime_blocker(
+            ContentRuntimeBlockerCode::DescriptorMismatch,
+            ContentRuntimeStage::BlobResolution,
+            Some(entry.domain),
+            Some(entry.id.clone()),
+            "$.blob",
+            Some(format!(
+                "{}:{}:{}",
+                entry.blob_hash.to_hex(),
+                expected_type,
+                expected_length
+            )),
+            Some(format!("{}:{}:{}", blob.hash.to_hex(), blob.type_id, actual_length)),
+        ));
+    }
+}
+
+fn resolve_schema(
+    entry: &ContentManifestEntry,
+    blob: &MetadataBlob,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<ContentSchema> {
+    let schema = match (entry.domain, blob.schema_id.as_str(), blob.schema_version) {
+        (ContentDomain::Item, "item-definition", 1) => ContentSchema::ItemDefinition,
+        (ContentDomain::CraftingRecipe, "crafting-recipe", 1) => ContentSchema::CraftingRecipe,
+        (ContentDomain::CraftingRecipe, "blueprint-definition", 1) => ContentSchema::BlueprintDefinition,
+        (ContentDomain::MachineRecipe, "alchemy-recipe", 1) => ContentSchema::AlchemyRecipe,
+        (ContentDomain::MachineRecipe, "distillery-recipe", 1) => ContentSchema::DistilleryRecipe,
+        (ContentDomain::MachineRecipe, "sugarworks-recipe", 1) => ContentSchema::SugarworksRecipe,
+        (ContentDomain::MachineRecipe, "furnace-recipe", 1) => ContentSchema::FurnaceRecipe,
+        (ContentDomain::MachineRecipe, "orb-morph-recipe", 2) => ContentSchema::OrbMorphRecipe,
+        (ContentDomain::MachineRecipe, "golem-forge-recipe", 1) => ContentSchema::GolemForgeRecipe,
+        (ContentDomain::MachineRecipe, "wheat-mill-process", 1) => ContentSchema::WheatMillProcess,
+        (ContentDomain::MachineProfile, "machine-profile", 1) => ContentSchema::MachineProfileV1,
+        (ContentDomain::MachineProfile, "machine-profile", 2) => ContentSchema::MachineProfileV2,
+        (ContentDomain::AbilitySpell, "spell-definition", 1) => ContentSchema::SpellDefinition,
+        (ContentDomain::AbilitySpell, "creature-move", 1) => ContentSchema::CreatureMove,
+        (ContentDomain::AbilitySpell, "creature-status", 1) => ContentSchema::CreatureStatus,
+        (ContentDomain::AbilitySpell, "creature-reaction", 1) => ContentSchema::CreatureReaction,
+        (ContentDomain::CreatureProfile, "creature-profile", 1) => ContentSchema::CreatureProfile,
+        (ContentDomain::CreatureTypeChart, "creature-type", 1) => ContentSchema::CreatureType,
+        (ContentDomain::CreatureTypeChart, "creature-type-chart", 1) => ContentSchema::CreatureTypeChart,
+        (ContentDomain::QuestGuild, "quest-definition", 1) => ContentSchema::QuestDefinition,
+        (ContentDomain::QuestGuild, "questline-definition", 1) => ContentSchema::QuestlineDefinition,
+        (ContentDomain::QuestGuild, "guild-definition", 1) => ContentSchema::GuildDefinition,
+        (ContentDomain::QuestGuild, "guild-quest", 1) => ContentSchema::GuildQuest,
+        (ContentDomain::QuestGuild, "guild-npc", 1) => ContentSchema::GuildNpc,
+        (ContentDomain::QuestGuild, "faction-definition", 1) => ContentSchema::FactionDefinition,
+        (ContentDomain::Economy, "commerce-item", 1) => ContentSchema::CommerceItem,
+        (ContentDomain::Economy, "merchant-offer", 1) => ContentSchema::MerchantOffer,
+        (ContentDomain::Economy, "stock-definition", 1) => ContentSchema::StockDefinition,
+        (ContentDomain::CardforgeCard, "tcg-card-definition", 1) => ContentSchema::TcgCardDefinition,
+        (ContentDomain::CardforgeCard, "tcg-printing", 1) => ContentSchema::TcgPrinting,
+        (ContentDomain::CardforgePack, "tcg-pack", 1) => ContentSchema::TcgPack,
+        (ContentDomain::CardforgePack, "tcg-set", 1) => ContentSchema::TcgSet,
+        _ => {
+            blockers.push(runtime_blocker(
+                ContentRuntimeBlockerCode::UnsupportedSchema,
+                ContentRuntimeStage::SchemaDecode,
+                Some(entry.domain),
+                Some(entry.id.clone()),
+                "$.schema",
+                Some("known production schema/version for domain".to_owned()),
+                Some(format!("{}@{}", blob.schema_id, blob.schema_version)),
+            ));
+            return None;
+        }
+    };
+    Some(schema)
+}
+
+fn validate_record(record: &DecodedRecord, blockers: &mut Vec<ContentRuntimeBlocker>) -> RecordFacts {
+    let Some(object) = record.document.as_object() else {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::InvalidType,
+            ContentRuntimeStage::SchemaDecode,
+            "$",
+            "object",
+            json_kind(&record.document),
+        ));
+        return RecordFacts::default();
+    };
+    let mut facts = RecordFacts::default();
+    match record.schema {
+        ContentSchema::ItemDefinition => validate_item(record, object, &mut facts, blockers),
+        ContentSchema::CraftingRecipe => validate_crafting(record, object, &mut facts, blockers),
+        ContentSchema::BlueprintDefinition => validate_blueprint(record, object, &mut facts, blockers),
+        ContentSchema::AlchemyRecipe | ContentSchema::DistilleryRecipe | ContentSchema::SugarworksRecipe => {
+            validate_processing_recipe(record, object, &mut facts, blockers);
+        }
+        ContentSchema::FurnaceRecipe => validate_furnace(record, object, &mut facts, blockers),
+        ContentSchema::OrbMorphRecipe => validate_orb_morph(record, object, &mut facts, blockers),
+        ContentSchema::GolemForgeRecipe => validate_golem_recipe(record, object, &mut facts, blockers),
+        ContentSchema::WheatMillProcess => validate_mill(record, object, &mut facts, blockers),
+        ContentSchema::MachineProfileV1 | ContentSchema::MachineProfileV2 => {
+            validate_machine_profile(record, object, &mut facts, blockers);
+        }
+        ContentSchema::SpellDefinition => validate_spell(record, object, &mut facts, blockers),
+        ContentSchema::CreatureMove => validate_creature_move(record, object, &mut facts, blockers),
+        ContentSchema::CreatureStatus => validate_creature_status(record, object, &mut facts, blockers),
+        ContentSchema::CreatureReaction => validate_creature_reaction(record, object, &mut facts, blockers),
+        ContentSchema::CreatureProfile => validate_creature(record, object, &mut facts, blockers),
+        ContentSchema::CreatureType => validate_creature_type(record, object, blockers),
+        ContentSchema::CreatureTypeChart => validate_type_chart(record, object, &mut facts, blockers),
+        ContentSchema::QuestDefinition => validate_quest(record, object, &mut facts, blockers),
+        ContentSchema::QuestlineDefinition => validate_questline(record, object, &mut facts, blockers),
+        ContentSchema::GuildDefinition => validate_guild(record, object, &mut facts, blockers),
+        ContentSchema::GuildQuest => validate_guild_quest(record, object, &mut facts, blockers),
+        ContentSchema::GuildNpc => validate_guild_npc(record, object, &mut facts, blockers),
+        ContentSchema::FactionDefinition => validate_faction(record, object, blockers),
+        ContentSchema::CommerceItem => validate_commerce(record, object, blockers),
+        ContentSchema::MerchantOffer => validate_merchant_offer(record, object, &mut facts, blockers),
+        ContentSchema::StockDefinition => validate_stock(record, object, blockers),
+        ContentSchema::TcgCardDefinition => validate_tcg_card(record, object, &mut facts, blockers),
+        ContentSchema::TcgPrinting => validate_tcg_printing(record, object, &mut facts, blockers),
+        ContentSchema::TcgPack => validate_tcg_pack(record, object, &mut facts, blockers),
+        ContentSchema::TcgSet => validate_tcg_set(record, object, blockers),
+    }
+    normalize_facts(record, &mut facts, blockers);
+    facts
+}
+
+fn validate_item(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let item_code = required_u32(record, object, "id", 1, u32::MAX, blockers);
+    if item_code.is_some_and(|code| code.to_string() != record.id) {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::DescriptorMismatch,
+            ContentRuntimeStage::Invariants,
+            "$.id",
+            &record.id,
+            &item_code.unwrap_or_default().to_string(),
+        ));
+    }
+    required_nonempty_string(record, object, "name", blockers);
+    let max_stack = required_u32(record, object, "maxStack", 1, MAX_ITEM_STACK, blockers);
+    if let Some(value) = optional_string(record, object, "rarity", blockers) {
+        enum_value(
+            record,
+            "$.rarity",
+            value,
+            &["common", "uncommon", "rare", "epic", "legendary"],
+            blockers,
+        );
+    }
+    if let Some(value) = optional_string(record, object, "equipmentSlot", blockers) {
+        enum_value(
+            record,
+            "$.equipmentSlot",
+            value,
+            &["head", "chest", "legs", "feet"],
+            blockers,
+        );
+    }
+    if let Some(value) = optional_string(record, object, "toolKind", blockers) {
+        enum_value(
+            record,
+            "$.toolKind",
+            value,
+            &[
+                "axe", "bow", "crossbow", "firearm", "pickaxe", "shovel", "spear", "staff", "sword",
+            ],
+            blockers,
+        );
+    }
+    if let Some(ammo) = optional_u32(record, object, "ammoItem", 1, u32::MAX, blockers) {
+        push_reference(facts, ContentDomain::Item, ammo.to_string(), "$.ammoItem");
+    }
+    facts.item_code = item_code;
+    facts.max_stack = max_stack;
+}
+
+fn validate_crafting(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, &record.id, blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    let width = required_u32(record, object, "width", 1, 9, blockers);
+    let height = required_u32(record, object, "height", 1, 9, blockers);
+    let pattern = required_array(record, object, "pattern", blockers);
+    if let (Some(width), Some(height), Some(pattern)) = (width, height, pattern) {
+        let expected = usize::try_from(width * height).expect("small dimensions fit usize");
+        if pattern.len() != expected {
+            blockers.push(for_record(
+                record,
+                ContentRuntimeBlockerCode::ResourceConservation,
+                ContentRuntimeStage::Invariants,
+                "$.pattern",
+                &expected.to_string(),
+                &pattern.len().to_string(),
+            ));
+        }
+        let mut counts = BTreeMap::<ContentResourceKey, u32>::new();
+        for (index, value) in pattern.iter().enumerate() {
+            if let Some(item) = json_u32(value, 0, u32::MAX) {
+                if item != 0 {
+                    *counts.entry(ContentResourceKey::ItemCode(item)).or_default() += 1;
+                    push_reference(facts, ContentDomain::Item, item.to_string(), "$.pattern");
+                }
+                continue;
+            }
+            if let Some(alternatives) = value.as_array() {
+                let mut choices = alternatives
+                    .iter()
+                    .filter_map(|choice| json_u32(choice, 1, u32::MAX))
+                    .collect::<Vec<_>>();
+                choices.sort_unstable();
+                choices.dedup();
+                if !choices.is_empty() && choices.len() == alternatives.len() {
+                    for item in &choices {
+                        push_reference(facts, ContentDomain::Item, item.to_string(), "$.pattern");
+                    }
+                    *counts.entry(ContentResourceKey::ItemChoice(choices)).or_default() += 1;
+                    continue;
+                }
+            }
+            invalid_type(
+                record,
+                &format!("$.pattern[{index}]"),
+                "non-negative item code or non-empty item-choice array",
+                value,
+                blockers,
+            );
+        }
+        for (resource, amount) in counts {
+            facts.resources.inputs.push(ContentResourceAmount {
+                resource,
+                amount,
+                consumed: true,
+            });
+        }
+    }
+    if let Some((item, count)) = item_stack(record, object.get("output"), "$.output", blockers) {
+        push_item_resource(&mut facts.resources.outputs, item, count, false);
+        push_reference(facts, ContentDomain::Item, item.to_string(), "$.output.item");
+    }
+    require_flow(record, &facts.resources, blockers);
+}
+
+fn validate_blueprint(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "blueprint:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    for recipe in required_string_array(record, object, "recipeIds", blockers) {
+        push_reference_choice(
+            facts,
+            [
+                (ContentDomain::CraftingRecipe, recipe.clone()),
+                (ContentDomain::MachineRecipe, recipe.clone()),
+                (ContentDomain::MachineRecipe, format!("alchemy:{recipe}")),
+                (ContentDomain::MachineRecipe, format!("distillery:{recipe}")),
+                (ContentDomain::MachineRecipe, format!("sugarworks:{recipe}")),
+                (ContentDomain::MachineRecipe, format!("orb-morph:{recipe}")),
+                (ContentDomain::MachineRecipe, format!("golem-forge:{recipe}")),
+            ],
+            "$.recipeIds",
+        );
+    }
+    optional_u32(record, object, "resaleGold", 0, MAX_ITEM_STACK, blockers);
+}
+
+fn validate_processing_recipe(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let prefix = match record.schema {
+        ContentSchema::AlchemyRecipe => "alchemy:",
+        ContentSchema::DistilleryRecipe => "distillery:",
+        ContentSchema::SugarworksRecipe => "sugarworks:",
+        _ => "",
+    };
+    validate_embedded_id(record, object, strip_prefix(&record.id, prefix), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    let Some(inputs) = required_array(record, object, "inputs", blockers) else {
+        return;
+    };
+    for (index, input) in inputs.iter().enumerate() {
+        let path = format!("$.inputs[{index}]");
+        if let Some(resource) = symbolic_resource(record, input, &path, true, blockers) {
+            facts.resources.inputs.push(resource);
+        }
+    }
+    if let Some(resource) = symbolic_resource(
+        record,
+        object.get("output").unwrap_or(&CanonicalJson::Null),
+        "$.output",
+        false,
+        blockers,
+    ) {
+        facts.resources.outputs.push(resource);
+    }
+    let time_field = match record.schema {
+        ContentSchema::AlchemyRecipe => "brewSeconds",
+        ContentSchema::DistilleryRecipe => "fermentSeconds",
+        ContentSchema::SugarworksRecipe => "batchSeconds",
+        _ => "seconds",
+    };
+    required_number(record, object, time_field, 0.000_001, 86_400.0, blockers);
+    if let Some(blueprint) = optional_string(record, object, "blueprintId", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::CraftingRecipe,
+            format!("blueprint:{blueprint}"),
+            "$.blueprintId",
+        );
+    }
+    require_flow(record, &facts.resources, blockers);
+}
+
+fn validate_furnace(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let input = required_u32(record, object, "inputItem", 1, u32::MAX, blockers);
+    if let Some(item) = input {
+        push_item_resource(&mut facts.resources.inputs, item, 1, true);
+        push_reference(facts, ContentDomain::Item, item.to_string(), "$.inputItem");
+    }
+    if let Some((item, count)) = item_stack(record, object.get("output"), "$.output", blockers) {
+        push_item_resource(&mut facts.resources.outputs, item, count, false);
+        push_reference(facts, ContentDomain::Item, item.to_string(), "$.output.item");
+    }
+    require_flow(record, &facts.resources, blockers);
+}
+
+fn validate_orb_morph(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "orb-morph:"), blockers);
+    let input_kind = required_nonempty_string(record, object, "inputKind", blockers);
+    let output_kind = required_nonempty_string(record, object, "outputKind", blockers);
+    if let Some(kind) = input_kind {
+        push_reference(facts, ContentDomain::CreatureProfile, kind.to_owned(), "$.inputKind");
+    }
+    if let Some(kind) = output_kind {
+        push_reference(facts, ContentDomain::CreatureProfile, kind.to_owned(), "$.outputKind");
+    }
+    required_u32(record, object, "complexity", 1, 100, blockers);
+    required_number(record, object, "baseDurationSeconds", 0.000_001, 86_400.0, blockers);
+    if let Some(costs) = required_array(record, object, "baseCosts", blockers) {
+        for (index, cost) in costs.iter().enumerate() {
+            let path = format!("$.baseCosts[{index}]");
+            if let Some((item, count)) = item_stack(record, Some(cost), &path, blockers) {
+                push_item_resource(&mut facts.resources.inputs, item, count, true);
+                push_reference(facts, ContentDomain::Item, item.to_string(), &format!("{path}.item"));
+            }
+        }
+    }
+    if facts.resources.inputs.is_empty() {
+        resource_error(record, "$.baseCosts", "at least one positive cost", "empty", blockers);
+    }
+}
+
+fn validate_golem_recipe(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let kind = required_nonempty_string(record, object, "type", blockers);
+    if let Some(kind) = kind {
+        push_reference_choice(
+            facts,
+            [
+                (ContentDomain::CreatureProfile, kind.to_owned()),
+                (ContentDomain::CreatureProfile, format!("{kind}-golem")),
+            ],
+            "$.type",
+        );
+    }
+    if let Some(blueprint) = required_nonempty_string(record, object, "blueprintId", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::CraftingRecipe,
+            format!("blueprint:{blueprint}"),
+            "$.blueprintId",
+        );
+    }
+    required_u32(record, object, "manaCost", 0, MAX_ITEM_STACK, blockers);
+    required_number(record, object, "seconds", 0.000_001, 86_400.0, blockers);
+    if let Some(resources) = required_object(record, object, "resources", blockers) {
+        for (key, amount) in resources {
+            if !valid_symbol(key) {
+                invalid_value(
+                    record,
+                    &format!("$.resources.{key}"),
+                    "bounded symbolic resource id",
+                    key,
+                    blockers,
+                );
+                continue;
+            }
+            let Some(amount) = json_u32(amount, 1, MAX_ITEM_STACK) else {
+                invalid_type(
+                    record,
+                    &format!("$.resources.{key}"),
+                    "positive integer",
+                    amount,
+                    blockers,
+                );
+                continue;
+            };
+            facts.resources.inputs.push(ContentResourceAmount {
+                resource: ContentResourceKey::Symbolic(key.clone()),
+                amount,
+                consumed: true,
+            });
+        }
+    }
+    if facts.resources.inputs.is_empty() {
+        resource_error(record, "$.resources", "at least one positive cost", "empty", blockers);
+    }
+}
+
+fn validate_mill(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    required_nonempty_string(record, object, "id", blockers);
+    if let Some((item, count)) = item_stack(record, object.get("input"), "$.input", blockers) {
+        push_item_resource(&mut facts.resources.inputs, item, count, true);
+        push_reference(facts, ContentDomain::Item, item.to_string(), "$.input.item");
+    }
+    if let Some((item, count)) = item_stack(record, object.get("output"), "$.output", blockers) {
+        push_item_resource(&mut facts.resources.outputs, item, count, false);
+        push_reference(facts, ContentDomain::Item, item.to_string(), "$.output.item");
+    }
+    required_number(record, object, "batchSeconds", 0.000_001, 86_400.0, blockers);
+    require_flow(record, &facts.resources, blockers);
+}
+
+fn validate_machine_profile(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    if object.is_empty() {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::MissingField,
+            ContentRuntimeStage::Invariants,
+            "$",
+            "at least one machine parameter",
+            "empty object",
+        ));
+    }
+    for field in [
+        "outputCap",
+        "stackCap",
+        "workerCap",
+        "nectarCap",
+        "honeyCap",
+        "jellyCap",
+        "slots",
+        "gelCap",
+        "maxBlocks",
+        "resourceCap",
+    ] {
+        if let Some(value) = optional_u64(record, object, field, 1, u64::MAX, blockers) {
+            facts.capacity_fields.insert(field.to_owned(), value);
+        }
+    }
+    for field in [
+        "cycleSeconds",
+        "honeyCycleSeconds",
+        "jellyCycleSeconds",
+        "workerGrowthSeconds",
+        "healIntervalSeconds",
+        "gelSeconds",
+        "healSeconds",
+        "breedSeconds",
+    ] {
+        if object.contains_key(field) {
+            required_number(record, object, field, 0.000_001, 31_536_000.0, blockers);
+        }
+    }
+    if let Some(ids) = optional_array(record, object, "inputItemIds", blockers) {
+        for (index, value) in ids.iter().enumerate() {
+            let Some(item) = json_u32(value, 1, u32::MAX) else {
+                invalid_type(
+                    record,
+                    &format!("$.inputItemIds[{index}]"),
+                    "positive item code",
+                    value,
+                    blockers,
+                );
+                continue;
+            };
+            push_reference(
+                facts,
+                ContentDomain::Item,
+                item.to_string(),
+                &format!("$.inputItemIds[{index}]"),
+            );
+            if record.id == "furnace" {
+                push_reference(
+                    facts,
+                    ContentDomain::MachineRecipe,
+                    format!("furnace:{item}"),
+                    &format!("$.inputItemIds[{index}]"),
+                );
+            }
+        }
+    }
+    if let Some(ids) = optional_string_array(record, object, "recipeIds", blockers) {
+        for (index, id) in ids.into_iter().enumerate() {
+            let target = match record.id.as_str() {
+                "golem-forge" => format!("golem-forge:{id}"),
+                "alchemy" => format!("alchemy:{id}"),
+                "distillery" => format!("distillery:{id}"),
+                _ => id,
+            };
+            push_reference(
+                facts,
+                ContentDomain::MachineRecipe,
+                target,
+                &format!("$.recipeIds[{index}]"),
+            );
+        }
+    }
+}
+
+fn validate_spell(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "spell:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_u32(record, object, "manaCost", 0, MAX_ITEM_STACK, blockers);
+    let cooldown = required_number(record, object, "cooldownSeconds", 0.0, 86_400.0, blockers);
+    facts.cooldown_millis = cooldown.map(seconds_to_millis).unwrap_or_default();
+    if let Some(value) = required_nonempty_string(record, object, "school", blockers) {
+        enum_value(
+            record,
+            "$.school",
+            value,
+            &["alteration", "conjuration", "destruction", "restoration", "utility"],
+            blockers,
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "targeting", blockers) {
+        enum_value(
+            record,
+            "$.targeting",
+            value,
+            &["aimed", "cone", "ground", "self"],
+            blockers,
+        );
+    }
+    let effects = required_array(record, object, "effects", blockers);
+    if effects.is_some_and(<[CanonicalJson]>::is_empty) {
+        resource_error(record, "$.effects", "one or more spell effects", "empty", blockers);
+    }
+}
+
+fn validate_creature_move(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "move:"), blockers);
+    let move_type = required_nonempty_string(record, object, "type", blockers);
+    if let Some(kind) = move_type {
+        push_reference(
+            facts,
+            ContentDomain::CreatureTypeChart,
+            format!("type:{kind}"),
+            "$.type",
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "channel", blockers) {
+        enum_value(
+            record,
+            "$.channel",
+            value,
+            &[
+                "control",
+                "field",
+                "healing",
+                "magical",
+                "physical",
+                "stance",
+                "traversal",
+            ],
+            blockers,
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "target", blockers) {
+        enum_value(
+            record,
+            "$.target",
+            value,
+            &["ally", "area", "hostile", "point", "self"],
+            blockers,
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "shape", blockers) {
+        enum_value(
+            record,
+            "$.shape",
+            value,
+            &["arc", "circle", "cone", "contact", "dash", "line"],
+            blockers,
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "worldImpact", blockers) {
+        enum_value(record, "$.worldImpact", value, &["none", "soft", "visual"], blockers);
+    }
+    for field in [
+        "range",
+        "radius",
+        "verticalTolerance",
+        "windupSeconds",
+        "activeSeconds",
+        "recoverySeconds",
+        "cooldownSeconds",
+        "power",
+        "exertionCost",
+    ] {
+        required_number(record, object, field, 0.0, 1_000_000.0, blockers);
+    }
+    facts.cooldown_millis = object
+        .get("cooldownSeconds")
+        .and_then(CanonicalJson::as_f64)
+        .map(seconds_to_millis)
+        .unwrap_or_default();
+    if let Some(status) = optional_string(record, object, "appliesStatus", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::AbilitySpell,
+            format!("status:{status}"),
+            "$.appliesStatus",
+        );
+    }
+    let Some(packets) = required_array(record, object, "packets", blockers) else {
+        return;
+    };
+    if packets.is_empty() {
+        resource_error(record, "$.packets", "one or more typed packets", "empty", blockers);
+        return;
+    }
+    let mut share = 0.0;
+    for (index, packet) in packets.iter().enumerate() {
+        let Some(packet) = packet.as_object() else {
+            invalid_type(record, &format!("$.packets[{index}]"), "object", packet, blockers);
+            continue;
+        };
+        let path = format!("$.packets[{index}]");
+        if let Some(kind) = required_nonempty_string_at(record, packet, "type", &path, blockers) {
+            push_reference(
+                facts,
+                ContentDomain::CreatureTypeChart,
+                format!("type:{kind}"),
+                &format!("{path}.type"),
+            );
+        }
+        if let Some(value) = required_number_at(record, packet, "share", &path, 0.000_001, 1.0, blockers) {
+            share += value;
+        }
+    }
+    if (share - 1.0).abs() > 0.000_001 {
+        resource_error(
+            record,
+            "$.packets[].share",
+            "sum exactly 1",
+            &share.to_string(),
+            blockers,
+        );
+    }
+}
+
+fn validate_creature_status(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "status:"), blockers);
+    required_u32(record, object, "maximumStacks", 1, 1_000_000, blockers);
+    required_number(
+        record,
+        object,
+        "maximumDurationSeconds",
+        0.000_001,
+        31_536_000.0,
+        blockers,
+    );
+    if let Some(modifiers) = optional_object(record, object, "typeStepModifiers", blockers) {
+        for (kind, value) in modifiers {
+            push_reference(
+                facts,
+                ContentDomain::CreatureTypeChart,
+                format!("type:{kind}"),
+                &format!("$.typeStepModifiers.{kind}"),
+            );
+            let Some(value) = value.as_f64() else {
+                invalid_type(
+                    record,
+                    &format!("$.typeStepModifiers.{kind}"),
+                    "integer -8..8",
+                    value,
+                    blockers,
+                );
+                continue;
+            };
+            if value.fract() != 0.0 || !(-8.0..=8.0).contains(&value) {
+                invalid_value(
+                    record,
+                    &format!("$.typeStepModifiers.{kind}"),
+                    "integer -8..8",
+                    &value.to_string(),
+                    blockers,
+                );
+            }
+        }
+    }
+}
+
+fn validate_creature_reaction(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    required_nonempty_string(record, object, "id", blockers);
+    if let Some(status) = required_nonempty_string(record, object, "setupStatus", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::AbilitySpell,
+            format!("status:{status}"),
+            "$.setupStatus",
+        );
+    }
+    for (index, kind) in required_string_array(record, object, "followupTypes", blockers)
+        .into_iter()
+        .enumerate()
+    {
+        push_reference(
+            facts,
+            ContentDomain::CreatureTypeChart,
+            format!("type:{kind}"),
+            &format!("$.followupTypes[{index}]"),
+        );
+    }
+    required_number(record, object, "cooldownSeconds", 0.0, 86_400.0, blockers);
+}
+
+fn validate_creature(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id_field(record, object, "kind", &record.id, blockers);
+    facts.natural_types = required_string_array(record, object, "naturalTypes", blockers);
+    if facts.natural_types.is_empty() {
+        resource_error(
+            record,
+            "$.naturalTypes",
+            "at least one creature type",
+            "empty",
+            blockers,
+        );
+    }
+    for (index, kind) in facts.natural_types.clone().into_iter().enumerate() {
+        push_reference(
+            facts,
+            ContentDomain::CreatureTypeChart,
+            format!("type:{kind}"),
+            &format!("$.naturalTypes[{index}]"),
+        );
+    }
+    if let Some(profile) = required_nonempty_string(record, object, "captureProfile", blockers) {
+        enum_value(
+            record,
+            "$.captureProfile",
+            profile,
+            &[
+                "aquatic",
+                "armored",
+                "gentle",
+                "legendary",
+                "open",
+                "pursuit",
+                "rescue",
+                "resonant",
+                "territorial",
+                "uncapturable",
+            ],
+            blockers,
+        );
+    }
+    let Some(moves) = required_object(record, object, "moves", blockers) else {
+        return;
+    };
+    for field in ["basicMoveId", "fieldUtilityMoveId", "passiveStanceMoveId"] {
+        if let Some(id) = optional_string_at(record, moves, field, "$.moves", blockers) {
+            facts.move_ids.push(id.to_owned());
+            push_reference(
+                facts,
+                ContentDomain::AbilitySpell,
+                format!("move:{id}"),
+                &format!("$.moves.{field}"),
+            );
+        }
+    }
+    let maximum_level = object
+        .get("stats")
+        .and_then(CanonicalJson::as_object)
+        .and_then(|stats| stats.get("maximumLevel"))
+        .and_then(CanonicalJson::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(1_000_000);
+    let Some(unlocks) = moves.get("unlocks").and_then(CanonicalJson::as_array) else {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::MissingField,
+            ContentRuntimeStage::Invariants,
+            "$.moves.unlocks",
+            "array",
+            "missing",
+        ));
+        return;
+    };
+    let mut seen = BTreeSet::new();
+    let mut prior_level = 0;
+    for (index, unlock) in unlocks.iter().enumerate() {
+        let Some(unlock) = unlock.as_object() else {
+            invalid_type(record, &format!("$.moves.unlocks[{index}]"), "object", unlock, blockers);
+            continue;
+        };
+        let path = format!("$.moves.unlocks[{index}]");
+        let id = required_nonempty_string_at(record, unlock, "moveId", &path, blockers);
+        let level = required_u32_at(record, unlock, "level", &path, 1, maximum_level, blockers);
+        if let Some(id) = id {
+            if !seen.insert(id.to_owned()) {
+                invalid_value(record, &format!("{path}.moveId"), "unique move id", id, blockers);
+            }
+            facts.move_ids.push(id.to_owned());
+            push_reference(
+                facts,
+                ContentDomain::AbilitySpell,
+                format!("move:{id}"),
+                &format!("{path}.moveId"),
+            );
+        }
+        if let Some(level) = level {
+            if level < prior_level {
+                invalid_value(
+                    record,
+                    &format!("{path}.level"),
+                    "non-decreasing unlock level",
+                    &level.to_string(),
+                    blockers,
+                );
+            }
+            prior_level = level;
+        }
+    }
+}
+
+fn validate_creature_type(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "type:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_nonempty_string(record, object, "glyph", blockers);
+    if let Some(color) = required_nonempty_string(record, object, "color", blockers)
+        && !valid_hex_color(color)
+    {
+        invalid_value(record, "$.color", "#RRGGBB color", color, blockers);
+    }
+}
+
+fn validate_type_chart(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let owner = strip_prefix(&record.id, "chart:");
+    push_reference(
+        facts,
+        ContentDomain::CreatureTypeChart,
+        format!("type:{owner}"),
+        "$.ownerType",
+    );
+    let mut seen = BTreeSet::new();
+    for field in ["strongAgainst", "resistedBy"] {
+        for (index, kind) in required_string_array(record, object, field, blockers)
+            .into_iter()
+            .enumerate()
+        {
+            if !seen.insert(kind.clone()) {
+                invalid_value(
+                    record,
+                    &format!("$.{field}[{index}]"),
+                    "type appears in only one relation",
+                    &kind,
+                    blockers,
+                );
+            }
+            push_reference(
+                facts,
+                ContentDomain::CreatureTypeChart,
+                format!("type:{kind}"),
+                &format!("$.{field}[{index}]"),
+            );
+        }
+    }
+}
+
+fn validate_quest(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "quest:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    if let Some(line) = required_nonempty_string(record, object, "questlineId", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::QuestGuild,
+            format!("questline:{line}"),
+            "$.questlineId",
+        );
+    }
+    let objectives = required_array(record, object, "objectives", blockers);
+    if objectives.is_some_and(<[CanonicalJson]>::is_empty) {
+        resource_error(record, "$.objectives", "one or more objectives", "empty", blockers);
+    }
+}
+
+fn validate_questline(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "questline:"), blockers);
+    for (index, quest) in required_string_array(record, object, "questIds", blockers)
+        .into_iter()
+        .enumerate()
+    {
+        push_reference(
+            facts,
+            ContentDomain::QuestGuild,
+            format!("quest:{quest}"),
+            &format!("$.questIds[{index}]"),
+        );
+    }
+}
+
+fn validate_guild(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "guild:"), blockers);
+    if let Some(faction) = required_nonempty_string(record, object, "factionId", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::QuestGuild,
+            format!("faction:{faction}"),
+            "$.factionId",
+        );
+    }
+    for (field, prefix) in [("questIds", "guild-quest:"), ("principalNpcIds", "guild-npc:")] {
+        for (index, id) in required_string_array(record, object, field, blockers)
+            .into_iter()
+            .enumerate()
+        {
+            push_reference(
+                facts,
+                ContentDomain::QuestGuild,
+                format!("{prefix}{id}"),
+                &format!("$.{field}[{index}]"),
+            );
+        }
+    }
+}
+
+fn validate_guild_quest(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "guild-quest:"), blockers);
+    if let Some(guild) = required_nonempty_string(record, object, "guildId", blockers) {
+        push_reference(facts, ContentDomain::QuestGuild, format!("guild:{guild}"), "$.guildId");
+    }
+    required_u32(record, object, "number", 1, 1_000_000, blockers);
+    let objectives = required_array(record, object, "objectives", blockers);
+    if objectives.is_some_and(<[CanonicalJson]>::is_empty) {
+        resource_error(record, "$.objectives", "one or more objectives", "empty", blockers);
+    }
+}
+
+fn validate_guild_npc(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "guild-npc:"), blockers);
+    if let Some(guild) = required_nonempty_string(record, object, "guildId", blockers) {
+        push_reference(facts, ContentDomain::QuestGuild, format!("guild:{guild}"), "$.guildId");
+    }
+    required_nonempty_string(record, object, "name", blockers);
+}
+
+fn validate_faction(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "faction:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_nonempty_string(record, object, "race", blockers);
+}
+
+fn validate_commerce(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id_field(record, object, "key", strip_prefix(&record.id, "commerce:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_u32(record, object, "baseValue", 0, MAX_ITEM_STACK, blockers);
+    required_u32(record, object, "stackLimit", 1, MAX_ITEM_STACK, blockers);
+    if let Some(value) = required_nonempty_string(record, object, "category", blockers) {
+        enum_value(
+            record,
+            "$.category",
+            value,
+            &[
+                "ammunition",
+                "armor",
+                "blueprint",
+                "creature",
+                "crop",
+                "drink",
+                "food",
+                "honey",
+                "material",
+                "misc",
+                "ore",
+                "potion",
+                "treasure",
+                "weapon",
+            ],
+            blockers,
+        );
+    }
+}
+
+fn validate_merchant_offer(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    if let Some(item) = required_nonempty_string(record, object, "itemKey", blockers) {
+        push_reference(facts, ContentDomain::Economy, format!("commerce:{item}"), "$.itemKey");
+    }
+    required_u32(record, object, "count", 1, MAX_ITEM_STACK, blockers);
+    optional_number(record, object, "rareChance", 0.0, 1.0, blockers);
+}
+
+fn validate_stock(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id_field(record, object, "symbol", strip_prefix(&record.id, "stock:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_u32(record, object, "initialPriceGold", 1, MAX_ITEM_STACK, blockers);
+    required_u32(record, object, "driftBasisPoints", 0, 10_000, blockers);
+}
+
+fn validate_tcg_card(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "definition:"), blockers);
+    required_u32(record, object, "schema", 1, 1, blockers);
+    required_u32(record, object, "rulesRevision", 1, u32::MAX, blockers);
+    required_u32(record, object, "cost", 0, 100, blockers);
+    if let Some(value) = required_nonempty_string(record, object, "class", blockers) {
+        enum_value(
+            record,
+            "$.class",
+            value,
+            &["character", "creature", "place", "relic", "technique"],
+            blockers,
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "rarity", blockers) {
+        enum_value(
+            record,
+            "$.rarity",
+            value,
+            &["common", "uncommon", "rare", "epic", "legendary"],
+            blockers,
+        );
+    }
+    if let Some(kind) = required_nonempty_string(record, object, "primaryType", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::CreatureTypeChart,
+            format!("type:{kind}"),
+            "$.primaryType",
+        );
+    }
+    for (index, kind) in required_string_array(record, object, "secondaryTypes", blockers)
+        .into_iter()
+        .enumerate()
+    {
+        push_reference(
+            facts,
+            ContentDomain::CreatureTypeChart,
+            format!("type:{kind}"),
+            &format!("$.secondaryTypes[{index}]"),
+        );
+    }
+    let abilities = required_array(record, object, "abilities", blockers);
+    if abilities.is_some_and(|values| values.len() > 64) {
+        invalid_value(
+            record,
+            "$.abilities",
+            "at most 64 abilities",
+            &abilities.map(<[CanonicalJson]>::len).unwrap_or_default().to_string(),
+            blockers,
+        );
+    }
+}
+
+fn validate_tcg_printing(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "printing:"), blockers);
+    required_u32(record, object, "schema", 1, 1, blockers);
+    if let Some(card) = required_nonempty_string(record, object, "cardDefinitionId", blockers) {
+        push_reference(
+            facts,
+            ContentDomain::CardforgeCard,
+            format!("definition:{card}"),
+            "$.cardDefinitionId",
+        );
+    }
+    if let Some(set) = required_nonempty_string(record, object, "setId", blockers) {
+        push_reference(facts, ContentDomain::CardforgePack, format!("set:{set}"), "$.setId");
+    }
+    if let Some(value) = required_nonempty_string(record, object, "variant", blockers) {
+        enum_value(
+            record,
+            "$.variant",
+            value,
+            &["boss-signature", "capture", "full-art", "showcase", "standard"],
+            blockers,
+        );
+    }
+    if let Some(value) = required_nonempty_string(record, object, "finish", blockers) {
+        enum_value(
+            record,
+            "$.finish",
+            value,
+            &["etched", "foil", "signature", "standard"],
+            blockers,
+        );
+    }
+    required_u32(record, object, "valueModifierPermille", 1, 1_000_000, blockers);
+}
+
+fn validate_tcg_pack(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "pack:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_u32(record, object, "retailPrice", 0, MAX_ITEM_STACK, blockers);
+    for (index, set) in required_string_array(record, object, "setIds", blockers)
+        .into_iter()
+        .enumerate()
+    {
+        push_reference(
+            facts,
+            ContentDomain::CardforgePack,
+            format!("set:{set}"),
+            &format!("$.setIds[{index}]"),
+        );
+    }
+}
+
+fn validate_tcg_set(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id(record, object, strip_prefix(&record.id, "set:"), blockers);
+    required_nonempty_string(record, object, "name", blockers);
+    required_nonempty_string(record, object, "symbol", blockers);
+}
+
+fn normalize_facts(record: &DecodedRecord, facts: &mut RecordFacts, blockers: &mut Vec<ContentRuntimeBlocker>) {
+    facts.references.sort();
+    facts.references.dedup();
+    facts.natural_types.sort();
+    facts.natural_types.dedup();
+    facts.move_ids.sort();
+    facts.move_ids.dedup();
+    aggregate_resources(&mut facts.resources.inputs);
+    aggregate_resources(&mut facts.resources.outputs);
+    let total = facts.resources.inputs.len() + facts.resources.outputs.len();
+    if total > MAX_CONTENT_RESOURCES_PER_ENTRY {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::Capacity,
+            ContentRuntimeStage::Invariants,
+            "$.resources",
+            &MAX_CONTENT_RESOURCES_PER_ENTRY.to_string(),
+            &total.to_string(),
+        ));
+    }
+}
+
+fn resolve_reference_choices(
+    record: &DecodedRecord,
+    facts: &mut RecordFacts,
+    all_ids: &BTreeSet<(ContentDomain, String)>,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    for choice in facts.reference_choices.drain(..) {
+        let mut matches = choice
+            .targets
+            .iter()
+            .filter(|target| all_ids.contains(*target))
+            .cloned()
+            .collect::<Vec<_>>();
+        matches.sort();
+        matches.dedup();
+        match matches.as_slice() {
+            [(domain, id)] => facts.references.push(ContentReference {
+                domain: *domain,
+                id: id.clone(),
+                path: choice.path,
+            }),
+            [] => blockers.push(for_record(
+                record,
+                ContentRuntimeBlockerCode::MissingDependency,
+                ContentRuntimeStage::References,
+                &choice.path,
+                &choice
+                    .targets
+                    .iter()
+                    .map(|(domain, id)| format!("{}:{id}", domain.as_id()))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+                "missing",
+            )),
+            _ => blockers.push(for_record(
+                record,
+                ContentRuntimeBlockerCode::DescriptorMismatch,
+                ContentRuntimeStage::References,
+                &choice.path,
+                "exactly one dependency target",
+                &matches
+                    .iter()
+                    .map(|(domain, id)| format!("{}:{id}", domain.as_id()))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            )),
+        }
+    }
+    facts.references.sort();
+    facts.references.dedup();
+}
+
+fn insert_record(registry: &mut ContentRuntimeRegistry, record: DecodedRecord, facts: RecordFacts) {
+    let domain = record.domain;
+    let id = record.id.clone();
+    let core = ContentRecordCore {
+        id: record.id,
+        schema: record.schema,
+        content_version: record.content_version,
+        blob_hash: record.blob_hash,
+        aliases: record.aliases,
+        document: record.document,
+        unknown_extension_bytes: record.unknown_extension_bytes,
+        references: facts.references,
+        resources: facts.resources,
+    };
+    match domain {
+        ContentDomain::Item => {
+            registry.items.insert(
+                id,
+                ContentItemRecord {
+                    core,
+                    item_code: facts.item_code.expect("validated item has item code"),
+                    max_stack: facts.max_stack.expect("validated item has stack limit"),
+                },
+            );
+        }
+        ContentDomain::CraftingRecipe => {
+            registry.crafting_recipes.insert(id, ContentRecipeRecord { core });
+        }
+        ContentDomain::MachineRecipe => {
+            registry.machine_recipes.insert(id, ContentRecipeRecord { core });
+        }
+        ContentDomain::MachineProfile => {
+            registry.machine_profiles.insert(
+                id,
+                ContentMachineProfileRecord {
+                    core,
+                    capacity_fields: facts.capacity_fields,
+                },
+            );
+        }
+        ContentDomain::AbilitySpell => {
+            registry.abilities_spells.insert(
+                id,
+                ContentAbilityRecord {
+                    core,
+                    cooldown_millis: facts.cooldown_millis,
+                },
+            );
+        }
+        ContentDomain::CreatureProfile => {
+            registry.creature_profiles.insert(
+                id,
+                ContentCreatureRecord {
+                    core,
+                    natural_types: facts.natural_types,
+                    move_ids: facts.move_ids,
+                },
+            );
+        }
+        ContentDomain::CreatureTypeChart => {
+            registry.creature_type_chart.insert(id, ContentTypedRecord { core });
+        }
+        ContentDomain::QuestGuild => {
+            registry.quests_guilds.insert(id, ContentTypedRecord { core });
+        }
+        ContentDomain::Economy => {
+            registry.economy.insert(id, ContentTypedRecord { core });
+        }
+        ContentDomain::CardforgeCard => {
+            registry.cardforge_cards.insert(id, ContentTypedRecord { core });
+        }
+        ContentDomain::CardforgePack => {
+            registry.cardforge_packs.insert(id, ContentTypedRecord { core });
+        }
+    }
+}
+
+fn canonical_registry_hash(registry: &ContentRuntimeRegistry) -> CanonicalHash {
+    let mut hasher = CanonicalHasher::new("blockwild.gameplay.content-runtime.v1");
+    hasher.write_u16(CONTENT_RUNTIME_SCHEMA_VERSION);
+    hasher.write_bytes(registry.manifest_hash.as_bytes());
+    hasher.write_str(&registry.source_revision);
+    hasher.write_u64(registry.len() as u64);
+    for domain in ALL_CONTENT_DOMAINS {
+        let records = records_for_domain(registry, domain);
+        hasher.write_str(domain.as_id());
+        hasher.write_u64(records.len() as u64);
+        for record in records {
+            hash_record(&mut hasher, record);
+        }
+    }
+    hasher.write_u64(registry.aliases.len() as u64);
+    for (alias, (domain, id)) in &registry.aliases {
+        hasher.write_str(alias);
+        hasher.write_str(domain.as_id());
+        hasher.write_str(id);
+    }
+    hasher.finish()
+}
+
+fn records_for_domain(registry: &ContentRuntimeRegistry, domain: ContentDomain) -> Vec<&ContentRecordCore> {
+    match domain {
+        ContentDomain::Item => registry.items.values().map(|record| &record.core).collect(),
+        ContentDomain::CraftingRecipe => registry.crafting_recipes.values().map(|record| &record.core).collect(),
+        ContentDomain::MachineRecipe => registry.machine_recipes.values().map(|record| &record.core).collect(),
+        ContentDomain::MachineProfile => registry.machine_profiles.values().map(|record| &record.core).collect(),
+        ContentDomain::AbilitySpell => registry.abilities_spells.values().map(|record| &record.core).collect(),
+        ContentDomain::CreatureProfile => registry.creature_profiles.values().map(|record| &record.core).collect(),
+        ContentDomain::CreatureTypeChart => registry
+            .creature_type_chart
+            .values()
+            .map(|record| &record.core)
+            .collect(),
+        ContentDomain::QuestGuild => registry.quests_guilds.values().map(|record| &record.core).collect(),
+        ContentDomain::Economy => registry.economy.values().map(|record| &record.core).collect(),
+        ContentDomain::CardforgeCard => registry.cardforge_cards.values().map(|record| &record.core).collect(),
+        ContentDomain::CardforgePack => registry.cardforge_packs.values().map(|record| &record.core).collect(),
+    }
+}
+
+fn hash_record(hasher: &mut CanonicalHasher, record: &ContentRecordCore) {
+    hasher.write_str(&record.id);
+    hasher.write_str(record.schema.as_id());
+    hasher.write_u32(record.content_version);
+    hasher.write_bytes(record.blob_hash.as_bytes());
+    hasher.write_u64(record.references.len() as u64);
+    for reference in &record.references {
+        hasher.write_str(reference.domain.as_id());
+        hasher.write_str(&reference.id);
+        hasher.write_str(&reference.path);
+    }
+    hash_resources(hasher, &record.resources.inputs);
+    hash_resources(hasher, &record.resources.outputs);
+}
+
+fn hash_resources(hasher: &mut CanonicalHasher, resources: &[ContentResourceAmount]) {
+    hasher.write_u64(resources.len() as u64);
+    for resource in resources {
+        match &resource.resource {
+            ContentResourceKey::ItemCode(code) => {
+                hasher.write_u16(0);
+                hasher.write_u32(*code);
+            }
+            ContentResourceKey::ItemChoice(codes) => {
+                hasher.write_u16(2);
+                hasher.write_u64(codes.len() as u64);
+                for code in codes {
+                    hasher.write_u32(*code);
+                }
+            }
+            ContentResourceKey::Symbolic(id) => {
+                hasher.write_u16(1);
+                hasher.write_str(id);
+            }
+        }
+        hasher.write_u32(resource.amount);
+        hasher.write_u16(u16::from(resource.consumed));
+    }
+}
+
+fn required_nonempty_string<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a str> {
+    required_nonempty_string_at(record, object, field, "$", blockers)
+}
+
+fn required_nonempty_string_at<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    base: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a str> {
+    let path = field_path(base, field);
+    let Some(value) = object.get(field) else {
+        missing_field(record, &path, "non-empty string", blockers);
+        return None;
+    };
+    let Some(value) = value.as_str() else {
+        invalid_type(record, &path, "non-empty string", value, blockers);
+        return None;
+    };
+    if !valid_symbol(value) {
+        invalid_value(record, &path, "1..160 non-control characters", value, blockers);
+        return None;
+    }
+    Some(value)
+}
+
+fn optional_string<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a str> {
+    optional_string_at(record, object, field, "$", blockers)
+}
+
+fn optional_string_at<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    base: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a str> {
+    let value = object.get(field)?;
+    if matches!(value, CanonicalJson::Null) {
+        return None;
+    }
+    let path = field_path(base, field);
+    let Some(value) = value.as_str() else {
+        invalid_type(record, &path, "string or null", value, blockers);
+        return None;
+    };
+    if !valid_symbol(value) {
+        invalid_value(record, &path, "1..160 non-control characters", value, blockers);
+        return None;
+    }
+    Some(value)
+}
+
+fn required_u32(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    minimum: u32,
+    maximum: u32,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<u32> {
+    required_u32_at(record, object, field, "$", minimum, maximum, blockers)
+}
+
+fn required_u32_at(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    base: &str,
+    minimum: u32,
+    maximum: u32,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<u32> {
+    let path = field_path(base, field);
+    let Some(value) = object.get(field) else {
+        missing_field(record, &path, "integer", blockers);
+        return None;
+    };
+    let Some(value) = json_u32(value, minimum, maximum) else {
+        invalid_type(record, &path, &format!("integer {minimum}..{maximum}"), value, blockers);
+        return None;
+    };
+    Some(value)
+}
+
+fn optional_u32(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    minimum: u32,
+    maximum: u32,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<u32> {
+    let value = object.get(field)?;
+    if matches!(value, CanonicalJson::Null) {
+        return None;
+    }
+    let Some(value) = json_u32(value, minimum, maximum) else {
+        invalid_type(
+            record,
+            &format!("$.{field}"),
+            &format!("integer {minimum}..{maximum}"),
+            value,
+            blockers,
+        );
+        return None;
+    };
+    Some(value)
+}
+
+fn optional_u64(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    minimum: u64,
+    maximum: u64,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<u64> {
+    let value = object.get(field)?;
+    let Some(value) = value
+        .as_u64()
+        .filter(|value| (*value >= minimum) && (*value <= maximum))
+    else {
+        invalid_type(
+            record,
+            &format!("$.{field}"),
+            &format!("integer {minimum}..{maximum}"),
+            value,
+            blockers,
+        );
+        return None;
+    };
+    Some(value)
+}
+
+fn required_number(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    minimum: f64,
+    maximum: f64,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<f64> {
+    required_number_at(record, object, field, "$", minimum, maximum, blockers)
+}
+
+fn required_number_at(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    base: &str,
+    minimum: f64,
+    maximum: f64,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<f64> {
+    let path = field_path(base, field);
+    let Some(value) = object.get(field) else {
+        missing_field(record, &path, "finite number", blockers);
+        return None;
+    };
+    let Some(number) = value
+        .as_f64()
+        .filter(|number| (*number >= minimum) && (*number <= maximum))
+    else {
+        invalid_type(
+            record,
+            &path,
+            &format!("finite number {minimum}..{maximum}"),
+            value,
+            blockers,
+        );
+        return None;
+    };
+    Some(number)
+}
+
+fn optional_number(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    minimum: f64,
+    maximum: f64,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<f64> {
+    let value = object.get(field)?;
+    let Some(number) = value
+        .as_f64()
+        .filter(|number| (*number >= minimum) && (*number <= maximum))
+    else {
+        invalid_type(
+            record,
+            &format!("$.{field}"),
+            &format!("finite number {minimum}..{maximum}"),
+            value,
+            blockers,
+        );
+        return None;
+    };
+    Some(number)
+}
+
+fn required_array<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a [CanonicalJson]> {
+    let Some(value) = object.get(field) else {
+        missing_field(record, &format!("$.{field}"), "array", blockers);
+        return None;
+    };
+    let Some(value) = value.as_array() else {
+        invalid_type(record, &format!("$.{field}"), "array", value, blockers);
+        return None;
+    };
+    Some(value)
+}
+
+fn optional_array<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a [CanonicalJson]> {
+    let value = object.get(field)?;
+    let Some(value) = value.as_array() else {
+        invalid_type(record, &format!("$.{field}"), "array", value, blockers);
+        return None;
+    };
+    Some(value)
+}
+
+fn required_object<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a BTreeMap<String, CanonicalJson>> {
+    let Some(value) = object.get(field) else {
+        missing_field(record, &format!("$.{field}"), "object", blockers);
+        return None;
+    };
+    let Some(value) = value.as_object() else {
+        invalid_type(record, &format!("$.{field}"), "object", value, blockers);
+        return None;
+    };
+    Some(value)
+}
+
+fn optional_object<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a BTreeMap<String, CanonicalJson>> {
+    let value = object.get(field)?;
+    let Some(value) = value.as_object() else {
+        invalid_type(record, &format!("$.{field}"), "object", value, blockers);
+        return None;
+    };
+    Some(value)
+}
+
+fn required_string_array(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Vec<String> {
+    parse_string_array(
+        record,
+        required_array(record, object, field, blockers),
+        &format!("$.{field}"),
+        blockers,
+    )
+}
+
+fn optional_string_array(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<Vec<String>> {
+    let values = optional_array(record, object, field, blockers)?;
+    Some(parse_string_array(
+        record,
+        Some(values),
+        &format!("$.{field}"),
+        blockers,
+    ))
+}
+
+fn parse_string_array(
+    record: &DecodedRecord,
+    values: Option<&[CanonicalJson]>,
+    path: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (index, value) in values.unwrap_or_default().iter().enumerate() {
+        let Some(value) = value.as_str().filter(|value| valid_symbol(value)) else {
+            invalid_type(
+                record,
+                &format!("{path}[{index}]"),
+                "bounded non-empty string",
+                value,
+                blockers,
+            );
+            continue;
+        };
+        if !seen.insert(value) {
+            invalid_value(record, &format!("{path}[{index}]"), "unique string", value, blockers);
+            continue;
+        }
+        output.push(value.to_owned());
+    }
+    output
+}
+
+fn item_stack(
+    record: &DecodedRecord,
+    value: Option<&CanonicalJson>,
+    path: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<(u32, u32)> {
+    let Some(value) = value else {
+        missing_field(record, path, "item stack object", blockers);
+        return None;
+    };
+    let Some(object) = value.as_object() else {
+        invalid_type(record, path, "item stack object", value, blockers);
+        return None;
+    };
+    let item = required_u32_at(record, object, "item", path, 1, u32::MAX, blockers)?;
+    let count = required_u32_at(record, object, "count", path, 1, MAX_ITEM_STACK, blockers)?;
+    Some((item, count))
+}
+
+fn symbolic_resource(
+    record: &DecodedRecord,
+    value: &CanonicalJson,
+    path: &str,
+    input: bool,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<ContentResourceAmount> {
+    let Some(object) = value.as_object() else {
+        invalid_type(record, path, "resource object", value, blockers);
+        return None;
+    };
+    let id = required_nonempty_string_at(record, object, "item", path, blockers)?;
+    let count = required_u32_at(record, object, "count", path, 1, MAX_ITEM_STACK, blockers)?;
+    let consumed = if input {
+        object.get("consume").and_then(CanonicalJson::as_bool).unwrap_or(true)
+    } else {
+        false
+    };
+    if object.contains_key("consume") && object.get("consume").and_then(CanonicalJson::as_bool).is_none() {
+        invalid_type(
+            record,
+            &format!("{path}.consume"),
+            "boolean",
+            object.get("consume").expect("field exists"),
+            blockers,
+        );
+    }
+    Some(ContentResourceAmount {
+        resource: ContentResourceKey::Symbolic(id.to_owned()),
+        amount: count,
+        consumed,
+    })
+}
+
+fn require_flow(record: &DecodedRecord, flow: &ContentResourceFlow, blockers: &mut Vec<ContentRuntimeBlocker>) {
+    if flow.inputs.is_empty() || !flow.inputs.iter().any(|input| input.consumed) || flow.outputs.is_empty() {
+        resource_error(
+            record,
+            "$.resources",
+            "one consumed positive input and one positive output",
+            &format!("{}/{}", flow.inputs.len(), flow.outputs.len()),
+            blockers,
+        );
+    }
+}
+
+fn aggregate_resources(resources: &mut Vec<ContentResourceAmount>) {
+    let mut grouped = BTreeMap::<(ContentResourceKey, bool), u32>::new();
+    for resource in resources.drain(..) {
+        let key = (resource.resource, resource.consumed);
+        let entry = grouped.entry(key).or_default();
+        *entry = entry.saturating_add(resource.amount);
+    }
+    *resources = grouped
+        .into_iter()
+        .map(|((resource, consumed), amount)| ContentResourceAmount {
+            resource,
+            amount,
+            consumed,
+        })
+        .collect();
+}
+
+fn push_item_resource(resources: &mut Vec<ContentResourceAmount>, item: u32, amount: u32, consumed: bool) {
+    resources.push(ContentResourceAmount {
+        resource: ContentResourceKey::ItemCode(item),
+        amount,
+        consumed,
+    });
+}
+
+fn push_reference(facts: &mut RecordFacts, domain: ContentDomain, id: String, path: &str) {
+    facts.references.push(ContentReference {
+        domain,
+        id,
+        path: path.to_owned(),
+    });
+}
+
+fn push_reference_choice<const N: usize>(facts: &mut RecordFacts, targets: [(ContentDomain, String); N], path: &str) {
+    facts.reference_choices.push(ContentReferenceChoice {
+        targets: targets.into_iter().collect(),
+        path: path.to_owned(),
+    });
+}
+
+fn validate_embedded_id(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    expected: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    validate_embedded_id_field(record, object, "id", expected, blockers);
+}
+
+fn validate_embedded_id_field(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    field: &str,
+    expected: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    if let Some(value) = required_nonempty_string(record, object, field, blockers)
+        && value != expected
+    {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::DescriptorMismatch,
+            ContentRuntimeStage::Invariants,
+            &format!("$.{field}"),
+            expected,
+            value,
+        ));
+    }
+}
+
+fn enum_value(
+    record: &DecodedRecord,
+    path: &str,
+    value: &str,
+    allowed: &[&str],
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    if !allowed.contains(&value) {
+        blockers.push(for_record(
+            record,
+            ContentRuntimeBlockerCode::InvalidEnum,
+            ContentRuntimeStage::Invariants,
+            path,
+            &allowed.join("|"),
+            value,
+        ));
+    }
+}
+
+fn seconds_to_millis(seconds: f64) -> u64 {
+    (seconds * 1_000.0).round() as u64
+}
+
+fn strip_prefix<'a>(value: &'a str, prefix: &str) -> &'a str {
+    value.strip_prefix(prefix).unwrap_or(value)
+}
+
+fn valid_symbol(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 160 && !value.chars().any(char::is_control)
+}
+
+fn valid_hex_color(value: &str) -> bool {
+    value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn json_u32(value: &CanonicalJson, minimum: u32, maximum: u32) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| (*value >= minimum) && (*value <= maximum))
+}
+
+fn field_path(base: &str, field: &str) -> String {
+    if base == "$" {
+        format!("$.{field}")
+    } else {
+        format!("{base}.{field}")
+    }
+}
+
+fn json_kind(value: &CanonicalJson) -> &'static str {
+    match value {
+        CanonicalJson::Null => "null",
+        CanonicalJson::Bool(_) => "boolean",
+        CanonicalJson::Number(_) => "number",
+        CanonicalJson::String(_) => "string",
+        CanonicalJson::Array(_) => "array",
+        CanonicalJson::Object(_) => "object",
+    }
+}
+
+fn missing_field(record: &DecodedRecord, path: &str, expected: &str, blockers: &mut Vec<ContentRuntimeBlocker>) {
+    blockers.push(for_record(
+        record,
+        ContentRuntimeBlockerCode::MissingField,
+        ContentRuntimeStage::Invariants,
+        path,
+        expected,
+        "missing",
+    ));
+}
+
+fn invalid_type(
+    record: &DecodedRecord,
+    path: &str,
+    expected: &str,
+    actual: &CanonicalJson,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    blockers.push(for_record(
+        record,
+        ContentRuntimeBlockerCode::InvalidType,
+        ContentRuntimeStage::Invariants,
+        path,
+        expected,
+        json_kind(actual),
+    ));
+}
+
+fn invalid_value(
+    record: &DecodedRecord,
+    path: &str,
+    expected: &str,
+    actual: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    blockers.push(for_record(
+        record,
+        ContentRuntimeBlockerCode::Range,
+        ContentRuntimeStage::Invariants,
+        path,
+        expected,
+        actual,
+    ));
+}
+
+fn resource_error(
+    record: &DecodedRecord,
+    path: &str,
+    expected: &str,
+    actual: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    blockers.push(for_record(
+        record,
+        ContentRuntimeBlockerCode::ResourceConservation,
+        ContentRuntimeStage::Invariants,
+        path,
+        expected,
+        actual,
+    ));
+}
+
+fn for_record(
+    record: &DecodedRecord,
+    code: ContentRuntimeBlockerCode,
+    stage: ContentRuntimeStage,
+    path: &str,
+    expected: &str,
+    actual: &str,
+) -> ContentRuntimeBlocker {
+    runtime_blocker(
+        code,
+        stage,
+        Some(record.domain),
+        Some(record.id.clone()),
+        path,
+        Some(expected.to_owned()),
+        Some(actual.to_owned()),
+    )
+}
+
+fn runtime_blocker(
+    code: ContentRuntimeBlockerCode,
+    stage: ContentRuntimeStage,
+    domain: Option<ContentDomain>,
+    id: Option<String>,
+    path: &str,
+    expected: Option<String>,
+    actual: Option<String>,
+) -> ContentRuntimeBlocker {
+    ContentRuntimeBlocker {
+        code,
+        stage,
+        domain,
+        id,
+        path: path.to_owned(),
+        expected,
+        actual,
+    }
+}
+
+fn sort_blockers(blockers: &mut [ContentRuntimeBlocker]) {
+    blockers.sort_by(|left, right| {
+        (left.stage, left.domain, &left.id, &left.path, left.code).cmp(&(
+            right.stage,
+            right.domain,
+            &right.id,
+            &right.path,
+            right.code,
+        ))
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ContentArtifact, compile_content_bundle, install_content_bundle};
+
+    fn artifact(domain: ContentDomain, id: &str, schema: &str, version: u16, json: &str) -> ContentArtifact {
+        ContentArtifact {
+            domain,
+            id: id.to_owned(),
+            schema_id: schema.to_owned(),
+            schema_version: version,
+            content_version: 1,
+            aliases: vec![format!("{}:{id}", domain.as_id())],
+            canonical_bytes: json.as_bytes().to_vec(),
+            unknown_extension_bytes: if id == "1" { vec![0, 0x80, 0xff, 7] } else { Vec::new() },
+        }
+    }
+
+    fn reference_fixture() -> Vec<ContentArtifact> {
+        vec![
+            artifact(
+                ContentDomain::Item,
+                "1",
+                "item-definition",
+                1,
+                r##"{"color":"#68a341","id":1,"maxStack":64,"name":"Grass Block"}"##,
+            ),
+            artifact(
+                ContentDomain::Item,
+                "2",
+                "item-definition",
+                1,
+                r##"{"color":"#895b35","id":2,"maxStack":64,"name":"Board"}"##,
+            ),
+            artifact(
+                ContentDomain::CraftingRecipe,
+                "board",
+                "crafting-recipe",
+                1,
+                r#"{"height":1,"id":"board","name":"Board","output":{"count":1,"item":2},"pattern":[1],"width":1}"#,
+            ),
+            artifact(
+                ContentDomain::MachineRecipe,
+                "furnace:1",
+                "furnace-recipe",
+                1,
+                r#"{"inputItem":1,"output":{"count":1,"item":2}}"#,
+            ),
+            artifact(
+                ContentDomain::MachineProfile,
+                "furnace",
+                "machine-profile",
+                1,
+                r#"{"inputItemIds":[1]}"#,
+            ),
+            artifact(
+                ContentDomain::AbilitySpell,
+                "move:gust",
+                "creature-move",
+                1,
+                r#"{"activeSeconds":0.1,"channel":"physical","cooldownSeconds":1,"exertionCost":0,"id":"gust","name":"Gust","packets":[{"share":1,"type":"wild"}],"power":1,"radius":1,"range":2,"recoverySeconds":0.2,"shape":"contact","target":"hostile","type":"wild","verticalTolerance":1,"windupSeconds":0.2,"worldImpact":"visual"}"#,
+            ),
+            artifact(
+                ContentDomain::CreatureProfile,
+                "fox",
+                "creature-profile",
+                1,
+                r#"{"captureProfile":"gentle","kind":"fox","moves":{"basicMoveId":"gust","unlocks":[{"level":1,"moveId":"gust"}]},"naturalTypes":["wild"],"stats":{"maximumLevel":50}}"#,
+            ),
+            artifact(
+                ContentDomain::CreatureTypeChart,
+                "type:wild",
+                "creature-type",
+                1,
+                r##"{"color":"#5a9d55","glyph":"W","id":"wild","name":"Wild"}"##,
+            ),
+            artifact(
+                ContentDomain::CreatureTypeChart,
+                "chart:wild",
+                "creature-type-chart",
+                1,
+                r#"{"resistedBy":[],"strongAgainst":[]}"#,
+            ),
+            artifact(
+                ContentDomain::QuestGuild,
+                "faction:field",
+                "faction-definition",
+                1,
+                r#"{"id":"field","name":"Field Folk","race":"human"}"#,
+            ),
+            artifact(
+                ContentDomain::Economy,
+                "commerce:grass",
+                "commerce-item",
+                1,
+                r#"{"baseValue":1,"category":"material","key":"grass","name":"Grass","stackLimit":64}"#,
+            ),
+            artifact(
+                ContentDomain::CardforgeCard,
+                "definition:card:test",
+                "tcg-card-definition",
+                1,
+                r#"{"abilities":[],"class":"creature","cost":1,"id":"card:test","name":"Field Fox","primaryType":"wild","rarity":"common","rulesRevision":1,"schema":1,"secondaryTypes":[]}"#,
+            ),
+            artifact(
+                ContentDomain::CardforgePack,
+                "set:test",
+                "tcg-set",
+                1,
+                r#"{"id":"test","name":"Test Set","symbol":"T"}"#,
+            ),
+        ]
+    }
+
+    fn installed(artifacts: Vec<ContentArtifact>) -> (ProductionContentManifest, MetadataBlobStore) {
+        let bundle = compile_content_bundle("content-runtime-fixture-v1", artifacts).expect("fixture compiles");
+        let mut store = MetadataBlobStore::default();
+        install_content_bundle(&bundle, &mut store).expect("fixture installs");
+        (bundle.manifest, store)
+    }
+
+    fn resign_manifest(manifest: &mut ProductionContentManifest) {
+        for domain in ALL_CONTENT_DOMAINS {
+            let entries = manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.domain == domain)
+                .collect::<Vec<_>>();
+            let mut hasher = CanonicalHasher::new("blockwild.gameplay.content-domain.v1");
+            hasher.write_str(domain.as_id());
+            hasher.write_u64(entries.len() as u64);
+            for entry in &entries {
+                hasher.write_str(&entry.id);
+                hasher.write_bytes(entry.blob_hash.as_bytes());
+                hasher.write_u32(entry.byte_length);
+            }
+            let digest = manifest.domains.get_mut(&domain).expect("all domains declared");
+            digest.count = entries.len() as u32;
+            digest.hash = hasher.finish();
+        }
+        let mut hasher = CanonicalHasher::new("blockwild.gameplay.content-manifest.v1");
+        hasher.write_u16(CONTENT_MANIFEST_SCHEMA_VERSION);
+        hasher.write_str(&manifest.source_revision);
+        hasher.write_u64(manifest.domains.len() as u64);
+        for (domain, digest) in &manifest.domains {
+            hasher.write_str(domain.as_id());
+            hasher.write_u32(digest.count);
+            hasher.write_bytes(digest.hash.as_bytes());
+        }
+        manifest.manifest_hash = hasher.finish();
+    }
+
+    #[test]
+    fn all_domains_materialize_with_exact_opaque_bytes() {
+        let (manifest, store) = installed(reference_fixture());
+        let (registry, report) = materialize_content_runtime(&manifest, &store).expect("valid registry");
+        assert_eq!(registry.len(), 13);
+        assert_eq!(report.installed_entries, 13);
+        assert_eq!(report.completed_stages, CONTENT_RUNTIME_STAGES);
+        assert_eq!(registry.items["1"].core.unknown_extension_bytes, [0, 0x80, 0xff, 7]);
+        assert_eq!(registry.crafting_recipes["board"].core.resources.inputs[0].amount, 1);
+        assert_eq!(registry.creature_profiles["fox"].natural_types, ["wild"]);
+        assert_eq!(registry.get_by_alias("item:1").expect("alias").id, "1");
+        let exact = include_str!("../fixtures/content-runtime-v1.txt");
+        let expected = [
+            format!("schema={}", report.schema_version),
+            format!("entries={}", report.installed_entries),
+            format!("manifest={}", report.manifest_hash.to_hex()),
+            format!("registry={}", report.registry_hash.to_hex()),
+            format!("references={}", report.references),
+            format!("executable_bytes={}", report.executable_bytes),
+            format!("opaque_extension_bytes={}", report.opaque_extension_bytes),
+        ]
+        .join("\n")
+            + "\n";
+        assert_eq!(exact, expected);
+    }
+
+    #[test]
+    fn install_is_atomic_on_invalid_json() {
+        let (manifest, store) = installed(reference_fixture());
+        let mut registry = ContentRuntimeRegistry::default();
+        registry.install(&manifest, &store).expect("initial install");
+        let original_hash = registry.registry_hash;
+        let mut invalid = reference_fixture();
+        invalid[0].canonical_bytes = br#"{"id":1,"id":1}"#.to_vec();
+        let (bad_manifest, bad_store) = installed(invalid);
+        let blockers = registry
+            .install(&bad_manifest, &bad_store)
+            .expect_err("duplicate key rejected");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.code == ContentRuntimeBlockerCode::InvalidJson)
+        );
+        assert_eq!(registry.registry_hash, original_hash);
+    }
+
+    #[test]
+    fn missing_dependency_and_free_output_fail_closed() {
+        let mut missing = reference_fixture();
+        missing[6].canonical_bytes = String::from_utf8_lossy(&missing[6].canonical_bytes)
+            .replace("\"wild\"", "\"void\"")
+            .into_bytes();
+        let (manifest, store) = installed(missing);
+        let blockers = materialize_content_runtime(&manifest, &store).expect_err("missing type rejected");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.code == ContentRuntimeBlockerCode::MissingDependency)
+        );
+
+        let mut free = reference_fixture();
+        free[2].canonical_bytes =
+            br#"{"height":1,"id":"board","name":"Board","output":{"count":1,"item":2},"pattern":[0],"width":1}"#
+                .to_vec();
+        let (manifest, store) = installed(free);
+        let blockers = materialize_content_runtime(&manifest, &store).expect_err("free output rejected");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.code == ContentRuntimeBlockerCode::ResourceConservation)
+        );
+    }
+
+    #[test]
+    fn parser_rejects_depth_trailing_and_non_finite_numbers() {
+        let nested = format!(
+            "{}0{}",
+            "[".repeat(MAX_CONTENT_JSON_DEPTH + 2),
+            "]".repeat(MAX_CONTENT_JSON_DEPTH + 2)
+        );
+        assert!(JsonParser::parse(nested.as_bytes()).is_err());
+        assert!(JsonParser::parse(b"{}x").is_err());
+        assert!(JsonParser::parse(b"1e9999").is_err());
+        assert_eq!(
+            JsonParser::parse(br#""\ud83d\udc09""#),
+            Ok(CanonicalJson::String("🐉".to_owned()))
+        );
+    }
+
+    #[test]
+    fn duplicate_alias_schema_and_enum_drift_are_rejected() {
+        let (mut manifest, store) = installed(reference_fixture());
+        let first = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.domain == ContentDomain::Item)
+            .expect("item");
+        let mut duplicate = first.clone();
+        duplicate.id = "3".to_owned();
+        manifest.entries.push(duplicate);
+        manifest
+            .entries
+            .sort_by(|left, right| (left.domain, &left.id).cmp(&(right.domain, &right.id)));
+        resign_manifest(&mut manifest);
+        let blockers = materialize_content_runtime(&manifest, &store).expect_err("alias duplication rejected");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.code == ContentRuntimeBlockerCode::DuplicateAlias)
+        );
+
+        let mut bad_schema = reference_fixture();
+        bad_schema[0].schema_version = 9;
+        let (manifest, store) = installed(bad_schema);
+        let blockers = materialize_content_runtime(&manifest, &store).expect_err("schema drift rejected");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.code == ContentRuntimeBlockerCode::UnsupportedSchema)
+        );
+
+        let mut bad_enum = reference_fixture();
+        bad_enum[0].canonical_bytes =
+            br##"{"color":"#68a341","id":1,"maxStack":64,"name":"Grass Block","rarity":"mythical"}"##.to_vec();
+        let (manifest, store) = installed(bad_enum);
+        let blockers = materialize_content_runtime(&manifest, &store).expect_err("enum drift rejected");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.code == ContentRuntimeBlockerCode::InvalidEnum)
+        );
+    }
+}
