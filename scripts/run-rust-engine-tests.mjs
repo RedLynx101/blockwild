@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsDirectory = resolve(repositoryRoot, "tests");
 const rustTests = readdirSync(testsDirectory, { withFileTypes: true })
-  .filter((entry) => entry.isFile() && /^(?:rust|renderer)-.+\.test\.(?:mjs|ts)$/.test(entry.name))
+  .filter((entry) => entry.isFile() && (
+    /^rust-.+\.test\.(?:mjs|ts)$/.test(entry.name)
+    || /^renderer-.+\.test\.(?:mjs|ts)$/.test(entry.name)
+  ))
   .map((entry) => `tests/${entry.name}`)
   .sort((left, right) => left.localeCompare(right, "en"));
 
