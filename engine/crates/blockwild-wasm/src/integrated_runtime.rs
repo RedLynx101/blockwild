@@ -6,7 +6,7 @@
 //! never interpreted as successful no-ops.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use blockwild_authority::BlockCatalogV1;
 use blockwild_engine::{
@@ -15,14 +15,15 @@ use blockwild_engine::{
     ENTITY_COMPATIBILITY_EXPORT_TYPE_V1, ENTITY_COMPATIBILITY_IMPORT_TYPE_V1, ENTITY_COMPATIBILITY_RECORD_TYPE_V1,
     INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1, IntegratedRuntimeBatchV2, IntegratedRuntimeConfigV2,
     IntegratedRuntimeError, IntegratedRuntimeIdentityV2, IntegratedRuntimeLegacyMigrationV1,
-    IntegratedRuntimeReceiptV2, IntegratedRuntimeV2, decode_content_install_page_v1, decode_entity_authority_export_v1,
-    decode_entity_authority_import_v2, decode_entity_command_batch_v1, decode_entity_compatibility_export_v1,
-    decode_entity_compatibility_import_v1, decode_gameplay_actor_grant_v1, decode_gameplay_batch_v1,
-    decode_network_agent_grant_v1, decode_network_command_release_v1, decode_network_delta_build_request_v1,
-    decode_network_peer_grant_v1, decode_network_peer_release_v1, decode_network_reconnect_request_v1,
-    decode_network_replication_record_v1, decode_runtime_persistence_dispatch_v1, decode_runtime_player_binding_v1,
-    encode_content_install_receipt_v1, encode_entity_authority_import_receipt_v1, encode_entity_event_batch_v1,
-    encode_gameplay_receipt_v1, encode_runtime_persistence_dispatch_receipt_v1, integrated_runtime_checkpoint_hash_v1,
+    IntegratedRuntimeReceiptV2, IntegratedRuntimeV2, RuntimeCommandCacheLookupV1, decode_content_install_page_v1,
+    decode_entity_authority_export_v1, decode_entity_authority_import_v2, decode_entity_command_batch_v1,
+    decode_entity_compatibility_export_v1, decode_entity_compatibility_import_v1, decode_gameplay_actor_grant_v1,
+    decode_gameplay_batch_v1, decode_network_agent_grant_v1, decode_network_command_release_v1,
+    decode_network_delta_build_request_v1, decode_network_peer_grant_v1, decode_network_peer_release_v1,
+    decode_network_reconnect_request_v1, decode_network_replication_record_v1, decode_runtime_persistence_dispatch_v1,
+    decode_runtime_player_binding_v1, encode_content_install_receipt_v1, encode_entity_authority_import_receipt_v1,
+    encode_entity_event_batch_v1, encode_gameplay_receipt_v1, encode_runtime_persistence_dispatch_receipt_v1,
+    integrated_runtime_checkpoint_hash_v1,
 };
 use blockwild_network::{InterestSelectionStatsV1, encode_network_checkpoint_v1, encode_network_delta_v1};
 use blockwild_persistence::{PersistenceDispatchOutcomeV1, PersistenceDispatchStatusV1, PersistenceRetryDirectiveV1};
@@ -39,16 +40,15 @@ use blockwild_runtime_wire::{
     RUNTIME_BULK_MAX_QUEUED_BYTES_V1, RuntimeBulkEncodedV1, RuntimeBulkRequestV1, RuntimeBulkResponseV1,
     RuntimeBulkSaveStageStateV1, RuntimeBulkStateV1, RuntimeCommandBatchV1, RuntimeCommandReceiptV1, RuntimeConfigV1,
     RuntimeDomainOperationV1, RuntimeDomainV1, RuntimeExtractionV1, RuntimeIdentityV1, RuntimeRequestV1,
-    RuntimeResponseV1, RuntimeRevisionV1, SIMULATION_PLAYER_BIND_RECEIPT_TYPE_V1, SIMULATION_PLAYER_BIND_TYPE_V1,
-    WireHash, decode_bulk_request_v1, decode_request_v1, encode_bulk_response_v1, encode_response_v1,
-    extraction_checksum_v1, wire_checksum_v1,
+    RuntimeResponseV1, RuntimeRevisionV1, SIMULATION_PLAYER_BIND_RECEIPT_TYPE_V2, SIMULATION_PLAYER_BIND_TYPE_V2,
+    WireHash, command_receipt_hash_v1, decode_bulk_request_v1, decode_request_v1, encode_bulk_response_v1,
+    encode_response_v1, extraction_checksum_v1, wire_checksum_v1,
 };
 use blockwild_types::{CanonicalHash, CanonicalHasher};
 use wasm_bindgen::prelude::*;
 
 const WORKER_EPOCH: u32 = 1;
 const WASM_ARTIFACT_ATTESTATION_PLACEHOLDER: &str = "loader-attested";
-const MAX_COMMAND_RECEIPTS: usize = 4_096;
 const ENTITY_EXTRACTION_SCHEMA_V3: u16 = 3;
 const ENTITY_EXTRACTION_HEADER_BYTES_V3: usize = 51;
 const MAX_ENTITY_EXTRACTION_RECORDS_V3: usize = 4_096;
@@ -78,19 +78,11 @@ const CAPABILITIES: [&str; 13] = [
     "network-authority-v1",
 ];
 
-#[derive(Clone)]
-struct CachedCommandReceiptV1 {
-    command_hash: WireHash,
-    receipt: RuntimeCommandReceiptV1,
-}
-
 #[derive(Default)]
 struct IntegratedRuntimeStoreV2 {
     next_handle: u32,
     runtimes: BTreeMap<u32, IntegratedRuntimeV2>,
     bulk_attachments: BTreeMap<(u32, u64), Vec<u8>>,
-    command_receipts: BTreeMap<(u32, String, String), CachedCommandReceiptV1>,
-    command_receipt_order: VecDeque<(u32, String, String)>,
 }
 
 impl IntegratedRuntimeStoreV2 {
@@ -188,23 +180,30 @@ pub fn blockwild_runtime_command_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8
     let Ok(request) = decode_request_v1(request_bytes) else {
         return Vec::new();
     };
-    let RuntimeRequestV1::Command {
-        request_id,
-        client_epoch,
-        batch,
-    } = request
-    else {
-        return encode_error(
-            request.request_id(),
-            request.client_epoch(),
-            "wrong-operation",
-            "command export requires a runtime command request",
-            None,
-        );
+    let (request_id, client_epoch, batch, recovery_only) = match request {
+        RuntimeRequestV1::Command {
+            request_id,
+            client_epoch,
+            batch,
+        } => (request_id, client_epoch, batch, false),
+        RuntimeRequestV1::RecoverCommand {
+            request_id,
+            client_epoch,
+            batch,
+        } => (request_id, client_epoch, batch, true),
+        request => {
+            return encode_error(
+                request.request_id(),
+                request.client_epoch(),
+                "wrong-operation",
+                "command export requires a normal or recovery command request",
+                None,
+            );
+        }
     };
     INTEGRATED_RUNTIMES.with(|store| {
         let mut store = store.borrow_mut();
-        let Some(runtime) = store.runtimes.get(&handle) else {
+        let Some(runtime) = store.runtimes.get(&handle).cloned() else {
             return encode_error(
                 request_id,
                 client_epoch,
@@ -214,24 +213,56 @@ pub fn blockwild_runtime_command_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8
             );
         };
         let current = wire_identity(&runtime.identity());
-        let cache_key = (handle, batch.actor_id.clone(), batch.idempotency_key.clone());
-        if let Some(cached) = store.command_receipts.get(&cache_key) {
-            let receipt = if cached.command_hash == batch.command_hash {
-                cached.receipt.clone()
-            } else {
-                rejected_command_receipt(
-                    &batch,
+        match runtime.lookup_runtime_command_receipt(&batch.actor_id, &batch.idempotency_key, batch.command_hash) {
+            RuntimeCommandCacheLookupV1::Exact(receipt) => {
+                if recovery_only && runtime_command_receipt_terminal_identity(&receipt) != &current {
+                    return encode_error(
+                        request_id,
+                        client_epoch,
+                        "idempotency-recovery-stale",
+                        "cached command receipt is not terminal at the restored authority identity",
+                        Some(current),
+                    );
+                }
+                return encode(RuntimeResponseV1::CommandReceipt {
+                    request_id,
+                    client_epoch,
+                    worker_epoch: WORKER_EPOCH,
+                    receipt: *receipt,
+                });
+            }
+            RuntimeCommandCacheLookupV1::Conflict if recovery_only => {
+                return encode_error(
+                    request_id,
+                    client_epoch,
                     "idempotency-conflict",
                     "idempotency key was reused for different command bytes",
-                    current,
-                )
-            };
-            return encode(RuntimeResponseV1::CommandReceipt {
-                request_id,
-                client_epoch,
-                worker_epoch: WORKER_EPOCH,
-                receipt,
-            });
+                    Some(current),
+                );
+            }
+            RuntimeCommandCacheLookupV1::Conflict => {
+                return encode(RuntimeResponseV1::CommandReceipt {
+                    request_id,
+                    client_epoch,
+                    worker_epoch: WORKER_EPOCH,
+                    receipt: rejected_command_receipt(
+                        &batch,
+                        "idempotency-conflict",
+                        "idempotency key was reused for different command bytes",
+                        current,
+                    ),
+                });
+            }
+            RuntimeCommandCacheLookupV1::Miss if recovery_only => {
+                return encode_error(
+                    request_id,
+                    client_epoch,
+                    "idempotency-recovery-miss",
+                    "restored runtime has no durable receipt for this recovery-only command",
+                    Some(current),
+                );
+            }
+            RuntimeCommandCacheLookupV1::Miss => {}
         }
         let receipt = if batch.expected != current {
             rejected_command_receipt(
@@ -241,38 +272,62 @@ pub fn blockwild_runtime_command_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8
                 current,
             )
         } else {
-            match dispatch_command(runtime, &batch) {
-                Ok((next, domain_receipts)) => {
+            match dispatch_command(&runtime, &batch) {
+                Ok((mut candidate, domain_receipts)) => {
                     let before = current;
-                    let after = wire_identity(&next.identity());
-                    let receipt_hash = accepted_receipt_hash(batch.command_hash, &before, &after, &domain_receipts);
-                    store.runtimes.insert(handle, next);
-                    RuntimeCommandReceiptV1::Accepted {
+                    let after = wire_identity(&candidate.identity());
+                    let mut receipt = RuntimeCommandReceiptV1::Accepted {
                         command_id: batch.command_id.clone(),
                         idempotency_key: batch.idempotency_key.clone(),
                         command_hash: batch.command_hash,
                         before,
                         after,
                         domain_receipts,
-                        receipt_hash,
+                        receipt_hash: WireHash::default(),
+                    };
+                    set_runtime_command_receipt_hash(&mut receipt);
+                    match candidate.cache_runtime_command_receipt(
+                        &batch.actor_id,
+                        &batch.idempotency_key,
+                        batch.command_hash,
+                        receipt.clone(),
+                    ) {
+                        Ok(()) => {
+                            store.runtimes.insert(handle, candidate);
+                            return encode(RuntimeResponseV1::CommandReceipt {
+                                request_id,
+                                client_epoch,
+                                worker_epoch: WORKER_EPOCH,
+                                receipt,
+                            });
+                        }
+                        Err(error) => rejected_command_receipt(
+                            &batch,
+                            "idempotency-receipt-capacity",
+                            error.message,
+                            wire_identity(&runtime.identity()),
+                        ),
                     }
                 }
                 Err((code, message)) => rejected_command_receipt(&batch, code, message, current),
             }
         };
-        store.command_receipts.insert(
-            cache_key.clone(),
-            CachedCommandReceiptV1 {
-                command_hash: batch.command_hash,
-                receipt: receipt.clone(),
-            },
-        );
-        store.command_receipt_order.push_back(cache_key);
-        while store.command_receipt_order.len() > MAX_COMMAND_RECEIPTS {
-            if let Some(expired) = store.command_receipt_order.pop_front() {
-                store.command_receipts.remove(&expired);
-            }
+        let mut metadata_candidate = runtime;
+        if let Err(error) = metadata_candidate.cache_runtime_command_receipt(
+            &batch.actor_id,
+            &batch.idempotency_key,
+            batch.command_hash,
+            receipt.clone(),
+        ) {
+            return encode_error(
+                request_id,
+                client_epoch,
+                "idempotency-receipt-capacity",
+                error.message,
+                Some(wire_identity(&metadata_candidate.identity())),
+            );
         }
+        store.runtimes.insert(handle, metadata_candidate);
         encode(RuntimeResponseV1::CommandReceipt {
             request_id,
             client_epoch,
@@ -346,6 +401,7 @@ pub fn blockwild_runtime_step_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8> {
                     commands_processed: u16::try_from(summary.processed_batches)
                         .expect("processed batches are bounded"),
                     commands_accepted: u16::try_from(summary.accepted_batches).expect("accepted batches are bounded"),
+                    action_receipts: summary.action_receipts,
                     replay_hash: wire_hash(summary.replay_hash),
                 })
             }
@@ -974,12 +1030,6 @@ pub fn blockwild_runtime_destroy_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8
         store
             .bulk_attachments
             .retain(|(runtime_handle, _), _| *runtime_handle != handle);
-        store
-            .command_receipts
-            .retain(|(runtime_handle, _, _), _| *runtime_handle != handle);
-        store
-            .command_receipt_order
-            .retain(|(runtime_handle, _, _)| *runtime_handle != handle);
         runtime.shutdown();
         encode(RuntimeResponseV1::Shutdown {
             request_id,
@@ -1016,7 +1066,13 @@ fn dispatch_command(
     let mut candidate = runtime.clone();
     let mut receipts = Vec::with_capacity(batch.operations.len());
     for (index, operation) in batch.operations.iter().enumerate() {
-        if operation.schema != 1 {
+        let expected_schema =
+            if operation.domain == RuntimeDomainV1::Simulation && operation.type_id == SIMULATION_PLAYER_BIND_TYPE_V2 {
+                2
+            } else {
+                1
+            };
+        if operation.schema != expected_schema {
             return Err((
                 "unsupported-domain-schema".into(),
                 format!(
@@ -1028,16 +1084,17 @@ fn dispatch_command(
             ));
         }
         let response = match (operation.domain, operation.type_id.as_str()) {
-            (RuntimeDomainV1::Simulation, SIMULATION_PLAYER_BIND_TYPE_V1) => {
+            (RuntimeDomainV1::Simulation, SIMULATION_PLAYER_BIND_TYPE_V2) => {
                 let binding = decode_runtime_player_binding_v1(&operation.payload)
                     .map_err(|error| (error.code.into(), error.message))?;
                 candidate
                     .bind_player(binding)
                     .map_err(|error| (error.code, error.message))?;
-                domain_operation(
+                domain_operation_with_schema(
                     RuntimeDomainV1::Simulation,
-                    SIMULATION_PLAYER_BIND_RECEIPT_TYPE_V1,
-                    domain_ack(*b"BWB5", operation, &candidate),
+                    SIMULATION_PLAYER_BIND_RECEIPT_TYPE_V2,
+                    2,
+                    domain_ack(*b"BWB6", operation, &candidate),
                 )
             }
             (RuntimeDomainV1::Entities, ENTITY_AUTHORITY_EXPORT_TYPE_V1) => {
@@ -1303,11 +1360,20 @@ fn dispatch_command(
 }
 
 fn domain_operation(domain: RuntimeDomainV1, type_id: &str, payload: Vec<u8>) -> RuntimeDomainOperationV1 {
+    domain_operation_with_schema(domain, type_id, 1, payload)
+}
+
+fn domain_operation_with_schema(
+    domain: RuntimeDomainV1,
+    type_id: &str,
+    schema: u16,
+    payload: Vec<u8>,
+) -> RuntimeDomainOperationV1 {
     let payload_hash = WireHash(wire_checksum_v1(&payload));
     RuntimeDomainOperationV1 {
         domain,
         type_id: type_id.into(),
-        schema: 1,
+        schema,
         payload,
         payload_hash,
     }
@@ -1346,20 +1412,19 @@ fn encode_reconnect_response(packet: Option<&[u8]>) -> Vec<u8> {
     payload
 }
 
-fn accepted_receipt_hash(
-    command_hash: WireHash,
-    before: &RuntimeIdentityV1,
-    after: &RuntimeIdentityV1,
-    receipts: &[RuntimeDomainOperationV1],
-) -> WireHash {
-    let mut payload = Vec::with_capacity(48 + receipts.len() * 16);
-    payload.extend_from_slice(&command_hash.0);
-    payload.extend_from_slice(&before.state_hash.0);
-    payload.extend_from_slice(&after.state_hash.0);
-    for receipt in receipts {
-        payload.extend_from_slice(&receipt.payload_hash.0);
+fn set_runtime_command_receipt_hash(receipt: &mut RuntimeCommandReceiptV1) {
+    let hash = command_receipt_hash_v1(receipt);
+    match receipt {
+        RuntimeCommandReceiptV1::Accepted { receipt_hash, .. }
+        | RuntimeCommandReceiptV1::Rejected { receipt_hash, .. } => *receipt_hash = hash,
     }
-    WireHash(wire_checksum_v1(&payload))
+}
+
+fn runtime_command_receipt_terminal_identity(receipt: &RuntimeCommandReceiptV1) -> &RuntimeIdentityV1 {
+    match receipt {
+        RuntimeCommandReceiptV1::Accepted { after, .. } => after,
+        RuntimeCommandReceiptV1::Rejected { current, .. } => current,
+    }
 }
 
 fn rejected_command_receipt(
@@ -1370,20 +1435,17 @@ fn rejected_command_receipt(
 ) -> RuntimeCommandReceiptV1 {
     let code = code.into();
     let message = message.into();
-    let mut payload = Vec::with_capacity(32 + code.len() + message.len());
-    payload.extend_from_slice(&batch.command_hash.0);
-    payload.extend_from_slice(&current.state_hash.0);
-    payload.extend_from_slice(code.as_bytes());
-    payload.extend_from_slice(message.as_bytes());
-    RuntimeCommandReceiptV1::Rejected {
+    let mut receipt = RuntimeCommandReceiptV1::Rejected {
         command_id: batch.command_id.clone(),
         idempotency_key: batch.idempotency_key.clone(),
         command_hash: batch.command_hash,
         code,
         message,
         current,
-        receipt_hash: WireHash(wire_checksum_v1(&payload)),
-    }
+        receipt_hash: WireHash::default(),
+    };
+    set_runtime_command_receipt_hash(&mut receipt);
+    receipt
 }
 
 fn canonical_hash(hash: WireHash) -> CanonicalHash {
@@ -3091,7 +3153,7 @@ mod tests {
             client_epoch: 1,
             expected: identity.clone(),
             after_revision: 0,
-            max_bytes: 8 * 1_048_576,
+            max_bytes: blockwild_runtime_wire::MAX_EXTRACTION_BYTES as u32,
         };
         let extracted = decode_response_v1(&blockwild_runtime_extract_v2(
             runtime_handle,
@@ -3215,6 +3277,240 @@ mod tests {
             ))
             .unwrap(),
             RuntimeResponseV1::Shutdown { .. }
+        ));
+    }
+
+    #[test]
+    fn durable_command_receipt_recovers_exactly_on_a_fresh_handle_and_never_replays_misses() {
+        let RuntimeResponseV1::Ready {
+            runtime_handle,
+            identity: before,
+            ..
+        } = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(180)).unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected ready")
+        };
+        let mut record = EntityCompatibilityRecord::new("cache:entity", "cache:entity", "cache-test");
+        record.class = EntityClass::Creature;
+        let payload = encode_entity_command_batch_v1(&EntityCommandBatch {
+            schema: ENTITY_COMMAND_SCHEMA,
+            sequence: 1,
+            expected_revision: 0,
+            tick: 0,
+            commands: vec![EntityCommand::Spawn {
+                record,
+                residency: EntityResidency::Hot,
+            }],
+        })
+        .unwrap();
+        let batch = seal_runtime_command_batch_v1(RuntimeCommandBatchV1 {
+            command_id: "cache-command".into(),
+            idempotency_key: "cache-command".into(),
+            actor_id: "cache-actor".into(),
+            expected: before.clone(),
+            operations: vec![domain_operation(
+                RuntimeDomainV1::Entities,
+                ENTITY_COMMAND_TYPE_V1,
+                payload,
+            )],
+            command_hash: WireHash::default(),
+        })
+        .unwrap();
+        let accepted_response = decode_response_v1(&blockwild_runtime_command_v2(
+            runtime_handle,
+            &encode_request_v1(&RuntimeRequestV1::Command {
+                request_id: 181,
+                client_epoch: 1,
+                batch: batch.clone(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::CommandReceipt { receipt: accepted, .. } = accepted_response else {
+            panic!("expected cached accepted receipt")
+        };
+        let RuntimeCommandReceiptV1::Accepted { after: terminal, .. } = &accepted else {
+            panic!("expected cached accepted receipt")
+        };
+        let terminal = terminal.clone();
+        let RuntimeResponseV1::Checkpoint {
+            checkpoint,
+            checkpoint_hash,
+            ..
+        } = decode_response_v1(&blockwild_runtime_export_save_v2(
+            runtime_handle,
+            &encode_request_v1(&RuntimeRequestV1::Checkpoint {
+                request_id: 182,
+                client_epoch: 1,
+                expected: terminal.clone(),
+            })
+            .unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected checkpoint")
+        };
+        assert!(matches!(
+            decode_response_v1(&blockwild_runtime_destroy_v2(
+                runtime_handle,
+                &encode_request_v1(&RuntimeRequestV1::Shutdown {
+                    request_id: 183,
+                    client_epoch: 1,
+                    expected: Some(terminal.clone()),
+                })
+                .unwrap(),
+            ))
+            .unwrap(),
+            RuntimeResponseV1::Shutdown { .. }
+        ));
+        let RuntimeResponseV1::Restored {
+            runtime_handle: restored_handle,
+            identity: restored_identity,
+            ..
+        } = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&RuntimeRequestV1::Restore {
+                request_id: 184,
+                client_epoch: 2,
+                expected_checkpoint_hash: checkpoint_hash,
+                checkpoint,
+            })
+            .unwrap(),
+        ))
+        .unwrap()
+        else {
+            panic!("expected restored runtime")
+        };
+        assert_eq!(restored_identity, terminal);
+
+        let exact = decode_response_v1(&blockwild_runtime_command_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::RecoverCommand {
+                request_id: 185,
+                client_epoch: 2,
+                batch: batch.clone(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            exact,
+            RuntimeResponseV1::CommandReceipt { receipt, .. } if receipt == accepted
+        ));
+
+        let mut miss_batch = batch.clone();
+        miss_batch.command_id = "cache-miss".into();
+        miss_batch.idempotency_key = "cache-miss".into();
+        miss_batch.command_hash = WireHash::default();
+        let miss_batch = seal_runtime_command_batch_v1(miss_batch).unwrap();
+        let miss = decode_response_v1(&blockwild_runtime_command_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::RecoverCommand {
+                request_id: 186,
+                client_epoch: 2,
+                batch: miss_batch,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            miss,
+            RuntimeResponseV1::Error { code, current: Some(current), .. }
+                if code == "idempotency-recovery-miss" && current == restored_identity
+        ));
+
+        let mut conflict_batch = batch.clone();
+        conflict_batch.command_id = "cache-conflict".into();
+        conflict_batch.command_hash = WireHash::default();
+        let conflict_batch = seal_runtime_command_batch_v1(conflict_batch).unwrap();
+        let conflict = decode_response_v1(&blockwild_runtime_command_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::RecoverCommand {
+                request_id: 187,
+                client_epoch: 2,
+                batch: conflict_batch,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            conflict,
+            RuntimeResponseV1::Error { code, current: Some(current), .. }
+                if code == "idempotency-conflict" && current == restored_identity
+        ));
+
+        let queued = decode_response_v1(&blockwild_runtime_step_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::Step {
+                request_id: 188,
+                client_epoch: 2,
+                expected: restored_identity.clone(),
+                monotonic_time_us: 1_000_000,
+                budget_us: 8_000,
+                inputs: Vec::new(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::StepResult {
+            identity: queued_identity,
+            ..
+        } = queued
+        else {
+            panic!("expected queued step")
+        };
+        let stepped = decode_response_v1(&blockwild_runtime_step_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::Step {
+                request_id: 189,
+                client_epoch: 2,
+                expected: queued_identity,
+                monotonic_time_us: 1_050_000,
+                budget_us: 8_000,
+                inputs: Vec::new(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::StepResult {
+            identity: advanced_identity,
+            ..
+        } = stepped
+        else {
+            panic!("expected advanced step")
+        };
+        assert_ne!(advanced_identity, restored_identity);
+
+        let ordinary_historical = decode_response_v1(&blockwild_runtime_command_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::Command {
+                request_id: 190,
+                client_epoch: 2,
+                batch: batch.clone(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            ordinary_historical,
+            RuntimeResponseV1::CommandReceipt { receipt, .. } if receipt == accepted
+        ));
+        let stale = decode_response_v1(&blockwild_runtime_command_v2(
+            restored_handle,
+            &encode_request_v1(&RuntimeRequestV1::RecoverCommand {
+                request_id: 191,
+                client_epoch: 2,
+                batch,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            stale,
+            RuntimeResponseV1::Error { code, current: Some(current), .. }
+                if code == "idempotency-recovery-stale" && current == advanced_identity
         ));
     }
 
@@ -3372,6 +3668,9 @@ mod tests {
         .unwrap();
         let binding_payload = encode_runtime_player_binding_v1(&RuntimePlayerBindingWireV1 {
             external_entity_id: "player:wasm".into(),
+            actor_id: "player:wasm".into(),
+            player_id: blockwild_types::PlayerId::new(1, 1),
+            creative_mode: true,
             radius: 0.35,
             standing_height: 1.8,
             crouching_height: 1.35,
@@ -3389,9 +3688,10 @@ mod tests {
             expected: identity,
             operations: vec![
                 domain_operation(RuntimeDomainV1::Entities, ENTITY_COMMAND_TYPE_V1, entity_payload),
-                domain_operation(
+                domain_operation_with_schema(
                     RuntimeDomainV1::Simulation,
-                    SIMULATION_PLAYER_BIND_TYPE_V1,
+                    SIMULATION_PLAYER_BIND_TYPE_V2,
+                    2,
                     binding_payload,
                 ),
             ],

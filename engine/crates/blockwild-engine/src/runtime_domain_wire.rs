@@ -15,11 +15,12 @@ use blockwild_entity::{
 use blockwild_gameplay::{
     ALL_CONTENT_DOMAINS, AcceptedReceipt, ActivityLease, ActorGrant, ActorRole, AuthorityIdentity, BattleAction,
     CardforgeCommand, CombatCommand, ContainerKey, ContainerKind, ContentArtifact, ContentDomain, ContentDomainDigest,
-    CraftCommand, Domain, ExpectedStack, FixedVec3, FurnaceAdvanceCommand, GameplayActor, GameplayBatch,
-    GameplayCommand, GameplayEvent, GameplayReceipt, GameplayRevision, Ingredient, InventoryCommand, MachineCommand,
-    MachineOperation, OpaquePayload, PacifyMethod, PrintingKey, ProgressionAction, ProgressionCommand, Rejection,
-    RejectionCode, ResourceDelta, ResourceEndpoint, ResourceKey, ResourceKind, Scope, SlotRef, StatDelta,
-    TransferCommand, WorldKey,
+    CraftCommand, CreateDropCustodyCommand, CreatePlayerCustodyCommand, Domain, ExpectedStack, FixedVec3,
+    FurnaceAdvanceCommand, GAMEPLAY_COMMAND_ADVANCE_SCHEDULE_TAG_V1, GameplayActor, GameplayBatch, GameplayCommand,
+    GameplayEvent, GameplayReceipt, GameplayRevision, GameplayScheduleAdvanceV1, Ingredient, InventoryCommand,
+    MachineCommand, MachineOperation, OpaquePayload, PacifyMethod, PrintingKey, ProgressionAction, ProgressionCommand,
+    Rejection, RejectionCode, RemoveEmptyDropCustodyCommand, ResourceDelta, ResourceEndpoint, ResourceKey,
+    ResourceKind, Scope, SlotRef, StatDelta, TransferCommand, WorldKey,
 };
 use blockwild_network::{
     AgentCapabilityGrantV1, AgentCapabilityV1, AgentLifecycleStatusV1, InterestDeltaBuildSourceV1,
@@ -48,7 +49,9 @@ const NETWORK_DELTA_BUILD_MAGIC: [u8; 4] = *b"BWD9";
 const NETWORK_RECONNECT_MAGIC: [u8; 4] = *b"BWC9";
 const NETWORK_PEER_RELEASE_MAGIC: [u8; 4] = *b"BWL9";
 const NETWORK_COMMAND_RELEASE_MAGIC: [u8; 4] = *b"BWM9";
-const PLAYER_BINDING_MAGIC: [u8; 4] = *b"BWB5";
+// BWB6 is the first binding packet that carries Rust-owned actor/player and
+// creative eligibility.  Never decode the older BWB5 layout as this shape.
+const PLAYER_BINDING_MAGIC: [u8; 4] = *b"BWB6";
 const PERSISTENCE_DISPATCH_MAGIC: [u8; 4] = *b"BWD8";
 const PERSISTENCE_DISPATCH_RECEIPT_MAGIC: [u8; 4] = *b"BWA8";
 const CONTENT_INSTALL_PAGE_MAGIC: [u8; 4] = *b"BWC7";
@@ -216,6 +219,9 @@ pub struct RuntimePersistenceDispatchReceiptWireV1 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuntimePlayerBindingWireV1 {
     pub external_entity_id: String,
+    pub actor_id: String,
+    pub player_id: PlayerId,
+    pub creative_mode: bool,
     pub radius: f64,
     pub standing_height: f64,
     pub crouching_height: f64,
@@ -241,6 +247,10 @@ impl RuntimePlayerBindingWireV1 {
         if self.external_entity_id.is_empty()
             || self.external_entity_id.len() > 512
             || self.external_entity_id.chars().any(char::is_control)
+            || self.actor_id.is_empty()
+            || self.actor_id.len() > 512
+            || self.actor_id.chars().any(char::is_control)
+            || self.player_id.packed() == 0
             || values.iter().any(|value| !value.is_finite() || *value <= 0.0)
             || !(0.1..=4.0).contains(&self.radius)
             || !(0.5..=8.0).contains(&self.standing_height)
@@ -265,6 +275,9 @@ pub fn encode_runtime_player_binding_v1(value: &RuntimePlayerBindingWireV1) -> R
     value.validate()?;
     let mut writer = Writer::default();
     writer.string(&value.external_entity_id)?;
+    writer.string(&value.actor_id)?;
+    writer.u64(value.player_id.packed());
+    writer.u8(u8::from(value.creative_mode));
     writer.f64(value.radius);
     writer.f64(value.standing_height);
     writer.f64(value.crouching_height);
@@ -280,6 +293,16 @@ pub fn decode_runtime_player_binding_v1(bytes: &[u8]) -> Result<RuntimePlayerBin
     let mut reader = Reader::new(unwrap(PLAYER_BINDING_MAGIC, bytes)?);
     let value = RuntimePlayerBindingWireV1 {
         external_entity_id: reader.string()?,
+        actor_id: reader.string()?,
+        player_id: {
+            let packed = reader.u64()?;
+            PlayerId::new(packed as u32, (packed >> 32) as u32)
+        },
+        creative_mode: match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(WireError::new("player-binding", "creative mode flag is not boolean")),
+        },
         radius: reader.f64()?,
         standing_height: reader.f64()?,
         crouching_height: reader.f64()?,
@@ -1195,6 +1218,12 @@ fn write_gameplay_command(writer: &mut Writer, value: &GameplayCommand) -> Resul
             writer.u8(4);
             write_cardforge_command(writer, value)?;
         }
+        GameplayCommand::AdvanceSchedule(value) => {
+            writer.u8(GAMEPLAY_COMMAND_ADVANCE_SCHEDULE_TAG_V1 as u8);
+            writer.u64(value.expected_tick);
+            writer.u64(value.to_tick);
+            writer.u16(value.machine_budget);
+        }
     }
     Ok(())
 }
@@ -1206,6 +1235,13 @@ fn read_gameplay_command(reader: &mut Reader<'_>) -> Result<GameplayCommand, Wir
         2 => Ok(GameplayCommand::Combat(read_combat_command(reader)?)),
         3 => Ok(GameplayCommand::Progression(read_progression_command(reader)?)),
         4 => Ok(GameplayCommand::Cardforge(read_cardforge_command(reader)?)),
+        tag if u16::from(tag) == GAMEPLAY_COMMAND_ADVANCE_SCHEDULE_TAG_V1 => {
+            Ok(GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+                expected_tick: reader.u64()?,
+                to_tick: reader.u64()?,
+                machine_budget: reader.u16()?,
+            }))
+        }
         _ => Err(WireError::new("gameplay-command", "unknown gameplay command domain")),
     }
 }
@@ -1245,6 +1281,34 @@ fn write_inventory_command(writer: &mut Writer, value: &InventoryCommand) -> Res
             }
             writer.u32(value.fuel_ticks_per_item);
         }
+        InventoryCommand::CreateDropCustody(value) => {
+            writer.u8(3);
+            write_slot_ref(writer, &value.source)?;
+            write_container_key(writer, &value.custody)?;
+            writer.flag(value.expected.is_some());
+            if let Some(expected) = &value.expected {
+                writer.u32(expected.item_code);
+                writer.hash(expected.metadata_hash);
+                writer.u32(expected.minimum_count);
+            }
+            writer.hash(value.request_hash);
+        }
+        InventoryCommand::RemoveEmptyDropCustody(value) => {
+            writer.u8(4);
+            write_container_key(writer, &value.custody)?;
+            writer.u64(value.expected_revision);
+        }
+        InventoryCommand::CreatePlayerCustody(value) => {
+            writer.u8(5);
+            write_container_key(writer, &value.inventory)?;
+            writer.u16(value.inventory_slots);
+            write_container_key(writer, &value.equipment)?;
+            writer.u16(value.equipment_slots);
+            writer.flag(value.back_slot.is_some());
+            if let Some(back_slot) = value.back_slot {
+                writer.u16(back_slot);
+            }
+        }
     }
     Ok(())
 }
@@ -1265,6 +1329,19 @@ fn read_inventory_command(reader: &mut Reader<'_>) -> Result<InventoryCommand, W
                 None
             },
         })),
+        4 => Ok(InventoryCommand::RemoveEmptyDropCustody(
+            RemoveEmptyDropCustodyCommand {
+                custody: read_container_key(reader)?,
+                expected_revision: reader.u64()?,
+            },
+        )),
+        5 => Ok(InventoryCommand::CreatePlayerCustody(CreatePlayerCustodyCommand {
+            inventory: read_container_key(reader)?,
+            inventory_slots: reader.u16()?,
+            equipment: read_container_key(reader)?,
+            equipment_slots: reader.u16()?,
+            back_slot: if reader.flag()? { Some(reader.u16()?) } else { None },
+        })),
         1 => Ok(InventoryCommand::Craft(CraftCommand {
             recipe_id: reader.string()?,
             quantity: reader.u16()?,
@@ -1284,6 +1361,20 @@ fn read_inventory_command(reader: &mut Reader<'_>) -> Result<InventoryCommand, W
                 None
             },
             fuel_ticks_per_item: reader.u32()?,
+        })),
+        3 => Ok(InventoryCommand::CreateDropCustody(CreateDropCustodyCommand {
+            source: read_slot_ref(reader)?,
+            custody: read_container_key(reader)?,
+            expected: if reader.flag()? {
+                Some(ExpectedStack {
+                    item_code: reader.u32()?,
+                    metadata_hash: reader.hash()?,
+                    minimum_count: reader.u32()?,
+                })
+            } else {
+                None
+            },
+            request_hash: reader.hash()?,
         })),
         _ => Err(WireError::new("inventory-command", "unknown inventory command tag")),
     }
@@ -3637,6 +3728,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gameplay_schedule_command_wire_uses_frozen_tag_and_rejects_unknown_tags() {
+        let state = blockwild_gameplay::GameplayState::new(WorldKey::new("universe", "surface"), 1);
+        let batch = GameplayBatch::new(
+            "schedule:8",
+            "schedule:8",
+            GameplayActor {
+                actor_id: "gameplay-scheduler".into(),
+                player_id: None,
+                entity_id: None,
+                role: ActorRole::System,
+            },
+            state.identity(),
+            vec![GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+                expected_tick: 7,
+                to_tick: 8,
+                machine_budget: blockwild_gameplay::MAX_SCHEDULE_MACHINE_ADVANCES_V1,
+            })],
+        );
+        let encoded = encode_gameplay_batch_v1(&batch).unwrap();
+        assert_eq!(decode_gameplay_batch_v1(&encoded).unwrap(), batch);
+
+        let mut writer = Writer::default();
+        writer.u8(u8::MAX);
+        let unknown_command = writer.finish();
+        let mut reader = Reader::new(&unknown_command);
+        assert_eq!(read_gameplay_command(&mut reader).unwrap_err().code, "gameplay-command");
+    }
+
+    #[test]
     fn entity_wire_round_trips_high_bytes_and_rejects_corruption() {
         let mut record = EntityCompatibilityRecord::new("mob:é߿", "specimen:1", "frostquill");
         record.location_id = LocationId::new(1, 1);
@@ -3932,6 +4052,29 @@ mod tests {
                 .unwrap(),
             receipt
         );
+    }
+
+    #[test]
+    fn player_binding_preserves_full_u64_player_identity() {
+        let binding = RuntimePlayerBindingWireV1 {
+            external_entity_id: "player:wide".into(),
+            actor_id: "actor:wide".into(),
+            player_id: PlayerId::new(0x1234_5678, 0xfedc_ba98),
+            creative_mode: true,
+            radius: 0.35,
+            standing_height: 1.8,
+            crouching_height: 1.35,
+            mass: 80.0,
+            walk_speed: 4.3,
+            sprint_speed: 6.2,
+            creative_flight_speed: 8.0,
+            maximum_oxygen_seconds: 15.0,
+        };
+
+        let encoded = encode_runtime_player_binding_v1(&binding).unwrap();
+
+        assert!(binding.player_id.packed() > 9_007_199_254_740_991);
+        assert_eq!(decode_runtime_player_binding_v1(&encoded).unwrap(), binding);
     }
 
     #[test]

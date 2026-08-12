@@ -7,7 +7,12 @@ import {
   rustIntegratedRuntimeBulkStateV1,
   type RustIntegratedRuntimeBulkRequestV1,
 } from "../app/game/rust-integrated-runtime-bulk-platform.ts";
-import { encodeRustIntegratedRuntimeResponseV1 } from "../app/game/rust-integrated-runtime-codec.ts";
+import {
+  createRustIntegratedRuntimeCommandBatchV1,
+  createRustIntegratedRuntimeDomainOperationV1,
+  decodeRustIntegratedRuntimeRequestV1,
+  encodeRustIntegratedRuntimeResponseV1,
+} from "../app/game/rust-integrated-runtime-codec.ts";
 import type { RustIntegratedRuntimeIdentityV1, RustIntegratedRuntimeResponseV1 } from "../app/game/rust-integrated-runtime-contract.ts";
 import { RustEngineLoader, type RustEngineWasmExports } from "../app/game/rust-engine-loader.ts";
 import { RUST_ENGINE_PROTOCOL_VERSION, RUST_ENGINE_SCHEMA_VERSION } from "../app/game/rust-engine-protocol.ts";
@@ -32,6 +37,7 @@ function encoded(response: RustIntegratedRuntimeResponseV1) {
 test("browser kernel attests the manifest-selected artifact instead of trusting Wasm self-reporting", async () => {
   const nativeSaveRequests: RustIntegratedRuntimeBulkRequestV1[] = [];
   let ordinaryBulkCalls = 0;
+  let recoveryCommandCalls = 0;
   const base: RustEngineWasmExports = {
     blockwild_protocol_version: () => RUST_ENGINE_PROTOCOL_VERSION,
     blockwild_schema_version: () => RUST_ENGINE_SCHEMA_VERSION,
@@ -55,7 +61,20 @@ test("browser kernel attests the manifest-selected artifact instead of trusting 
       instanceId: "native:9",
       capabilities: ["integrated-runtime-v1"],
     }),
-    blockwild_runtime_command_v2: () => new Uint8Array(),
+    blockwild_runtime_command_v2: (_handle: number, bytes: Uint8Array) => {
+      const request = decodeRustIntegratedRuntimeRequestV1(bytes);
+      assert.equal(request.type, "runtime-recover-command-v1");
+      recoveryCommandCalls += 1;
+      return encoded({
+        type: "runtime-error-v1",
+        requestId: request.requestId,
+        clientEpoch: request.clientEpoch,
+        workerEpoch: 1,
+        code: "idempotency-recovery-miss",
+        message: "fixture miss",
+        current: identity(),
+      });
+    },
     blockwild_runtime_step_v2: () => new Uint8Array(),
     blockwild_runtime_extract_v2: () => new Uint8Array(),
     blockwild_runtime_export_save_v2: () => new Uint8Array(),
@@ -113,6 +132,26 @@ test("browser kernel attests the manifest-selected artifact instead of trusting 
   assert.equal(response.type, "runtime-ready-v1");
   assert.equal(response.type === "runtime-ready-v1" ? response.artifactHash : null, ARTIFACT_HASH);
   assert.equal(response.type === "runtime-ready-v1" ? response.instanceId : null, "native:9");
+
+  const recovery = await kernel.handle({
+    type: "runtime-recover-command-v1",
+    requestId: 9,
+    clientEpoch: 1,
+    batch: createRustIntegratedRuntimeCommandBatchV1({
+      commandId: "recover:1",
+      idempotencyKey: "recover:1",
+      actorId: "fixture",
+      expected: identity(),
+      operations: [createRustIntegratedRuntimeDomainOperationV1({
+        domain: "world",
+        typeId: "fixture.operation",
+        schema: 1,
+        payload: Uint8Array.of(1),
+      })],
+    }),
+  });
+  assert.equal(recovery.type, "runtime-error-v1");
+  assert.equal(recoveryCommandCalls, 1, "operation 8 routes through the existing command Wasm export");
 
   const initialized = await kernel.handleBulk({
     type: "runtime-bulk-initialize-native-save-v1",

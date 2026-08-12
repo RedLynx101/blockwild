@@ -9,12 +9,15 @@
 
 export const RUST_INTEGRATED_RUNTIME_WIRE_V1 = 1 as const;
 export const RUST_INTEGRATED_RUNTIME_SCHEMA_V2 = 2 as const;
+/** Schema 3 adds bounded rising-edge action receipts to fixed-step responses. */
+export const RUST_INTEGRATED_RUNTIME_SCHEMA_V3 = 3 as const;
 export const RUST_INTEGRATED_RUNTIME_FIXED_STEP_US = 50_000;
 export const RUST_INTEGRATED_RUNTIME_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 export const RUST_INTEGRATED_RUNTIME_MAX_DOMAIN_PAYLOAD_BYTES = 1024 * 1024;
 export const RUST_INTEGRATED_RUNTIME_MAX_EXTRACTION_BYTES = 6 * 1024 * 1024;
 export const RUST_INTEGRATED_RUNTIME_MAX_OPERATIONS = 256;
 export const RUST_INTEGRATED_RUNTIME_MAX_INPUT_FRAMES = 128;
+export const RUST_INTEGRATED_RUNTIME_MAX_ACTION_RECEIPTS = RUST_INTEGRATED_RUNTIME_MAX_INPUT_FRAMES * 6;
 export const RUST_INTEGRATED_RUNTIME_MAX_PENDING_REQUESTS = 128;
 export const RUST_INTEGRATED_RUNTIME_MAX_IDEMPOTENCY_RECEIPTS = 4_096;
 
@@ -100,6 +103,34 @@ export type RustIntegratedRuntimeInputFrameV1 = Readonly<{
   flags: number;
 }>;
 
+export type RustIntegratedRuntimeInputActionKindV1 =
+  | "primary-attack"
+  | "secondary-use"
+  | "interact"
+  | "mount-toggle"
+  | "creative-flight-toggle"
+  | "drop";
+
+export type RustIntegratedRuntimeInputActionOutcomeV1 =
+  | "applied"
+  | "no-target"
+  | "ineligible"
+  | "empty-slot"
+  | "blocked";
+
+export type RustIntegratedRuntimeInputActionReceiptV1 = Readonly<{
+  sequence: number;
+  inputSequence: number;
+  tick: number;
+  kind: RustIntegratedRuntimeInputActionKindV1;
+  outcome: RustIntegratedRuntimeInputActionOutcomeV1;
+  selectedSlot: number;
+  authoritativeFlags: number;
+  /** Lossless packed generational identity. Zero means no resolved entity target. */
+  targetEntityId: bigint;
+  effectHash: string;
+}>;
+
 /**
  * A domain payload has exactly one Rust decoder selected by typeId + schema.
  * payloadHash covers the exact bytes, not an independently maintained DTO.
@@ -130,6 +161,13 @@ export type RustIntegratedRuntimeRequestV1 =
   }>
   | Readonly<{
     type: "runtime-command-v1";
+    requestId: number;
+    clientEpoch: number;
+    batch: RustIntegratedRuntimeCommandBatchV1;
+  }>
+  | Readonly<{
+    /** Lookup-only exact retry after an attested checkpoint restore. */
+    type: "runtime-recover-command-v1";
     requestId: number;
     clientEpoch: number;
     batch: RustIntegratedRuntimeCommandBatchV1;
@@ -238,6 +276,7 @@ export type RustIntegratedRuntimeResponseV1 =
     inputsApplied: number;
     commandsProcessed: number;
     commandsAccepted: number;
+    actionReceipts: readonly RustIntegratedRuntimeInputActionReceiptV1[];
     replayHash: string;
   }>
   | Readonly<{

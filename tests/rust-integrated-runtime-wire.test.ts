@@ -23,6 +23,10 @@ import {
   RustIntegratedRuntimeServiceError,
   RustIntegratedRuntimeServiceV1,
 } from "../app/game/rust-integrated-runtime-service.ts";
+import {
+  decodeRustIntegratedPlayerBindingV1,
+  encodeRustIntegratedPlayerBindingV1,
+} from "../app/game/rust-integrated-runtime-player.ts";
 
 const ZERO_HASH = "00000000000000000000000000000000";
 const ARTIFACT_HASH = "a".repeat(64);
@@ -90,6 +94,29 @@ function toHex(bytes: Uint8Array) {
 function fromHex(value: string) {
   return Uint8Array.from(Buffer.from(value, "hex"));
 }
+
+test("player binding preserves a full-width u64 identity above Number.MAX_SAFE_INTEGER", () => {
+  const playerId = BigInt("18364758542557525624");
+  const binding = Object.freeze({
+    externalEntityId: "player:wide",
+    actorId: "actor:wide",
+    playerId,
+    creativeMode: true,
+    radius: 0.35,
+    standingHeight: 1.8,
+    crouchingHeight: 1.35,
+    mass: 80,
+    walkSpeed: 4.3,
+    sprintSpeed: 6.2,
+    creativeFlightSpeed: 8,
+    maximumOxygenSeconds: 15,
+  });
+
+  const encoded = encodeRustIntegratedPlayerBindingV1(binding);
+
+  assert.deepEqual(decodeRustIntegratedPlayerBindingV1(encoded), binding);
+  assert.ok(playerId > BigInt(Number.MAX_SAFE_INTEGER));
+});
 
 function identity(tick = 0, stateHash = "1".repeat(32)): RustIntegratedRuntimeIdentityV1 {
   return Object.freeze({
@@ -247,7 +274,7 @@ test("all integrated response families are bounded and exact", () => {
   const responses: RustIntegratedRuntimeResponseV1[] = [
     { type: "runtime-ready-v1", requestId: 1, clientEpoch: 2, workerEpoch: 3, runtimeHandle: 17, identity: current, artifactHash: ARTIFACT_HASH, instanceId: "runtime:17", capabilities: CAPABILITIES },
     { type: "runtime-command-receipt-v1", requestId: 2, clientEpoch: 2, workerEpoch: 3, receipt: { status: "accepted", commandId: command().commandId, idempotencyKey: command().idempotencyKey, commandHash: command().commandHash, before: current, after: next, domainReceipts: [createRustIntegratedRuntimeDomainOperationV1({ domain: "world", typeId: "blockwild.world.receipt.r4.v1", schema: 1, payload: Uint8Array.from([0x80, 0xff]) })], receiptHash: ZERO_HASH } },
-    { type: "runtime-step-result-v1", requestId: 3, clientEpoch: 2, workerEpoch: 3, identity: next, fixedSteps: 1, inputsApplied: 2, commandsProcessed: 1, commandsAccepted: 1, replayHash: ZERO_HASH },
+    { type: "runtime-step-result-v1", requestId: 3, clientEpoch: 2, workerEpoch: 3, identity: next, fixedSteps: 1, inputsApplied: 2, commandsProcessed: 1, commandsAccepted: 1, actionReceipts: [{ sequence: 0x0102_0304, inputSequence: 7, tick: 1, kind: "creative-flight-toggle", outcome: "applied", selectedSlot: 4, authoritativeFlags: 3, targetEntityId: BigInt(0), effectHash: "ab".repeat(16) }], replayHash: ZERO_HASH },
     { type: "runtime-extraction-v1", requestId: 4, clientEpoch: 2, workerEpoch: 3, extraction: extraction(next, 8, { render: Uint8Array.from([1]), hud: Uint8Array.from([2]), audio: Uint8Array.from([3]), diagnostics: Uint8Array.from([0x80]) }) },
     { type: "runtime-checkpoint-v1", requestId: 5, clientEpoch: 2, workerEpoch: 3, identity: next, checkpoint: Uint8Array.from([0x80, 0xff]), checkpointHash: ZERO_HASH },
     { type: "runtime-restored-v1", requestId: 6, clientEpoch: 4, workerEpoch: 5, runtimeHandle: 18, identity: next, checkpointHash: ZERO_HASH, artifactHash: ARTIFACT_HASH, instanceId: "runtime:18", capabilities: CAPABILITIES },
@@ -266,6 +293,63 @@ test("all integrated response families are bounded and exact", () => {
     }),
     (error: unknown) => error instanceof RustIntegratedRuntimeCodecError && error.code === "extraction-hash",
   );
+});
+
+test("action receipt codec rejects unknown kinds and trailing bytes", () => {
+  const response: RustIntegratedRuntimeResponseV1 = {
+    type: "runtime-step-result-v1",
+    requestId: 31,
+    clientEpoch: 2,
+    workerEpoch: 3,
+    identity: identity(1),
+    fixedSteps: 1,
+    inputsApplied: 1,
+    commandsProcessed: 0,
+    commandsAccepted: 0,
+    actionReceipts: [{ sequence: 0x0102_0304, inputSequence: 9, tick: 1, kind: "interact", outcome: "applied", selectedSlot: 2, authoritativeFlags: 1, targetEntityId: BigInt("0xfedcba9876543210"), effectHash: "cd".repeat(16) }],
+    replayHash: ZERO_HASH,
+  };
+  const encoded = encodeRustIntegratedRuntimeResponseV1(response);
+  const sequence = Uint8Array.from([4, 3, 2, 1, 0, 0, 0, 0]);
+  const sequenceOffset = encoded.findIndex((_, index) => sequence.every((byte, relative) => encoded[index + relative] === byte));
+  assert.ok(sequenceOffset >= 44, "receipt sequence must be discoverable in the payload");
+  const unknown = encoded.slice();
+  unknown[sequenceOffset + 24] = 0xff;
+  unknown.set(fromHex(rustIntegratedRuntimeWireChecksumV1(unknown.subarray(44))), 28);
+  assert.throws(
+    () => decodeRustIntegratedRuntimeResponseV1(unknown),
+    (error: unknown) => error instanceof RustIntegratedRuntimeCodecError && error.code === "input-action-kind",
+  );
+
+  const trailing = new Uint8Array(encoded.byteLength + 1);
+  trailing.set(encoded);
+  trailing[trailing.byteLength - 1] = 0xaa;
+  new DataView(trailing.buffer).setUint32(24, trailing.byteLength - 44, true);
+  trailing.set(fromHex(rustIntegratedRuntimeWireChecksumV1(trailing.subarray(44))), 28);
+  assert.throws(
+    () => decodeRustIntegratedRuntimeResponseV1(trailing),
+    (error: unknown) => error instanceof RustIntegratedRuntimeCodecError && error.code === "trailing-bytes",
+  );
+});
+
+test("recovery command uses lookup-only operation 8 without changing sealed command bytes", () => {
+  const batch = command();
+  const request: RustIntegratedRuntimeRequestV1 = {
+    type: "runtime-recover-command-v1",
+    requestId: 41,
+    clientEpoch: 7,
+    batch,
+  };
+  const encoded = encodeRustIntegratedRuntimeRequestV1(request);
+  assert.equal(encoded[8], 8);
+  assert.deepEqual(decodeRustIntegratedRuntimeRequestV1(encoded), request);
+  const ordinary = encodeRustIntegratedRuntimeRequestV1({
+    type: "runtime-command-v1",
+    requestId: 41,
+    clientEpoch: 7,
+    batch,
+  });
+  assert.deepEqual(encoded.subarray(44), ordinary.subarray(44), "recovery intent is envelope control, not command semantics");
 });
 
 test("protocol-test service awaits and caches one deterministic receipt without claiming Wasm authority", async () => {
@@ -392,9 +476,11 @@ test("service fails closed when an awaited receipt regresses authority", async (
   assert.equal(service.diagnostics().state, "failed");
 });
 
-test("crashed commands stay indeterminate and every restored generation re-attests", async () => {
+test("attested restore reconciles the exact lost command before becoming ready", async () => {
   let generation = 0;
   const restoredIdentity = identity(12, "9".repeat(32));
+  let originalBatch: RustIntegratedRuntimeCommandBatchV1 | null = null;
+  let recoveryCalls = 0;
   const service = new RustIntegratedRuntimeServiceV1({
     mode: "production",
     expectedArtifactHash: ARTIFACT_HASH,
@@ -406,7 +492,10 @@ test("crashed commands stay indeterminate and every restored generation re-attes
           if (request.type === "runtime-create-v1") {
             return { type: "runtime-ready-v1", requestId: request.requestId, clientEpoch: request.clientEpoch, workerEpoch: thisGeneration, runtimeHandle: thisGeneration, identity: identity(), artifactHash: ARTIFACT_HASH, instanceId: `runtime:${thisGeneration}`, capabilities: CAPABILITIES };
           }
-          if (request.type === "runtime-command-v1") throw new Error("worker vanished after dispatch");
+          if (request.type === "runtime-command-v1") {
+            originalBatch = request.batch;
+            throw new Error("worker vanished after dispatch");
+          }
           if (request.type === "runtime-restore-v1") {
             return {
               type: "runtime-restored-v1",
@@ -419,6 +508,25 @@ test("crashed commands stay indeterminate and every restored generation re-attes
               artifactHash: thisGeneration === 2 ? "b".repeat(64) : ARTIFACT_HASH,
               instanceId: `runtime:${thisGeneration}`,
               capabilities: CAPABILITIES,
+            };
+          }
+          if (request.type === "runtime-recover-command-v1") {
+            recoveryCalls += 1;
+            return {
+              type: "runtime-command-receipt-v1",
+              requestId: request.requestId,
+              clientEpoch: request.clientEpoch,
+              workerEpoch: thisGeneration,
+              receipt: {
+                status: "accepted",
+                commandId: request.batch.commandId,
+                idempotencyKey: request.batch.idempotencyKey,
+                commandHash: request.batch.commandHash,
+                before: request.batch.expected,
+                after: restoredIdentity,
+                domainReceipts: [],
+                receiptHash: ZERO_HASH,
+              },
             };
           }
           throw new Error(`unexpected ${request.type}`);
@@ -435,7 +543,69 @@ test("crashed commands stay indeterminate and every restored generation re-attes
   assert.equal(service.isAuthoritative(), false);
   await service.restore(ZERO_HASH, Uint8Array.from([1, 2, 3]));
   assert.equal(service.isAuthoritative(), true);
-  await assert.rejects(service.command(batch), (error: unknown) => error instanceof RustIntegratedRuntimeServiceError && error.code === "indeterminate-command");
+  assert.equal(recoveryCalls, 1);
+  assert.deepEqual(originalBatch, batch);
+  assert.equal(service.diagnostics().indeterminateCommands, 0);
+  const recovered = await service.command(batch);
+  assert.equal(recovered.status, "accepted");
+  assert.equal(recoveryCalls, 1, "settled recovery receipt is served locally");
+  const altered = createRustIntegratedRuntimeCommandBatchV1({
+    ...batch,
+    commandId: `${batch.commandId}:changed`,
+  });
+  await assert.rejects(
+    service.command(altered),
+    (error: unknown) => error instanceof RustIntegratedRuntimeServiceError && error.code === "idempotency-conflict",
+  );
+});
+
+test("restore stays non-ready while reconciling and miss or stale remains indeterminate", async () => {
+  for (const recoveryCode of ["idempotency-recovery-miss", "idempotency-recovery-stale"] as const) {
+    let generation = 0;
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+    let recoveryStarted!: () => void;
+    const recoveryStartedPromise = new Promise<void>((resolve) => { recoveryStarted = resolve; });
+    const restoredIdentity = identity(20, "7".repeat(32));
+    const service = new RustIntegratedRuntimeServiceV1({
+      mode: "protocol-test",
+      transportFactory: () => {
+        generation += 1;
+        const thisGeneration = generation;
+        return {
+          async request(request): Promise<RustIntegratedRuntimeResponseV1> {
+            if (request.type === "runtime-create-v1") {
+              return { type: "runtime-ready-v1", requestId: request.requestId, clientEpoch: request.clientEpoch, workerEpoch: thisGeneration, runtimeHandle: thisGeneration, identity: identity(), artifactHash: "fixture", instanceId: `runtime:${thisGeneration}`, capabilities: CAPABILITIES };
+            }
+            if (request.type === "runtime-command-v1") throw new Error("lost response");
+            if (request.type === "runtime-restore-v1") {
+              return { type: "runtime-restored-v1", requestId: request.requestId, clientEpoch: request.clientEpoch, workerEpoch: thisGeneration, runtimeHandle: thisGeneration, identity: restoredIdentity, checkpointHash: request.expectedCheckpointHash, artifactHash: "fixture", instanceId: `runtime:${thisGeneration}`, capabilities: CAPABILITIES };
+            }
+            if (request.type === "runtime-recover-command-v1") {
+              recoveryStarted();
+              await recoveryGate;
+              return { type: "runtime-error-v1", requestId: request.requestId, clientEpoch: request.clientEpoch, workerEpoch: thisGeneration, code: recoveryCode, message: "fixture recovery refusal", current: restoredIdentity };
+            }
+            throw new Error(`unexpected ${request.type}`);
+          },
+          dispose() {},
+        };
+      },
+    });
+    await service.start(createRequest().config);
+    await assert.rejects(service.command(command()), (error: unknown) => error instanceof RustIntegratedRuntimeServiceError && error.code === "worker-failed");
+    const restoring = service.restore(ZERO_HASH, Uint8Array.from([1]));
+    await recoveryStartedPromise;
+    assert.throws(
+      () => service.step(1_000_000, 8_000, []),
+      (error: unknown) => error instanceof RustIntegratedRuntimeServiceError && error.code === "not-ready",
+      "no unrelated mutation can interleave while recovery receipt is unresolved",
+    );
+    releaseRecovery();
+    await assert.rejects(restoring, (error: unknown) => error instanceof RustIntegratedRuntimeServiceError && error.code === "indeterminate-command");
+    assert.equal(service.diagnostics().state, "failed");
+    assert.equal(service.diagnostics().indeterminateCommands, 1);
+  }
 });
 
 test("coarse command, fixed-step, and extraction paths stay within declared p95 budgets", async () => {
@@ -455,7 +625,7 @@ test("coarse command, fixed-step, and extraction paths stay within declared p95 
         }
         if (request.type === "runtime-step-v1") {
           clock += 2;
-          return { type: "runtime-step-result-v1", requestId: request.requestId, clientEpoch: request.clientEpoch, workerEpoch: 1, identity: current, fixedSteps: 1, inputsApplied: request.inputs.length, commandsProcessed: 0, commandsAccepted: 0, replayHash: ZERO_HASH };
+          return { type: "runtime-step-result-v1", requestId: request.requestId, clientEpoch: request.clientEpoch, workerEpoch: 1, identity: current, fixedSteps: 1, inputsApplied: request.inputs.length, commandsProcessed: 0, commandsAccepted: 0, actionReceipts: [], replayHash: ZERO_HASH };
         }
         if (request.type === "runtime-extract-v1") {
           clock += 2;

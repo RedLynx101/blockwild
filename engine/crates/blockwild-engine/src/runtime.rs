@@ -11,22 +11,27 @@ use std::fmt;
 use std::sync::Arc;
 
 use blockwild_authority::{
-    BlockCatalogV1, ChunkAuxiliaryDataV1, LiquidMetadataV1, ReadOriginV1, ReadSizeV1, SectionInstallV1,
-    WORLD_SECTION_CELL_COUNT_V1, WorldAddressV1 as AuthorityWorldAddressV1, WorldAuthorityStoreR4V1, WorldCellV1,
-    WorldChunkAddressV1 as AuthorityChunkAddressV1, WorldLiquidKindV1, WorldMutationBatchR4V1,
+    BlockCatalogV1, CellPositionV1, ChunkAuxiliaryDataV1, LiquidMetadataV1, ReadOriginV1, ReadSizeV1, SectionInstallV1,
+    WORLD_SECTION_CELL_COUNT_V1, WorldAddressV1 as AuthorityWorldAddressV1, WorldAuthorityStoreR4V1, WorldCellReadV1,
+    WorldCellV1, WorldChunkAddressV1 as AuthorityChunkAddressV1, WorldLiquidKindV1, WorldMutationBatchR4V1,
     WorldMutationReceiptR4V1, WorldReadPageV1, WorldSectionAddressV1, decode_compatibility_save_binary_v1,
     decode_world_authority_snapshot_r4_v1, encode_world_authority_snapshot_r4_v1,
 };
 use blockwild_entity::{
-    ENTITY_COMMAND_SCHEMA, EcologyJobQueue, EntityAuthority, EntityClass, EntityCommand, EntityCommandBatch,
-    EntityEventBatch, EntityResidency, EntityScheduler, PathJobQueue, PathJobSubmission, SimulationTier,
-    Vec3 as EntityVec3, decode_compatibility_record, decode_entity_authority_snapshot, ecology_sector_key,
-    encode_compatibility_record, encode_entity_authority_snapshot,
+    ActionState, ENTITY_COMMAND_SCHEMA, EcologyJobQueue, EntityAuthority, EntityClass, EntityCommand,
+    EntityCommandBatch, EntityCompatibilityRecord, EntityEventBatch, EntityResidency, EntityScheduler, MovementMode,
+    PathJobQueue, PathJobSubmission, SimulationTier, Vec3 as EntityVec3, decode_compatibility_record,
+    decode_entity_authority_snapshot, ecology_sector_key, encode_compatibility_record,
+    encode_entity_authority_snapshot,
 };
 use blockwild_gameplay::{
-    CombatCommand, ContentArtifact, ContentDomain, ContentDomainDigest, GameplayAuthority, GameplayBatch,
-    GameplayReceipt, GameplayState, MachineCommand, MetadataBlobStore, WorldKey, compile_content_bundle,
-    decode_gameplay_authority_snapshot, install_content_bundle,
+    ActorGrant, ActorRole, CombatCommand, ContainerKey, ContainerKind, ContentArtifact, ContentDomain,
+    ContentDomainDigest, CreatePlayerCustodyCommand, ExpectedStack, FixedVec3, FixedWorldVec3V1, GameplayActor,
+    GameplayAuthority, GameplayBatch, GameplayCommand, GameplayReceipt, GameplayScheduleAdvanceV1, GameplayState,
+    InventoryCommand, MetadataBlobStore, PlayerDropStageRequestV1, PlayerInventoryBindingV1, RotationMicroturnsV1,
+    WorldKey, WorldViewAcceptedReceiptV1, WorldViewAuthorityV1, WorldViewBatchV1, WorldViewCommandV1,
+    WorldViewReceiptV1, compile_content_bundle, decode_gameplay_authority_snapshot, install_content_bundle,
+    stage_player_drop_v1,
 };
 use blockwild_generation::{
     Block as GeneratedBlock, ChunkPayloadV2, GenerateChunkRequestV2, GenerationDiagnostics, GenerationOutcome,
@@ -49,11 +54,15 @@ use blockwild_persistence::{
     encode_checkpoint,
 };
 use blockwild_runtime_wire::{
-    MAX_INPUT_FRAMES, RUNTIME_BULK_MAX_ATTACHMENT_BYTES_V1, RUNTIME_BULK_MAX_SAVE_CHUNKS_V1,
-    RUNTIME_BULK_SAVE_CHUNK_BYTES_V1, RUNTIME_INPUT_BUTTON_ASCEND_V1, RUNTIME_INPUT_BUTTON_CROUCH_V1,
-    RUNTIME_INPUT_BUTTON_DESCEND_V1, RUNTIME_INPUT_BUTTON_JUMP_V1, RUNTIME_INPUT_BUTTON_MASK_V1,
-    RUNTIME_INPUT_BUTTON_SPRINT_V1, RUNTIME_INPUT_FLAG_CREATIVE_V1, RUNTIME_INPUT_FLAG_FLYING_V1,
-    RUNTIME_INPUT_FLAG_MASK_V1, RUNTIME_INPUT_LIVE_MOVEMENT_BUTTON_MASK_V1, RuntimeInputFrameV1,
+    MAX_INPUT_FRAMES, MAX_WIRE_BYTES, RUNTIME_BULK_MAX_ATTACHMENT_BYTES_V1, RUNTIME_BULK_MAX_SAVE_CHUNKS_V1,
+    RUNTIME_BULK_SAVE_CHUNK_BYTES_V1, RUNTIME_INPUT_BUTTON_ASCEND_V1, RUNTIME_INPUT_BUTTON_CREATIVE_FLIGHT_TOGGLE_V1,
+    RUNTIME_INPUT_BUTTON_CROUCH_V1, RUNTIME_INPUT_BUTTON_DESCEND_V1, RUNTIME_INPUT_BUTTON_DROP_V1,
+    RUNTIME_INPUT_BUTTON_INTERACT_V1, RUNTIME_INPUT_BUTTON_JUMP_V1, RUNTIME_INPUT_BUTTON_MASK_V1,
+    RUNTIME_INPUT_BUTTON_MOUNT_TOGGLE_V1, RUNTIME_INPUT_BUTTON_PRIMARY_ATTACK_V1,
+    RUNTIME_INPUT_BUTTON_SECONDARY_USE_V1, RUNTIME_INPUT_BUTTON_SPRINT_V1, RUNTIME_INPUT_FLAG_CREATIVE_V1,
+    RUNTIME_INPUT_FLAG_FLYING_V1, RUNTIME_INPUT_FLAG_MASK_V1, RUNTIME_INPUT_FLAG_MOUNTED_V1, RuntimeCommandReceiptV1,
+    RuntimeInputActionKindV1, RuntimeInputActionOutcomeV1, RuntimeInputActionReceiptV1, RuntimeInputFrameV1, WireHash,
+    decode_command_receipt_v1, encode_command_receipt_v1, validate_command_receipt_hash_v1,
 };
 use blockwild_simulation::{
     AirZoneTopologyJobV1, AirZoneTopologyResultV1, ContractError, GravityProfileV1, LiquidFrontierResultV1,
@@ -63,12 +72,15 @@ use blockwild_simulation::{
     Vec3 as SimulationVec3, WorldAddressV1 as SimulationWorldAddressV1, WorldIdentityV1, WorldReadWindowV1,
     WorldRevisionV1, find_path, solve_air_zones, step_liquid_frontier, step_physics,
 };
-use blockwild_types::{CanonicalHash, CanonicalHasher, EntityId, seed_stream};
+use blockwild_types::{CanonicalHash, CanonicalHasher, EntityId, PlayerId, seed_stream};
 
 use crate::{
     ContentInstallPageWireV1, ContentInstallReceiptStatusV1, ContentInstallReceiptWireV1,
-    EntityAuthorityImportReceiptWireV1, EntityCompatibilityImportWireV1, RuntimePersistenceDispatchReceiptWireV1,
-    RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1,
+    EntityAuthorityImportReceiptWireV1, EntityCompatibilityImportWireV1, PlayerBindingStageRequestV1,
+    RuntimePersistenceDispatchReceiptWireV1, RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1,
+    WorldViewExtractionInputV1, collect_world_view_extraction_v1, decode_world_view_native_record_v1,
+    encode_world_view_native_record_v1, initialize_world_view_authority_v1, stage_player_binding_v1,
+    stage_world_view_batches_v1, validate_world_view_runtime_links_v1,
 };
 
 pub const INTEGRATED_RUNTIME_SCHEMA_V2: u16 = 2;
@@ -78,6 +90,7 @@ pub const INTEGRATED_RUNTIME_MAX_BATCHES_PER_STEP: usize = 32;
 pub const INTEGRATED_RUNTIME_MAX_DOMAIN_BATCHES: usize = 256;
 pub const INTEGRATED_RUNTIME_MAX_REPLAY_ENTRIES: usize = 8_192;
 pub const INTEGRATED_RUNTIME_MAX_IDEMPOTENCY_RECEIPTS: usize = 4_096;
+pub const INTEGRATED_RUNTIME_MAX_COMMAND_RECEIPT_CACHE_BYTES_V1: usize = 4 * 1024 * 1024;
 pub const INTEGRATED_RUNTIME_MAX_INPUT_LEAD_TICKS: u64 = 256;
 pub const INTEGRATED_RUNTIME_MAX_EFFECT_EVENTS: usize = 256;
 pub const INTEGRATED_RUNTIME_MAX_MACHINES_PER_STEP: usize = 64;
@@ -95,7 +108,7 @@ pub const INTEGRATED_RUNTIME_MAX_ENTITY_SCHEDULE_JOBS_V1: usize = 256;
 pub const INTEGRATED_RUNTIME_MAX_ECOLOGY_SCHEDULE_JOBS_V1: usize = 64;
 pub const INTEGRATED_RUNTIME_MAX_PATH_SCHEDULE_JOBS_V1: usize = 64;
 pub const INTEGRATED_RUNTIME_ECOLOGY_CADENCE_TICKS_V1: u64 = 20;
-pub const INTEGRATED_RUNTIME_NATIVE_DOMAIN_COUNT_V1: u16 = 5;
+pub const INTEGRATED_RUNTIME_NATIVE_DOMAIN_COUNT_V1: u16 = 6;
 const NATIVE_WORLD_RECORD_ID_V1: &str = "rust-world-r4-v1";
 const NATIVE_ENTITY_RECORD_ID_V2: &str = "rust-entity-r6-v2";
 const NATIVE_GAMEPLAY_RECORD_ID_V1: &str = "rust-gameplay-r7-v1";
@@ -104,6 +117,8 @@ const NATIVE_CONTENT_RECORD_ID_V1: &str = "rust-content-registry-v1";
 const NATIVE_RECORD_MAGIC_V1: &[u8; 4] = b"BWNR";
 const NATIVE_RECORD_SCHEMA_V1: u16 = 1;
 const NATIVE_RUNTIME_MAGIC_V1: &[u8; 4] = b"BWRC";
+const NATIVE_RUNTIME_CORE_SCHEMA_V2: u16 = 2;
+const NATIVE_RUNTIME_CORE_SCHEMA_V3: u16 = 3;
 const NATIVE_CONTENT_MAGIC_V1: &[u8; 4] = b"BWCT";
 const NATIVE_CHECKPOINT_MAGIC_V1: &[u8; 4] = b"BWCK";
 const NATIVE_CHECKPOINT_SCHEMA_V1: u16 = 1;
@@ -115,6 +130,7 @@ const NATIVE_CHECKPOINT_MAX_BYTES_V1: usize = 8 * 1024 * 1024 - 1024;
 const NATIVE_EXTENSION_MAX_BYTES_V1: usize = 64 * 1024;
 const NATIVE_CHECKPOINT_MAX_RECORDS_V1: usize = 8;
 const HYDRATION_TRANSFER_TOKEN_BASE_V1: u64 = 4_500_000_000_000_000;
+const GAMEPLAY_SCHEDULER_ACTOR_ID_V1: &str = "gameplay-scheduler";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -148,6 +164,14 @@ pub struct IntegratedRuntimePlayerStateV2 {
     pub buttons: u32,
     pub flags: u8,
     pub last_input_sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IntegratedRuntimeActionTargetV1 {
+    Entity(EntityId),
+    Block(CellPositionV1),
+    Unloaded,
+    None,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -220,6 +244,7 @@ pub struct IntegratedRuntimeBatchV2 {
     pub world: Vec<WorldMutationBatchR4V1>,
     pub entities: Vec<EntityCommandBatch>,
     pub gameplay: Vec<GameplayBatch>,
+    pub world_view: Vec<WorldViewBatchV1>,
     pub persistence: Vec<Transaction>,
     /** Present on every BWRQ command; legacy native callers remain explicit. */
     pub reliability: Option<IntegratedRuntimeReliabilityV2>,
@@ -243,6 +268,7 @@ impl IntegratedRuntimeBatchV2 {
             world: Vec::new(),
             entities: Vec::new(),
             gameplay: Vec::new(),
+            world_view: Vec::new(),
             persistence: Vec::new(),
             reliability: None,
         }
@@ -275,7 +301,11 @@ impl IntegratedRuntimeBatchV2 {
             validate_label(&reliability.actor_id, "actor id")?;
             validate_label(&reliability.idempotency_key, "idempotency key")?;
         }
-        let count = self.world.len() + self.entities.len() + self.gameplay.len() + self.persistence.len();
+        let count = self.world.len()
+            + self.entities.len()
+            + self.gameplay.len()
+            + self.world_view.len()
+            + self.persistence.len();
         if count == 0 || count > INTEGRATED_RUNTIME_MAX_DOMAIN_BATCHES {
             return Err(IntegratedRuntimeError::new(
                 "batch-shape",
@@ -294,6 +324,7 @@ pub struct IntegratedRuntimeAcceptedV2 {
     pub world: Vec<WorldMutationReceiptR4V1>,
     pub entities: Vec<EntityEventBatch>,
     pub gameplay: Vec<GameplayReceipt>,
+    pub world_view: Vec<WorldViewAcceptedReceiptV1>,
     pub persistence: Vec<JournalCommitReceipt>,
 }
 
@@ -307,7 +338,7 @@ pub struct IntegratedRuntimeRejectionV2 {
 
 #[derive(Clone, Debug)]
 pub enum IntegratedRuntimeReceiptV2 {
-    Accepted(IntegratedRuntimeAcceptedV2),
+    Accepted(Box<IntegratedRuntimeAcceptedV2>),
     Rejected(IntegratedRuntimeRejectionV2),
 }
 
@@ -366,13 +397,14 @@ impl IntegratedReplayDigestV2 {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IntegratedRuntimeStepSummaryV2 {
     pub tick: u64,
     pub fixed_steps: u32,
     pub processed_batches: u32,
     pub accepted_batches: u32,
     pub inputs_applied: u32,
+    pub action_receipts: Vec<RuntimeInputActionReceiptV1>,
     pub state_hash: CanonicalHash,
     pub replay_hash: CanonicalHash,
 }
@@ -474,6 +506,7 @@ enum IntegratedRuntimeNativeRecordKindV1 {
     Gameplay = 3,
     Runtime = 4,
     Content = 5,
+    WorldView = 6,
 }
 
 impl IntegratedRuntimeNativeRecordKindV1 {
@@ -483,6 +516,7 @@ impl IntegratedRuntimeNativeRecordKindV1 {
         Self::Gameplay,
         Self::Runtime,
         Self::Content,
+        Self::WorldView,
     ];
 
     fn from_tag(tag: u8) -> Result<Self, IntegratedRuntimeError> {
@@ -492,6 +526,7 @@ impl IntegratedRuntimeNativeRecordKindV1 {
             3 => Ok(Self::Gameplay),
             4 => Ok(Self::Runtime),
             5 => Ok(Self::Content),
+            6 => Ok(Self::WorldView),
             _ => Err(IntegratedRuntimeError::new(
                 "native-record-kind",
                 "native save record kind is unknown",
@@ -506,6 +541,10 @@ impl IntegratedRuntimeNativeRecordKindV1 {
             Self::Gameplay => (RecordKind::ActorDigest, NATIVE_GAMEPLAY_RECORD_ID_V1),
             Self::Runtime => (RecordKind::Player, NATIVE_RUNTIME_RECORD_ID_V1),
             Self::Content => (RecordKind::SettingsReference, NATIVE_CONTENT_RECORD_ID_V1),
+            Self::WorldView => (
+                RecordKind::MapKnowledge,
+                crate::INTEGRATED_RUNTIME_WORLD_VIEW_RECORD_ID_V1,
+            ),
         }
     }
 }
@@ -530,6 +569,20 @@ struct IntegratedRuntimeContentSnapshotV1 {
 
 type RuntimeContentIndexV1 = BTreeMap<(ContentDomain, String), CanonicalHash>;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IntegratedRuntimeCommandReceiptCacheEntryV1 {
+    command_hash: WireHash,
+    receipt: RuntimeCommandReceiptV1,
+    encoded_receipt: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeCommandCacheLookupV1 {
+    Miss,
+    Exact(Box<RuntimeCommandReceiptV1>),
+    Conflict,
+}
+
 #[derive(Clone, Debug)]
 struct IntegratedRuntimeCoreSnapshotV1 {
     config: IntegratedRuntimeConfigV2,
@@ -548,7 +601,11 @@ struct IntegratedRuntimeCoreSnapshotV1 {
     queued_inputs: VecDeque<RuntimeInputFrameV1>,
     last_input_sequence: Option<u64>,
     last_applied_input: Option<RuntimeInputFrameV1>,
+    next_action_sequence: u64,
     replay: VecDeque<IntegratedRuntimeReplayEntryV2>,
+    command_receipts: BTreeMap<(String, String), IntegratedRuntimeCommandReceiptCacheEntryV1>,
+    command_receipt_order: VecDeque<(String, String)>,
+    command_receipt_bytes: usize,
     compatibility_journal: JournalState,
     unknown_extension_bytes: Vec<u8>,
 }
@@ -587,6 +644,7 @@ pub struct IntegratedRuntimeV2 {
     generation: Arc<GenerationService>,
     entities: EntityAuthority,
     gameplay: GameplayAuthority,
+    world_view: WorldViewAuthorityV1,
     gameplay_content_store: MetadataBlobStore,
     gameplay_content_index: RuntimeContentIndexV1,
     content_stage: Option<IntegratedRuntimeContentStageV1>,
@@ -595,6 +653,7 @@ pub struct IntegratedRuntimeV2 {
     native_runtime_extension_bytes: Vec<u8>,
     native_content_extension_bytes: Vec<u8>,
     native_gameplay_extension_bytes: Vec<u8>,
+    native_world_view_extension_bytes: Vec<u8>,
     persistence: JournalState,
     persistence_authority: PersistenceAuthorityV1,
     persistence_dispatcher: PersistenceDispatcherV1,
@@ -629,6 +688,10 @@ pub struct IntegratedRuntimeV2 {
     queued_inputs: VecDeque<RuntimeInputFrameV1>,
     last_input_sequence: Option<u64>,
     last_applied_input: Option<RuntimeInputFrameV1>,
+    next_action_sequence: u64,
+    command_receipts: BTreeMap<(String, String), IntegratedRuntimeCommandReceiptCacheEntryV1>,
+    command_receipt_order: VecDeque<(String, String)>,
+    command_receipt_bytes: usize,
     queued: VecDeque<IntegratedRuntimeBatchV2>,
     receipts: VecDeque<IntegratedRuntimeReceiptV2>,
     replay: VecDeque<IntegratedRuntimeReplayEntryV2>,
@@ -646,10 +709,16 @@ impl IntegratedRuntimeV2 {
             .map_err(|error| IntegratedRuntimeError::domain("world", error))?;
         let world = WorldAuthorityStoreR4V1::new(address, config.block_catalog.clone())
             .map_err(|error| IntegratedRuntimeError::domain("world", error))?;
-        let gameplay = GameplayAuthority::new(GameplayState::new(
+        let mut gameplay = GameplayAuthority::new(GameplayState::new(
             WorldKey::new(&config.universe_id, &config.location_id),
             1,
         ));
+        gameplay
+            .grant_actor(GAMEPLAY_SCHEDULER_ACTOR_ID_V1, ActorGrant::system())
+            .map_err(|error| IntegratedRuntimeError::new("gameplay-scheduler-grant", error.message))?;
+        let world_view =
+            initialize_world_view_authority_v1(WorldKey::new(&config.universe_id, &config.location_id), 1, "system")
+                .map_err(|error| IntegratedRuntimeError::new("world-view-init", error.to_string()))?;
         let network = NetworkBrowserAuthorityRuntimeV1::new(config.session_id.clone())
             .map_err(|error| IntegratedRuntimeError::domain("network", error))?;
         let persistence_dispatcher = PersistenceDispatcherV1::new(PersistenceDispatcherLimitsV1 {
@@ -673,6 +742,7 @@ impl IntegratedRuntimeV2 {
             generation: Arc::new(GenerationService::default()),
             entities: EntityAuthority::default(),
             gameplay,
+            world_view,
             gameplay_content_store: MetadataBlobStore::default(),
             gameplay_content_index: BTreeMap::new(),
             content_stage: None,
@@ -681,6 +751,7 @@ impl IntegratedRuntimeV2 {
             native_runtime_extension_bytes: Vec::new(),
             native_content_extension_bytes: Vec::new(),
             native_gameplay_extension_bytes: Vec::new(),
+            native_world_view_extension_bytes: Vec::new(),
             persistence: JournalState::default(),
             persistence_authority,
             persistence_dispatcher,
@@ -715,6 +786,10 @@ impl IntegratedRuntimeV2 {
             queued_inputs: VecDeque::new(),
             last_input_sequence: None,
             last_applied_input: None,
+            next_action_sequence: 1,
+            command_receipts: BTreeMap::new(),
+            command_receipt_order: VecDeque::new(),
+            command_receipt_bytes: 0,
             queued: VecDeque::new(),
             receipts: VecDeque::new(),
             replay: VecDeque::new(),
@@ -744,6 +819,16 @@ impl IntegratedRuntimeV2 {
     #[must_use]
     pub fn entities(&self) -> &EntityAuthority {
         &self.entities
+    }
+
+    #[must_use]
+    pub const fn world_view(&self) -> &WorldViewAuthorityV1 {
+        &self.world_view
+    }
+
+    pub fn world_view_extraction(&self) -> Result<WorldViewExtractionInputV1, IntegratedRuntimeError> {
+        collect_world_view_extraction_v1(&self.world_view.state, &self.gameplay.state, &self.entities)
+            .map_err(|error| IntegratedRuntimeError::new("world-view-extraction", error.to_string()))
     }
 
     #[must_use]
@@ -789,12 +874,21 @@ impl IntegratedRuntimeV2 {
         candidate.entities = imported;
         candidate.entity_command_sequence = last_sequence.unwrap_or_default();
         candidate.rebuild_entity_schedules()?;
+        validate_world_view_runtime_links_v1(
+            &candidate.world_view.state,
+            &candidate.gameplay.state,
+            &candidate.entities,
+        )
+        .map_err(|error| IntegratedRuntimeError::new("entity-snapshot-world-view", error.to_string()))?;
         if candidate
             .player
             .as_ref()
             .is_some_and(|player| !candidate.entities.contains(player.entity_id))
         {
-            candidate.player = None;
+            return Err(IntegratedRuntimeError::new(
+                "entity-snapshot-player",
+                "entity snapshot would orphan the bound authoritative player",
+            ));
         }
         candidate.invalidate_state_hash();
         let receipt = EntityAuthorityImportReceiptWireV1 {
@@ -916,7 +1010,7 @@ impl IntegratedRuntimeV2 {
         self.gameplay_content_index.len()
     }
 
-    /// True only when the five native R4/R6/R7/runtime/content records can be
+    /// True only when the six native R4/R6/R7/world-view/runtime/content records can be
     /// built from one immutable authority generation. A partially delivered
     /// content installation is deliberately not checkpointable.
     #[must_use]
@@ -1068,7 +1162,7 @@ impl IntegratedRuntimeV2 {
         if record_count != IntegratedRuntimeNativeRecordKindV1::ALL.len() {
             return Err(IntegratedRuntimeError::new(
                 "checkpoint-incomplete",
-                "runtime checkpoint does not contain exactly five native records",
+                "runtime checkpoint does not contain exactly six native records",
             ));
         }
         let mut envelopes = BTreeMap::new();
@@ -1421,6 +1515,16 @@ impl IntegratedRuntimeV2 {
             IntegratedRuntimeNativeRecordKindV1::Content,
             encode_runtime_content_snapshot_v1(self)?,
         );
+        bodies.insert(
+            IntegratedRuntimeNativeRecordKindV1::WorldView,
+            encode_world_view_native_record_v1(
+                &self.world_view,
+                &self.gameplay.state,
+                &self.entities,
+                &self.native_world_view_extension_bytes,
+            )
+            .map_err(|error| IntegratedRuntimeError::new("native-world-view", error.to_string()))?,
+        );
         let bundle_hash = native_bundle_hash_v1(
             &self.config.universe_id,
             &self.config.location_id,
@@ -1506,6 +1610,7 @@ impl IntegratedRuntimeV2 {
         let entity_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::Entities)?;
         let gameplay_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::Gameplay)?;
         let content_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::Content)?;
+        let world_view_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::WorldView)?;
 
         let decoded_world = decode_world_authority_snapshot_r4_v1(world_record)
             .map_err(|error| IntegratedRuntimeError::domain("recovery-native-world", error))?;
@@ -1529,6 +1634,9 @@ impl IntegratedRuntimeV2 {
                 "gameplay authority belongs to a different world address",
             ));
         }
+        let decoded_world_view =
+            decode_world_view_native_record_v1(world_view_record, &decoded_gameplay.authority.state, &entities)
+                .map_err(|error| IntegratedRuntimeError::new("recovery-native-world-view", error.to_string()))?;
         let content = decode_runtime_content_snapshot_v1(content_record)?;
         let (content_store, content_index) = install_runtime_content_snapshot_v1(&self.config, &content)?;
 
@@ -1538,6 +1646,8 @@ impl IntegratedRuntimeV2 {
         candidate.entities = entities;
         candidate.gameplay = decoded_gameplay.authority;
         candidate.native_gameplay_extension_bytes = decoded_gameplay.unknown_extension_bytes;
+        candidate.world_view = decoded_world_view.authority;
+        candidate.native_world_view_extension_bytes = decoded_world_view.unknown_extension_bytes;
         candidate.gameplay_content_store = content_store;
         candidate.gameplay_content_index = content_index;
         candidate.content_stage = None;
@@ -1557,6 +1667,10 @@ impl IntegratedRuntimeV2 {
         candidate.queued_inputs = core.queued_inputs;
         candidate.last_input_sequence = core.last_input_sequence;
         candidate.last_applied_input = core.last_applied_input;
+        candidate.next_action_sequence = core.next_action_sequence;
+        candidate.command_receipts = core.command_receipts;
+        candidate.command_receipt_order = core.command_receipt_order;
+        candidate.command_receipt_bytes = core.command_receipt_bytes;
         candidate.replay = core.replay;
         candidate.replay_digest = IntegratedReplayDigestV2::default();
         for entry in &candidate.replay {
@@ -1573,6 +1687,12 @@ impl IntegratedRuntimeV2 {
         candidate.network = NetworkBrowserAuthorityRuntimeV1::new(candidate.config.session_id.clone())
             .map_err(|error| IntegratedRuntimeError::domain("recovery-network", error))?;
         candidate.rebuild_entity_schedules()?;
+        validate_world_view_runtime_links_v1(
+            &candidate.world_view.state,
+            &candidate.gameplay.state,
+            &candidate.entities,
+        )
+        .map_err(|error| IntegratedRuntimeError::new("recovery-world-view", error.to_string()))?;
         if candidate
             .player
             .as_ref()
@@ -1891,7 +2011,11 @@ impl IntegratedRuntimeV2 {
             || !self.queued_inputs.is_empty()
             || self.last_input_sequence.is_some()
             || self.last_applied_input.is_some()
+            || self.next_action_sequence != 1
             || !self.replay.is_empty()
+            || !self.command_receipts.is_empty()
+            || !self.command_receipt_order.is_empty()
+            || self.command_receipt_bytes != 0
             || !self.persistence_authority.records().is_empty()
             || self.persistence_authority.checkpoint().is_some()
             || !self.persistence_authority.dirty_records().is_empty()
@@ -2450,7 +2574,8 @@ impl IntegratedRuntimeV2 {
                 .state
                 .revision
                 .sequence
-                .saturating_add(self.gameplay_authority_revision),
+                .saturating_add(self.gameplay_authority_revision)
+                .saturating_add(self.world_view.state.revision.sequence),
             persistence: self
                 .persistence
                 .sequence()
@@ -2536,6 +2661,7 @@ impl IntegratedRuntimeV2 {
         hasher.write_u64(self.next_effect_sequence);
         hasher.write_bytes(self.gameplay.state.state_hash().as_bytes());
         hasher.write_u64(self.gameplay_authority_revision);
+        hasher.write_bytes(self.world_view.state.state_hash().as_bytes());
         hasher.write_bytes(self.persistence.state_hash().as_bytes());
         hasher.write_bytes(self.persistence_authority.state_hash().as_bytes());
         hasher.write_bytes(self.persistence_dispatcher.state_hash().as_bytes());
@@ -2580,6 +2706,7 @@ impl IntegratedRuntimeV2 {
         } else {
             hasher.write_u16(0);
         }
+        hasher.write_u64(self.next_action_sequence);
         let hash = hasher.finish();
         self.state_hash_cache.set(Some(hash));
         hash
@@ -2657,130 +2784,76 @@ impl IntegratedRuntimeV2 {
         let mut entity_receipts = Vec::with_capacity(batch.entities.len());
         let mut gameplay_receipts = Vec::with_capacity(batch.gameplay.len());
         let mut persistence_receipts = Vec::with_capacity(batch.persistence.len());
-        let domain_batch_count =
-            batch.world.len() + batch.entities.len() + batch.gameplay.len() + batch.persistence.len();
+        let mut staged_world = self.world.clone();
+        let mut staged_entities = self.entities.clone();
+        let mut staged_gameplay = self.gameplay.clone();
+        let mut staged_persistence = self.persistence.clone();
 
-        if domain_batch_count == 1 {
-            if let Some(command) = batch.world.first() {
-                let receipt = self.world.apply_mutation_batch(command.clone());
-                if let WorldMutationReceiptR4V1::Rejected { code, message, .. } = &receipt {
-                    return reject_batch(
-                        &batch.batch_id,
-                        "world-rejected",
-                        &format!("{code:?}: {message}"),
-                        before,
-                    );
-                }
-                world_receipts.push(receipt);
-            } else if let Some(command) = batch.entities.first() {
-                match self.entities.apply_batch(command) {
-                    Ok(receipt) => entity_receipts.push(receipt),
-                    Err(error) => {
-                        return reject_batch(&batch.batch_id, "entity-rejected", &format!("{error:?}"), before);
-                    }
-                }
-            } else if let Some(command) = batch.gameplay.first() {
-                let receipt = self.gameplay.apply_batch(command);
-                if let GameplayReceipt::Rejected { rejection, .. } = &receipt {
-                    return reject_batch(
-                        &batch.batch_id,
-                        "gameplay-rejected",
-                        &format!("{:?}: {}", rejection.code, rejection.message),
-                        before,
-                    );
-                }
-                gameplay_receipts.push(receipt);
-            } else if let Some(command) = batch.persistence.first() {
-                match self.persistence.apply(command) {
-                    Ok(receipt) => persistence_receipts.push(receipt),
-                    Err(error) => {
-                        return reject_batch(&batch.batch_id, "persistence-rejected", &error.to_string(), before);
-                    }
-                }
+        for command in &batch.world {
+            let receipt = staged_world.apply_mutation_batch(command.clone());
+            if let WorldMutationReceiptR4V1::Rejected { code, message, .. } = &receipt {
+                return reject_batch(
+                    &batch.batch_id,
+                    "world-rejected",
+                    &format!("{code:?}: {message}"),
+                    before,
+                );
             }
-        } else {
-            let mut staged_world = (!batch.world.is_empty()).then(|| self.world.clone());
-            let mut staged_entities = (!batch.entities.is_empty()).then(|| self.entities.clone());
-            let mut staged_gameplay = (!batch.gameplay.is_empty()).then(|| self.gameplay.clone());
-            let mut staged_persistence = (!batch.persistence.is_empty()).then(|| self.persistence.clone());
-
-            for command in &batch.world {
-                let receipt = staged_world
-                    .as_mut()
-                    .expect("world stage exists for world commands")
-                    .apply_mutation_batch(command.clone());
-                if let WorldMutationReceiptR4V1::Rejected { code, message, .. } = &receipt {
-                    return reject_batch(
-                        &batch.batch_id,
-                        "world-rejected",
-                        &format!("{code:?}: {message}"),
-                        before,
-                    );
+            world_receipts.push(receipt);
+        }
+        for command in &batch.entities {
+            match staged_entities.apply_batch(command) {
+                Ok(receipt) => entity_receipts.push(receipt),
+                Err(error) => {
+                    return reject_batch(&batch.batch_id, "entity-rejected", &format!("{error:?}"), before);
                 }
-                world_receipts.push(receipt);
-            }
-            for command in &batch.entities {
-                match staged_entities
-                    .as_mut()
-                    .expect("entity stage exists for entity commands")
-                    .apply_batch(command)
-                {
-                    Ok(receipt) => entity_receipts.push(receipt),
-                    Err(error) => {
-                        return reject_batch(&batch.batch_id, "entity-rejected", &format!("{error:?}"), before);
-                    }
-                }
-            }
-            for command in &batch.gameplay {
-                let receipt = staged_gameplay
-                    .as_mut()
-                    .expect("gameplay stage exists for gameplay commands")
-                    .apply_batch(command);
-                if let GameplayReceipt::Rejected { rejection, .. } = &receipt {
-                    return reject_batch(
-                        &batch.batch_id,
-                        "gameplay-rejected",
-                        &format!("{:?}: {}", rejection.code, rejection.message),
-                        before,
-                    );
-                }
-                gameplay_receipts.push(receipt);
-            }
-            for command in &batch.persistence {
-                match staged_persistence
-                    .as_mut()
-                    .expect("persistence stage exists for persistence commands")
-                    .apply(command)
-                {
-                    Ok(receipt) => persistence_receipts.push(receipt),
-                    Err(error) => {
-                        return reject_batch(&batch.batch_id, "persistence-rejected", &error.to_string(), before);
-                    }
-                }
-            }
-
-            if let Some(world) = staged_world {
-                self.world = world;
-            }
-            if let Some(entities) = staged_entities {
-                self.entities = entities;
-            }
-            if let Some(gameplay) = staged_gameplay {
-                self.gameplay = gameplay;
-            }
-            if let Some(persistence) = staged_persistence {
-                self.persistence = persistence;
             }
         }
-
-        self.entity_command_sequence = entity_receipts
+        for command in &batch.gameplay {
+            let receipt = staged_gameplay.apply_batch(command);
+            if let GameplayReceipt::Rejected { rejection, .. } = &receipt {
+                return reject_batch(
+                    &batch.batch_id,
+                    "gameplay-rejected",
+                    &format!("{:?}: {}", rejection.code, rejection.message),
+                    before,
+                );
+            }
+            gameplay_receipts.push(receipt);
+        }
+        for command in &batch.persistence {
+            match staged_persistence.apply(command) {
+                Ok(receipt) => persistence_receipts.push(receipt),
+                Err(error) => {
+                    return reject_batch(&batch.batch_id, "persistence-rejected", &error.to_string(), before);
+                }
+            }
+        }
+        let staged_world_view = match stage_world_view_batches_v1(
+            &self.world_view,
+            &staged_gameplay.state,
+            &staged_entities,
+            &batch.world_view,
+        ) {
+            Ok(staged) => staged,
+            Err(error) => return reject_batch(&batch.batch_id, "world-view-rejected", &error.to_string(), before),
+        };
+        let world_view_receipts = staged_world_view.receipts;
+        let mut staged_runtime = self.clone();
+        staged_runtime.world = staged_world;
+        staged_runtime.entities = staged_entities;
+        staged_runtime.gameplay = staged_gameplay;
+        staged_runtime.world_view = staged_world_view.authority;
+        staged_runtime.persistence = staged_persistence;
+        staged_runtime.entity_command_sequence = entity_receipts
             .iter()
-            .fold(self.entity_command_sequence, |sequence, receipt| {
+            .fold(staged_runtime.entity_command_sequence, |sequence, receipt| {
                 sequence.max(receipt.sequence)
             });
-        if let Err(error) = self.sync_entity_schedules(&entity_receipts) {
+        if let Err(error) = staged_runtime.sync_entity_schedules(&entity_receipts) {
             return reject_batch(&batch.batch_id, error.code, &error.message, before);
         }
+        *self = staged_runtime;
         self.invalidate_state_hash();
         let after = self.identity();
         let receipt_hash = hash_runtime_receipt(&batch.batch_id, &before, &after);
@@ -2799,18 +2872,30 @@ impl IntegratedRuntimeV2 {
                 self.replay_digest.remove(hash_runtime_replay_entry(&removed));
             }
         }
-        IntegratedRuntimeReceiptV2::Accepted(IntegratedRuntimeAcceptedV2 {
+        IntegratedRuntimeReceiptV2::Accepted(Box::new(IntegratedRuntimeAcceptedV2 {
             batch_id: batch.batch_id.clone(),
             before,
             after,
             world: world_receipts,
             entities: entity_receipts,
             gameplay: gameplay_receipts,
+            world_view: world_view_receipts,
             persistence: persistence_receipts,
-        })
+        }))
     }
 
     pub fn step(
+        &mut self,
+        monotonic_time_us: u64,
+        budget_us: u32,
+    ) -> Result<IntegratedRuntimeStepSummaryV2, IntegratedRuntimeError> {
+        let mut candidate = self.clone();
+        let summary = candidate.step_staged(monotonic_time_us, budget_us)?;
+        *self = candidate;
+        Ok(summary)
+    }
+
+    fn step_staged(
         &mut self,
         monotonic_time_us: u64,
         budget_us: u32,
@@ -2829,19 +2914,26 @@ impl IntegratedRuntimeV2 {
         let maximum_steps = (u64::from(budget_us) / 250).clamp(1, 8) as u32;
         let due_steps = (self.accumulator_us / INTEGRATED_RUNTIME_FIXED_STEP_US).min(u64::from(maximum_steps)) as u32;
         let mut inputs_applied = 0_u32;
+        let mut action_receipts = Vec::new();
         for _ in 0..due_steps {
             self.tick = self.tick.saturating_add(1);
             self.rng_state = super::xorshift32(self.rng_state);
             self.accumulator_us -= INTEGRATED_RUNTIME_FIXED_STEP_US;
+            let mut fixed_input = self.last_applied_input.unwrap_or_default();
             while self
                 .queued_inputs
                 .front()
                 .is_some_and(|input| input.target_tick <= self.tick)
             {
-                self.last_applied_input = self.queued_inputs.pop_front();
+                let input = self.queued_inputs.pop_front().expect("due input exists");
+                let previous_buttons = self.last_applied_input.map_or(0, |value| value.buttons);
+                self.apply_selected_slot(input)?;
+                action_receipts.extend(self.dispatch_input_edges(input, previous_buttons)?);
+                self.last_applied_input = Some(input);
+                fixed_input = input;
                 inputs_applied = inputs_applied.saturating_add(1);
             }
-            self.advance_authoritative_fixed_step()?;
+            self.advance_authoritative_fixed_step(fixed_input)?;
         }
 
         let command_budget =
@@ -2863,6 +2955,7 @@ impl IntegratedRuntimeV2 {
             processed_batches: processed,
             accepted_batches: accepted,
             inputs_applied,
+            action_receipts,
             state_hash: self.state_hash(),
             replay_hash: self.replay_hash(),
         })
@@ -2870,6 +2963,102 @@ impl IntegratedRuntimeV2 {
 
     pub fn take_receipts(&mut self) -> Vec<IntegratedRuntimeReceiptV2> {
         self.receipts.drain(..).collect()
+    }
+
+    #[must_use]
+    pub fn lookup_runtime_command_receipt(
+        &self,
+        actor_id: &str,
+        idempotency_key: &str,
+        command_hash: WireHash,
+    ) -> RuntimeCommandCacheLookupV1 {
+        let key = (actor_id.to_owned(), idempotency_key.to_owned());
+        match self.command_receipts.get(&key) {
+            None => RuntimeCommandCacheLookupV1::Miss,
+            Some(entry) if entry.command_hash == command_hash => {
+                RuntimeCommandCacheLookupV1::Exact(Box::new(entry.receipt.clone()))
+            }
+            Some(_) => RuntimeCommandCacheLookupV1::Conflict,
+        }
+    }
+
+    /// Caches one exact BWRQ command receipt without changing authority
+    /// identity. Reliability metadata is checkpoint-owned but is deliberately
+    /// excluded from runtime revisions and state hashes.
+    pub fn cache_runtime_command_receipt(
+        &mut self,
+        actor_id: &str,
+        idempotency_key: &str,
+        command_hash: WireHash,
+        receipt: RuntimeCommandReceiptV1,
+    ) -> Result<(), IntegratedRuntimeError> {
+        if actor_id.is_empty() || actor_id.len() > 160 || idempotency_key.is_empty() || idempotency_key.len() > 256 {
+            return Err(IntegratedRuntimeError::new(
+                "idempotency-receipt-key",
+                "command receipt cache key is outside BWRQ label bounds",
+            ));
+        }
+        let (receipt_key, receipt_hash) = runtime_command_receipt_key_hash_v1(&receipt);
+        if receipt_key != idempotency_key || receipt_hash != command_hash {
+            return Err(IntegratedRuntimeError::new(
+                "idempotency-receipt-mismatch",
+                "cached receipt does not match its idempotency key and command hash",
+            ));
+        }
+        validate_command_receipt_hash_v1(&receipt)
+            .map_err(|error| IntegratedRuntimeError::new(error.code, error.message))?;
+        let encoded_receipt = encode_command_receipt_v1(&receipt)
+            .map_err(|error| IntegratedRuntimeError::new(error.code, error.message))?;
+        let entry_bytes =
+            runtime_command_receipt_cache_entry_bytes_v1(actor_id, idempotency_key, encoded_receipt.len());
+        if encoded_receipt.len() > MAX_WIRE_BYTES || entry_bytes > INTEGRATED_RUNTIME_MAX_COMMAND_RECEIPT_CACHE_BYTES_V1
+        {
+            return Err(IntegratedRuntimeError::new(
+                "idempotency-receipt-capacity",
+                "exact command receipt exceeds the durable reliability cache byte budget",
+            ));
+        }
+        let key = (actor_id.to_owned(), idempotency_key.to_owned());
+        if let Some(existing) = self.command_receipts.get(&key) {
+            if existing.command_hash == command_hash && existing.encoded_receipt == encoded_receipt {
+                return Ok(());
+            }
+            return Err(IntegratedRuntimeError::new(
+                "idempotency-receipt-conflict",
+                "command receipt cache key already contains different exact bytes",
+            ));
+        }
+        while self.command_receipt_order.len() >= INTEGRATED_RUNTIME_MAX_IDEMPOTENCY_RECEIPTS
+            || self.command_receipt_bytes.saturating_add(entry_bytes)
+                > INTEGRATED_RUNTIME_MAX_COMMAND_RECEIPT_CACHE_BYTES_V1
+        {
+            let Some(expired) = self.command_receipt_order.pop_front() else {
+                return Err(IntegratedRuntimeError::new(
+                    "idempotency-receipt-capacity",
+                    "durable reliability cache cannot admit the exact receipt",
+                ));
+            };
+            if let Some(entry) = self.command_receipts.remove(&expired) {
+                self.command_receipt_bytes =
+                    self.command_receipt_bytes
+                        .saturating_sub(runtime_command_receipt_cache_entry_bytes_v1(
+                            &expired.0,
+                            &expired.1,
+                            entry.encoded_receipt.len(),
+                        ));
+            }
+        }
+        self.command_receipt_bytes = self.command_receipt_bytes.saturating_add(entry_bytes);
+        self.command_receipt_order.push_back(key.clone());
+        self.command_receipts.insert(
+            key,
+            IntegratedRuntimeCommandReceiptCacheEntryV1 {
+                command_hash,
+                receipt,
+                encoded_receipt,
+            },
+        );
+        Ok(())
     }
 
     pub fn bind_player(&mut self, binding: RuntimePlayerBindingWireV1) -> Result<(), IntegratedRuntimeError> {
@@ -2895,10 +3084,24 @@ impl IntegratedRuntimeV2 {
                 "player binding target is not an authoritative player entity",
             ));
         }
-        let existing = self
-            .player
-            .as_ref()
-            .filter(|player| player.binding.external_entity_id == binding.external_entity_id);
+        let existing = match self.player.as_ref() {
+            Some(player)
+                if player.binding.external_entity_id == binding.external_entity_id
+                    && player.binding.actor_id == binding.actor_id
+                    && player.binding.player_id == binding.player_id
+                    && player.entity_id == entity_id =>
+            {
+                Some(player)
+            }
+            Some(_) => {
+                return Err(IntegratedRuntimeError::new(
+                    "player-binding-conflict",
+                    "the runtime already owns a different authoritative player binding",
+                ));
+            }
+            None => None,
+        };
+        let install_player_grant = existing.is_none();
         let body = PhysicsBodyV1 {
             handle: binding.external_entity_id.clone(),
             position: SimulationVec3::new(
@@ -2930,15 +3133,106 @@ impl IntegratedRuntimeV2 {
             swim_stroke_cooldown_seconds: existing.map_or(0.0, |player| player.body.swim_stroke_cooldown_seconds),
             swim_surface_bob_active: existing.is_some_and(|player| player.body.swim_surface_bob_active),
         };
+        let flags = existing.map_or_else(
+            || u8::from(binding.creative_mode) * RUNTIME_INPUT_FLAG_CREATIVE_V1,
+            |player| player.flags,
+        );
+        let actor = GameplayActor {
+            actor_id: binding.actor_id.clone(),
+            player_id: Some(binding.player_id),
+            entity_id: Some(entity_id),
+            role: ActorRole::Host,
+        };
+        let mut staged_gameplay = self.gameplay.clone();
+        if install_player_grant {
+            staged_gameplay
+                .grant_actor(binding.actor_id.clone(), ActorGrant::host(binding.player_id, entity_id))
+                .map_err(|error| IntegratedRuntimeError::new("player-binding-grant", error.message))?;
+        }
+        let mut staged_world_view = self.world_view.clone();
+        let selected_slot = if let Some(existing_binding) = staged_world_view.state.player_binding(binding.player_id) {
+            if existing_binding.actor_id != binding.actor_id || existing_binding.entity_id != entity_id {
+                return Err(IntegratedRuntimeError::new(
+                    "player-binding-conflict",
+                    "existing world-view player binding belongs to another actor or entity",
+                ));
+            }
+            existing_binding.selected_slot
+        } else {
+            let inventory = ContainerKey::player(binding.actor_id.clone());
+            let equipment = ContainerKey {
+                kind: ContainerKind::Equipment,
+                id: format!("{}:equipment", binding.actor_id),
+                owner_id: Some(binding.actor_id.clone()),
+            };
+            let custody_batch = GameplayBatch::new(
+                format!("player-custody:{}", binding.player_id.packed()),
+                format!("player-custody:{}", binding.player_id.packed()),
+                actor.clone(),
+                staged_gameplay.state.identity(),
+                vec![GameplayCommand::Inventory(InventoryCommand::CreatePlayerCustody(
+                    CreatePlayerCustodyCommand {
+                        inventory: inventory.clone(),
+                        inventory_slots: 9,
+                        equipment: equipment.clone(),
+                        equipment_slots: 8,
+                        back_slot: Some(7),
+                    },
+                ))],
+            );
+            match staged_gameplay.apply_batch(&custody_batch) {
+                GameplayReceipt::Accepted(_) => {}
+                GameplayReceipt::Rejected { rejection, .. } => {
+                    return Err(IntegratedRuntimeError::new("player-custody", rejection.message));
+                }
+            }
+            let staged_binding = stage_player_binding_v1(
+                &staged_world_view,
+                &staged_gameplay.state,
+                &self.entities,
+                &PlayerBindingStageRequestV1 {
+                    batch_id: format!("player-binding:{}", binding.player_id.packed()),
+                    idempotency_key: format!("player-binding:{}", binding.player_id.packed()),
+                    actor: GameplayActor {
+                        actor_id: "system".into(),
+                        player_id: None,
+                        entity_id: None,
+                        role: ActorRole::System,
+                    },
+                    expected_world_view_identity: staged_world_view.state.identity(),
+                    expected_binding_revision: None,
+                    binding: PlayerInventoryBindingV1 {
+                        player_id: binding.player_id,
+                        revision: 0,
+                        actor_id: binding.actor_id.clone(),
+                        entity_id,
+                        inventory_container: inventory,
+                        equipment_container: equipment,
+                        selected_slot: 0,
+                        back_slot: Some(7),
+                    },
+                },
+            )
+            .map_err(|error| IntegratedRuntimeError::new("player-binding", error.to_string()))?;
+            staged_world_view = staged_binding.authority;
+            0
+        };
+        validate_world_view_runtime_links_v1(&staged_world_view.state, &staged_gameplay.state, &self.entities)
+            .map_err(|error| IntegratedRuntimeError::new("player-binding", error.to_string()))?;
+        self.gameplay = staged_gameplay;
+        self.world_view = staged_world_view;
+        if install_player_grant {
+            self.gameplay_authority_revision = self.gameplay_authority_revision.saturating_add(1);
+        }
         self.player = Some(IntegratedRuntimePlayerStateV2 {
             binding,
             entity_id,
             body,
             contact_flags: existing.map_or(0, |player| player.contact_flags),
-            selected_slot: existing.map_or(0, |player| player.selected_slot),
+            selected_slot: existing.map_or(selected_slot as u8, |player| player.selected_slot),
             look_pitch: existing.map_or(0, |player| player.look_pitch),
             buttons: existing.map_or(0, |player| player.buttons),
-            flags: existing.map_or(0, |player| player.flags),
+            flags,
             last_input_sequence: existing.map_or(0, |player| player.last_input_sequence),
         });
         self.simulation_revision = self.simulation_revision.saturating_add(1);
@@ -2946,7 +3240,7 @@ impl IntegratedRuntimeV2 {
         Ok(())
     }
 
-    fn advance_authoritative_fixed_step(&mut self) -> Result<(), IntegratedRuntimeError> {
+    fn advance_authoritative_fixed_step(&mut self, input: RuntimeInputFrameV1) -> Result<(), IntegratedRuntimeError> {
         if self.player.is_none() && self.last_applied_input.is_some() {
             return Err(IntegratedRuntimeError::new(
                 "player-binding-required",
@@ -2954,7 +3248,7 @@ impl IntegratedRuntimeV2 {
             ));
         }
         if self.player.is_some() {
-            self.advance_bound_player()?;
+            self.advance_bound_player(input)?;
         }
         self.advance_entity_and_gameplay_schedules()?;
         self.simulation_revision = self.simulation_revision.saturating_add(1);
@@ -2962,8 +3256,584 @@ impl IntegratedRuntimeV2 {
         Ok(())
     }
 
-    fn advance_bound_player(&mut self) -> Result<(), IntegratedRuntimeError> {
-        let input = self.last_applied_input.unwrap_or_default();
+    fn apply_selected_slot(&mut self, input: RuntimeInputFrameV1) -> Result<(), IntegratedRuntimeError> {
+        let Some(player) = self.player.as_ref() else {
+            return Ok(());
+        };
+        let binding = self
+            .world_view
+            .state
+            .player_binding(player.binding.player_id)
+            .ok_or_else(|| IntegratedRuntimeError::new("input-binding", "bound player has no inventory binding"))?;
+        if binding.selected_slot == u16::from(input.selected_slot) {
+            return Ok(());
+        }
+        let identity = self.world_view.state.identity();
+        let batch = WorldViewBatchV1::new(
+            format!("input-slot:{}", input.sequence),
+            format!("input-slot:{}", input.sequence),
+            GameplayActor {
+                actor_id: "system".into(),
+                player_id: None,
+                entity_id: None,
+                role: ActorRole::System,
+            },
+            identity,
+            vec![WorldViewCommandV1::SelectPlayerSlot {
+                player_id: player.binding.player_id,
+                expected_revision: binding.revision,
+                selected_slot: u16::from(input.selected_slot),
+            }],
+        );
+        let staged = stage_world_view_batches_v1(&self.world_view, &self.gameplay.state, &self.entities, &[batch])
+            .map_err(|error| IntegratedRuntimeError::new("input-slot", error.to_string()))?;
+        self.world_view = staged.authority;
+        Ok(())
+    }
+
+    fn dispatch_input_edges(
+        &mut self,
+        input: RuntimeInputFrameV1,
+        previous_buttons: u32,
+    ) -> Result<Vec<RuntimeInputActionReceiptV1>, IntegratedRuntimeError> {
+        let rising = input.buttons & !previous_buttons;
+        let Some(player) = self.player.as_ref() else {
+            if rising != 0 {
+                return Err(IntegratedRuntimeError::new(
+                    "player-binding-required",
+                    "fixed-step actions cannot execute before a hot player entity is explicitly bound",
+                ));
+            }
+            return Ok(Vec::new());
+        };
+        let creative = player.binding.creative_mode;
+        let mut mounted = player.flags & RUNTIME_INPUT_FLAG_MOUNTED_V1 != 0;
+        let mut flying = player.flags & RUNTIME_INPUT_FLAG_FLYING_V1 != 0;
+        let selected_slot = input.selected_slot;
+        let mut receipts = Vec::new();
+        for (button, kind) in [
+            (
+                RUNTIME_INPUT_BUTTON_PRIMARY_ATTACK_V1,
+                RuntimeInputActionKindV1::PrimaryAttack,
+            ),
+            (
+                RUNTIME_INPUT_BUTTON_SECONDARY_USE_V1,
+                RuntimeInputActionKindV1::SecondaryUse,
+            ),
+            (RUNTIME_INPUT_BUTTON_INTERACT_V1, RuntimeInputActionKindV1::Interact),
+            (
+                RUNTIME_INPUT_BUTTON_MOUNT_TOGGLE_V1,
+                RuntimeInputActionKindV1::MountToggle,
+            ),
+            (
+                RUNTIME_INPUT_BUTTON_CREATIVE_FLIGHT_TOGGLE_V1,
+                RuntimeInputActionKindV1::CreativeFlightToggle,
+            ),
+            (RUNTIME_INPUT_BUTTON_DROP_V1, RuntimeInputActionKindV1::Drop),
+        ] {
+            if rising & button == 0 {
+                continue;
+            }
+            let (outcome, target_entity_id) = match kind {
+                RuntimeInputActionKindV1::CreativeFlightToggle if creative && !mounted => {
+                    flying = !flying;
+                    (RuntimeInputActionOutcomeV1::Applied, 0)
+                }
+                RuntimeInputActionKindV1::CreativeFlightToggle => (RuntimeInputActionOutcomeV1::Ineligible, 0),
+                RuntimeInputActionKindV1::PrimaryAttack => self.apply_primary_attack(input)?,
+                RuntimeInputActionKindV1::SecondaryUse => self.apply_targeted_action(input, "secondary-use")?,
+                RuntimeInputActionKindV1::Interact => self.apply_targeted_action(input, "interact")?,
+                RuntimeInputActionKindV1::MountToggle => {
+                    let result = self.apply_mount_toggle(input)?;
+                    if result.0 == RuntimeInputActionOutcomeV1::Applied {
+                        mounted = !mounted;
+                        if mounted {
+                            flying = false;
+                        }
+                    }
+                    result
+                }
+                RuntimeInputActionKindV1::Drop => self.apply_player_drop(input)?,
+            };
+            let authoritative_flags = (u8::from(creative) * RUNTIME_INPUT_FLAG_CREATIVE_V1)
+                | (u8::from(flying) * RUNTIME_INPUT_FLAG_FLYING_V1)
+                | (u8::from(mounted) * RUNTIME_INPUT_FLAG_MOUNTED_V1);
+            let mut hasher = CanonicalHasher::new("blockwild-runtime-input-action-v1");
+            hasher.write_u64(self.next_action_sequence);
+            hasher.write_u64(input.sequence);
+            hasher.write_u64(self.tick);
+            hasher.write_u16(kind as u16);
+            hasher.write_u16(outcome as u16);
+            hasher.write_u16(u16::from(selected_slot));
+            hasher.write_u16(u16::from(authoritative_flags));
+            hasher.write_u64(target_entity_id);
+            hasher.write_bytes(self.entities.canonical_hash().as_bytes());
+            hasher.write_bytes(self.gameplay.state.state_hash().as_bytes());
+            hasher.write_bytes(self.world_view.state.state_hash().as_bytes());
+            receipts.push(RuntimeInputActionReceiptV1 {
+                sequence: self.next_action_sequence,
+                input_sequence: input.sequence,
+                tick: self.tick,
+                kind,
+                outcome,
+                selected_slot,
+                authoritative_flags,
+                target_entity_id,
+                effect_hash: WireHash(*hasher.finish().as_bytes()),
+            });
+            self.next_action_sequence = self.next_action_sequence.saturating_add(1);
+        }
+        if let Some(player) = self.player.as_mut() {
+            player.flags = (u8::from(creative) * RUNTIME_INPUT_FLAG_CREATIVE_V1)
+                | (u8::from(flying) * RUNTIME_INPUT_FLAG_FLYING_V1)
+                | (u8::from(mounted) * RUNTIME_INPUT_FLAG_MOUNTED_V1);
+        }
+        Ok(receipts)
+    }
+
+    fn apply_primary_attack(
+        &mut self,
+        input: RuntimeInputFrameV1,
+    ) -> Result<(RuntimeInputActionOutcomeV1, u64), IntegratedRuntimeError> {
+        match self.resolve_action_target(input, 4.5)? {
+            IntegratedRuntimeActionTargetV1::Entity(target) => {
+                let player = self.player.as_ref().expect("action dispatch checked player");
+                let actor_id = player.binding.actor_id.clone();
+                let target_record = self
+                    .entities
+                    .compatibility_record(target)
+                    .ok_or_else(|| IntegratedRuntimeError::new("input-action-target", "attack target disappeared"))?;
+                let target_id = target_record.external_entity_id.clone();
+                let Some(source) = self.gameplay.state.combat.combatants.get(&actor_id) else {
+                    return Ok((RuntimeInputActionOutcomeV1::Blocked, target.packed()));
+                };
+                let Some(target_combatant) = self.gameplay.state.combat.combatants.get(&target_id) else {
+                    return Ok((RuntimeInputActionOutcomeV1::Blocked, target.packed()));
+                };
+                if !source.alive || !target_combatant.alive {
+                    return Ok((RuntimeInputActionOutcomeV1::Ineligible, target.packed()));
+                }
+                let Some(ability_id) = ["basic-melee", "primary-attack"]
+                    .into_iter()
+                    .find(|ability| self.gameplay.state.combat.abilities.contains_key(*ability))
+                else {
+                    return Ok((RuntimeInputActionOutcomeV1::Blocked, target.packed()));
+                };
+                let source_revision = source.revision;
+                let target_revision = target_combatant.revision;
+                let target_position = target_record.position;
+                let actor = GameplayActor {
+                    actor_id: actor_id.clone(),
+                    player_id: Some(player.binding.player_id),
+                    entity_id: Some(player.entity_id),
+                    role: ActorRole::Host,
+                };
+                let batch_id = format!("input-attack:{}:{}", input.sequence, self.next_action_sequence);
+                let batch = GameplayBatch::new(
+                    &batch_id,
+                    &batch_id,
+                    actor,
+                    self.gameplay.state.identity(),
+                    vec![GameplayCommand::Combat(CombatCommand::UseAbility {
+                        source_id: actor_id,
+                        expected_source_revision: source_revision,
+                        target_id,
+                        expected_target_revision: target_revision,
+                        ability_id: ability_id.into(),
+                        projectile_id: None,
+                        aim: FixedVec3 {
+                            x_milli: (f64::from(target_position.x) * 1_000.0).round() as i32,
+                            y_milli: (f64::from(target_position.y) * 1_000.0).round() as i32,
+                            z_milli: (f64::from(target_position.z) * 1_000.0).round() as i32,
+                        },
+                        tick: self.tick,
+                    })],
+                );
+                let mut staged = self.gameplay.clone();
+                match staged.apply_batch(&batch) {
+                    GameplayReceipt::Accepted(_) => self.gameplay = staged,
+                    GameplayReceipt::Rejected { .. } => {
+                        return Ok((RuntimeInputActionOutcomeV1::Blocked, target.packed()));
+                    }
+                }
+                Ok((RuntimeInputActionOutcomeV1::Applied, target.packed()))
+            }
+            IntegratedRuntimeActionTargetV1::Block(_) => Ok((RuntimeInputActionOutcomeV1::Blocked, 0)),
+            IntegratedRuntimeActionTargetV1::Unloaded => Ok((RuntimeInputActionOutcomeV1::Blocked, 0)),
+            IntegratedRuntimeActionTargetV1::None => Ok((RuntimeInputActionOutcomeV1::NoTarget, 0)),
+        }
+    }
+
+    fn apply_targeted_action(
+        &mut self,
+        input: RuntimeInputFrameV1,
+        action_key: &'static str,
+    ) -> Result<(RuntimeInputActionOutcomeV1, u64), IntegratedRuntimeError> {
+        let _ = action_key;
+        match self.resolve_action_target(input, 5.0)? {
+            IntegratedRuntimeActionTargetV1::Entity(target) => {
+                Ok((RuntimeInputActionOutcomeV1::Blocked, target.packed()))
+            }
+            IntegratedRuntimeActionTargetV1::Block(_) => Ok((RuntimeInputActionOutcomeV1::Blocked, 0)),
+            IntegratedRuntimeActionTargetV1::Unloaded => Ok((RuntimeInputActionOutcomeV1::Blocked, 0)),
+            IntegratedRuntimeActionTargetV1::None => Ok((RuntimeInputActionOutcomeV1::NoTarget, 0)),
+        }
+    }
+
+    fn apply_mount_toggle(
+        &mut self,
+        input: RuntimeInputFrameV1,
+    ) -> Result<(RuntimeInputActionOutcomeV1, u64), IntegratedRuntimeError> {
+        let player_id = self
+            .player
+            .as_ref()
+            .ok_or_else(|| IntegratedRuntimeError::new("player-binding-required", "mount toggle requires a player"))?
+            .entity_id;
+        let mut player_components = self
+            .entities
+            .components(player_id)
+            .ok_or_else(|| IntegratedRuntimeError::new("input-action-target", "bound player lost components"))?
+            .clone();
+        if let Some(parent_id) = player_components.mount.parent_mount {
+            let mut commands = Vec::with_capacity(3);
+            if let Some(mut parent_components) = self.entities.components(parent_id).cloned() {
+                for seat in &mut parent_components.mount.seats {
+                    if seat.occupant == Some(player_id) {
+                        seat.occupant = None;
+                    }
+                }
+                commands.push(EntityCommand::SetMountState {
+                    id: parent_id,
+                    value: parent_components.mount,
+                });
+            }
+            player_components.mount.parent_mount = None;
+            player_components.mount.occupied_seat = None;
+            player_components.locomotion.movement_mode = MovementMode::Ground;
+            player_components.locomotion.action = ActionState {
+                key: "dismount".into(),
+                phase: 0,
+                started_tick: self.tick,
+                ends_tick: self.tick.saturating_add(1),
+                target: Some(parent_id),
+            };
+            commands.push(EntityCommand::SetMountState {
+                id: player_id,
+                value: player_components.mount,
+            });
+            commands.push(EntityCommand::SetLocomotionBody {
+                id: player_id,
+                value: player_components.locomotion,
+            });
+            self.apply_internal_entity_commands("input-dismount", commands)?;
+            return Ok((RuntimeInputActionOutcomeV1::Applied, parent_id.packed()));
+        }
+
+        let target_id = match self.resolve_action_target(input, 4.5)? {
+            IntegratedRuntimeActionTargetV1::Entity(target) => target,
+            IntegratedRuntimeActionTargetV1::Unloaded => {
+                return Ok((RuntimeInputActionOutcomeV1::Blocked, 0));
+            }
+            _ => return Ok((RuntimeInputActionOutcomeV1::NoTarget, 0)),
+        };
+        let mut mount_components = self
+            .entities
+            .components(target_id)
+            .ok_or_else(|| IntegratedRuntimeError::new("input-action-target", "mount target lost components"))?
+            .clone();
+        if !mount_components.mount.accepts_riders {
+            return Ok((RuntimeInputActionOutcomeV1::Ineligible, target_id.packed()));
+        }
+        let Some(seat) = mount_components
+            .mount
+            .seats
+            .iter_mut()
+            .find(|seat| seat.occupant.is_none())
+        else {
+            return Ok((RuntimeInputActionOutcomeV1::Ineligible, target_id.packed()));
+        };
+        seat.occupant = Some(player_id);
+        player_components.mount.parent_mount = Some(target_id);
+        // The authoritative seat index is owned by the mount's seat/occupant
+        // relation. `occupied_seat` describes an entity's own seat table and
+        // therefore cannot point into the parent mount's table.
+        player_components.mount.occupied_seat = None;
+        player_components.locomotion.movement_mode = MovementMode::Mounted;
+        player_components.locomotion.action = ActionState {
+            key: "mount".into(),
+            phase: 0,
+            started_tick: self.tick,
+            ends_tick: self.tick.saturating_add(1),
+            target: Some(target_id),
+        };
+        self.apply_internal_entity_commands(
+            "input-mount",
+            vec![
+                EntityCommand::SetMountState {
+                    id: target_id,
+                    value: mount_components.mount,
+                },
+                EntityCommand::SetMountState {
+                    id: player_id,
+                    value: player_components.mount,
+                },
+                EntityCommand::SetLocomotionBody {
+                    id: player_id,
+                    value: player_components.locomotion,
+                },
+            ],
+        )?;
+        Ok((RuntimeInputActionOutcomeV1::Applied, target_id.packed()))
+    }
+
+    fn apply_player_drop(
+        &mut self,
+        input: RuntimeInputFrameV1,
+    ) -> Result<(RuntimeInputActionOutcomeV1, u64), IntegratedRuntimeError> {
+        let player = self
+            .player
+            .as_ref()
+            .ok_or_else(|| IntegratedRuntimeError::new("player-binding-required", "drop requires a bound player"))?
+            .clone();
+        let binding = self
+            .world_view
+            .state
+            .player_binding(player.binding.player_id)
+            .ok_or_else(|| IntegratedRuntimeError::new("input-drop-binding", "bound player has no inventory binding"))?
+            .clone();
+        let held_stack = self
+            .world_view
+            .state
+            .held_stack(&self.gameplay.state, player.binding.player_id)
+            .map_err(|error| {
+                IntegratedRuntimeError::new("input-drop-binding", format!("{:?}: {}", error.code, error.message))
+            })?
+            .cloned();
+        let Some(held_stack) = held_stack else {
+            return Ok((RuntimeInputActionOutcomeV1::EmptySlot, 0));
+        };
+        let source_container_revision = self
+            .gameplay
+            .state
+            .inventory
+            .containers
+            .get(&binding.inventory_container)
+            .ok_or_else(|| IntegratedRuntimeError::new("input-drop-binding", "player inventory container disappeared"))?
+            .revision;
+
+        let yaw = normalized_i16(input.look_yaw) * std::f64::consts::PI;
+        let pitch = normalized_i16(input.look_pitch) * std::f64::consts::FRAC_PI_2;
+        let horizontal = pitch.cos();
+        let direction = SimulationVec3::new(-yaw.sin() * horizontal, pitch.sin(), -yaw.cos() * horizontal);
+        let position = SimulationVec3::new(
+            player.body.position.x + direction.x * 0.6,
+            player.body.position.y + player.body.height * 0.72 + direction.y * 0.6,
+            player.body.position.z + direction.z * 0.6,
+        );
+        let velocity = SimulationVec3::new(
+            player.body.velocity.x + direction.x * 3.0,
+            player.body.velocity.y + direction.y * 3.0 + 0.15,
+            player.body.velocity.z + direction.z * 3.0,
+        );
+        let drop_id = format!("drop:{}:{}", input.sequence, self.next_action_sequence);
+        let custody_container_id = format!("drop-custody:{}:{}", input.sequence, self.next_action_sequence);
+        let mut drop_record = EntityCompatibilityRecord::new(&drop_id, &drop_id, "dropped-item");
+        drop_record.class = EntityClass::Construct;
+        drop_record.position = EntityVec3::new(position.x as f32, position.y as f32, position.z as f32);
+        drop_record.velocity = EntityVec3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32);
+        drop_record.yaw = yaw as f32;
+        drop_record
+            .custom
+            .insert("item.code".into(), held_stack.item_code.to_string());
+        drop_record
+            .custom
+            .insert("item.metadataHash".into(), held_stack.metadata_hash.to_hex());
+
+        let entity_sequence = self.entity_command_sequence.saturating_add(1).max(1);
+        let mut staged_entities = self.entities.clone();
+        let entity_receipt = staged_entities
+            .apply_batch(&EntityCommandBatch {
+                schema: ENTITY_COMMAND_SCHEMA,
+                sequence: entity_sequence,
+                expected_revision: staged_entities.revision(),
+                tick: self.tick,
+                commands: vec![EntityCommand::Spawn {
+                    record: drop_record,
+                    residency: EntityResidency::Hot,
+                }],
+            })
+            .map_err(|error| IntegratedRuntimeError::new("input-drop-entity", error.to_string()))?;
+        let drop_entity_id = entity_receipt
+            .events
+            .first()
+            .map(|event| event.entity_id)
+            .ok_or_else(|| IntegratedRuntimeError::new("input-drop-entity", "drop spawn emitted no entity event"))?;
+        let to_milli = |value: f64| (value * 1_000.0).round() as i64;
+        let to_microturns = |turns: f64| (turns.rem_euclid(1.0) * 1_000_000.0).round() as u32 % 1_000_000;
+        let request = PlayerDropStageRequestV1 {
+            batch_id: format!("input-drop:{}:{}", input.sequence, self.next_action_sequence),
+            idempotency_key: format!("input-drop:{}:{}", input.sequence, self.next_action_sequence),
+            actor: GameplayActor {
+                actor_id: player.binding.actor_id.clone(),
+                player_id: Some(player.binding.player_id),
+                entity_id: Some(player.entity_id),
+                role: ActorRole::Host,
+            },
+            expected_gameplay_identity: self.gameplay.state.identity(),
+            expected_world_view_identity: self.world_view.state.identity(),
+            player_id: player.binding.player_id,
+            expected_binding_revision: binding.revision,
+            expected_source_container_revision: source_container_revision,
+            expected_stack: ExpectedStack {
+                item_code: held_stack.item_code,
+                metadata_hash: held_stack.metadata_hash,
+                minimum_count: 1,
+            },
+            drop_id: drop_id.clone(),
+            drop_entity_id,
+            custody_container_id,
+            position: FixedWorldVec3V1 {
+                x_milli: to_milli(position.x),
+                y_milli: to_milli(position.y),
+                z_milli: to_milli(position.z),
+            },
+            velocity_milli_per_second: FixedWorldVec3V1 {
+                x_milli: to_milli(velocity.x),
+                y_milli: to_milli(velocity.y),
+                z_milli: to_milli(velocity.z),
+            },
+            rotation: RotationMicroturnsV1 {
+                yaw: to_microturns(yaw / std::f64::consts::TAU),
+                pitch: to_microturns(pitch / std::f64::consts::TAU),
+                roll: 0,
+            },
+            expires_tick: None,
+            pickup_lock_actor_id: Some(player.binding.actor_id),
+        };
+        let staged_drop = stage_player_drop_v1(&self.gameplay, &self.world_view.state, &request).map_err(|error| {
+            IntegratedRuntimeError::new("input-drop-custody", format!("{:?}: {}", error.code, error.message))
+        })?;
+        let world_view_batch = WorldViewBatchV1::new(
+            format!("input-drop-register:{}:{}", input.sequence, self.next_action_sequence),
+            format!("input-drop-register:{}:{}", input.sequence, self.next_action_sequence),
+            GameplayActor {
+                actor_id: "system".into(),
+                player_id: None,
+                entity_id: None,
+                role: ActorRole::System,
+            },
+            self.world_view.state.identity(),
+            vec![WorldViewCommandV1::RegisterDrop { drop: staged_drop.drop }],
+        );
+        let staged_world_view = stage_world_view_batches_v1(
+            &self.world_view,
+            &staged_drop.gameplay.state,
+            &staged_entities,
+            &[world_view_batch],
+        )
+        .map_err(|error| IntegratedRuntimeError::new("input-drop-world-view", error.to_string()))?;
+
+        let mut staged_runtime = self.clone();
+        staged_runtime.entities = staged_entities;
+        staged_runtime.gameplay = staged_drop.gameplay;
+        staged_runtime.world_view = staged_world_view.authority;
+        staged_runtime.entity_command_sequence = entity_sequence;
+        staged_runtime.sync_entity_schedules(std::slice::from_ref(&entity_receipt))?;
+        validate_world_view_runtime_links_v1(
+            &staged_runtime.world_view.state,
+            &staged_runtime.gameplay.state,
+            &staged_runtime.entities,
+        )
+        .map_err(|error| IntegratedRuntimeError::new("input-drop-transaction", error.to_string()))?;
+        *self = staged_runtime;
+        Ok((RuntimeInputActionOutcomeV1::Applied, drop_entity_id.packed()))
+    }
+
+    fn resolve_action_target(
+        &self,
+        input: RuntimeInputFrameV1,
+        maximum_distance: f64,
+    ) -> Result<IntegratedRuntimeActionTargetV1, IntegratedRuntimeError> {
+        let player = self
+            .player
+            .as_ref()
+            .ok_or_else(|| IntegratedRuntimeError::new("player-binding-required", "target query requires a player"))?;
+        let eye = SimulationVec3::new(
+            player.body.position.x,
+            player.body.position.y + player.body.height * 0.82,
+            player.body.position.z,
+        );
+        let yaw = normalized_i16(input.look_yaw) * std::f64::consts::PI;
+        let pitch = normalized_i16(input.look_pitch) * std::f64::consts::FRAC_PI_2;
+        let horizontal = pitch.cos();
+        let direction = SimulationVec3::new(-yaw.sin() * horizontal, pitch.sin(), -yaw.cos() * horizontal);
+
+        let mut obstruction = maximum_distance + 0.25;
+        let mut block_target = None;
+        let mut unloaded = false;
+        let sample_count = (maximum_distance * 4.0).ceil() as u32;
+        let mut previous_cell = None;
+        for sample in 1..=sample_count {
+            let distance = f64::from(sample) * 0.25;
+            let cell = CellPositionV1 {
+                x: floor_i32(eye.x + direction.x * distance)?,
+                y: floor_i32(eye.y + direction.y * distance)?,
+                z: floor_i32(eye.z + direction.z * distance)?,
+            };
+            if previous_cell == Some(cell) {
+                continue;
+            }
+            previous_cell = Some(cell);
+            match self.world.read_cell(cell) {
+                WorldCellReadV1::Unloaded { .. } => {
+                    obstruction = distance;
+                    unloaded = true;
+                    break;
+                }
+                WorldCellReadV1::Loaded { cell: value, .. } if value.block_id != 0 => {
+                    obstruction = distance;
+                    block_target = Some(cell);
+                    break;
+                }
+                WorldCellReadV1::Loaded { .. } => {}
+            }
+        }
+
+        let mut best: Option<(f64, EntityId)> = None;
+        for (id, entity) in self.entities.hot() {
+            if *id == player.entity_id || entity.record.health <= 0.0 {
+                continue;
+            }
+            let dx = f64::from(entity.record.position.x) - eye.x;
+            let dy = f64::from(entity.record.position.y) + 0.75 - eye.y;
+            let dz = f64::from(entity.record.position.z) - eye.z;
+            let projection = dx * direction.x + dy * direction.y + dz * direction.z;
+            if projection <= 0.0 || projection > maximum_distance || projection >= obstruction {
+                continue;
+            }
+            let distance_squared = dx * dx + dy * dy + dz * dz;
+            let lateral_squared = (distance_squared - projection * projection).max(0.0);
+            if lateral_squared > 1.1 * 1.1 {
+                continue;
+            }
+            if best.is_none_or(|(best_projection, best_id)| {
+                projection < best_projection || (projection == best_projection && *id < best_id)
+            }) {
+                best = Some((projection, *id));
+            }
+        }
+        if let Some((_, id)) = best {
+            Ok(IntegratedRuntimeActionTargetV1::Entity(id))
+        } else if let Some(position) = block_target {
+            Ok(IntegratedRuntimeActionTargetV1::Block(position))
+        } else if unloaded {
+            Ok(IntegratedRuntimeActionTargetV1::Unloaded)
+        } else {
+            Ok(IntegratedRuntimeActionTargetV1::None)
+        }
+    }
+
+    fn advance_bound_player(&mut self, input: RuntimeInputFrameV1) -> Result<(), IntegratedRuntimeError> {
         let player = self.player.as_ref().expect("player binding was checked").clone();
         let resident = self
             .entities
@@ -3012,7 +3882,7 @@ impl IntegratedRuntimeV2 {
         };
         let window = self.capture_simulation_window(origin, ReadSizeV1 { x: 7, y: 10, z: 7 })?;
         let yaw = normalized_i16(input.look_yaw) * std::f64::consts::PI;
-        let creative_flying = input.flags & (RUNTIME_INPUT_FLAG_CREATIVE_V1 | RUNTIME_INPUT_FLAG_FLYING_V1)
+        let creative_flying = player.flags & (RUNTIME_INPUT_FLAG_CREATIVE_V1 | RUNTIME_INPUT_FLAG_FLYING_V1)
             == (RUNTIME_INPUT_FLAG_CREATIVE_V1 | RUNTIME_INPUT_FLAG_FLYING_V1);
         let sprinting = input.buttons & RUNTIME_INPUT_BUTTON_SPRINT_V1 != 0;
         let mut controls_flags = 0_u16;
@@ -3061,7 +3931,9 @@ impl IntegratedRuntimeV2 {
                 GravityProfileV1::default()
             },
             swimming: PhysicsSwimProfileV1 {
-                enabled: !creative_flying,
+                // Creative eligibility is Rust-owned and includes damage/
+                // oxygen immunity even while the player elects to walk.
+                enabled: !player.binding.creative_mode,
                 max_oxygen_seconds: player.binding.maximum_oxygen_seconds,
                 ..PhysicsSwimProfileV1::default()
             },
@@ -3070,17 +3942,21 @@ impl IntegratedRuntimeV2 {
         }
         .seal();
         let result = self.run_physics(&physics)?;
-        let damage = result
-            .events
-            .iter()
-            .filter(|event| {
-                matches!(
-                    event.kind,
-                    PhysicsEventKindV1::FallDamage | PhysicsEventKindV1::DrownDamage
-                )
-            })
-            .map(|event| event.amount)
-            .sum::<f64>() as f32;
+        let damage = if player.binding.creative_mode {
+            0.0
+        } else {
+            result
+                .events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event.kind,
+                        PhysicsEventKindV1::FallDamage | PhysicsEventKindV1::DrownDamage
+                    )
+                })
+                .map(|event| event.amount)
+                .sum::<f64>() as f32
+        };
         resident_record.position = EntityVec3::new(
             result.body.position.x as f32,
             result.body.position.y as f32,
@@ -3127,6 +4003,14 @@ impl IntegratedRuntimeV2 {
         )?;
         let binding_id = player.binding.external_entity_id.clone();
         for event in &result.events {
+            if player.binding.creative_mode
+                && matches!(
+                    event.kind,
+                    PhysicsEventKindV1::FallDamage | PhysicsEventKindV1::DrownDamage
+                )
+            {
+                continue;
+            }
             self.push_effect_event(&binding_id, event.kind, event.amount);
         }
         self.player = Some(IntegratedRuntimePlayerStateV2 {
@@ -3137,7 +4021,7 @@ impl IntegratedRuntimeV2 {
             selected_slot: input.selected_slot,
             look_pitch: input.look_pitch,
             buttons: input.buttons,
-            flags: input.flags,
+            flags: player.flags,
             last_input_sequence: input.sequence,
         });
         Ok(())
@@ -3155,19 +4039,23 @@ impl IntegratedRuntimeV2 {
             ));
         }
         let sequence = self.entity_command_sequence.saturating_add(1).max(1);
-        let receipt = self
+        let mut staged = self.clone();
+        let receipt = staged
             .entities
             .apply_batch(&EntityCommandBatch {
                 schema: ENTITY_COMMAND_SCHEMA,
                 sequence,
-                expected_revision: self.entities.revision(),
+                expected_revision: staged.entities.revision(),
                 tick: self.tick,
                 commands,
             })
             .map_err(|error| IntegratedRuntimeError::new(code, error.to_string()))?;
-        self.entity_command_sequence = self.entity_command_sequence.max(receipt.sequence);
-        self.sync_entity_schedules(std::slice::from_ref(&receipt))?;
-        self.invalidate_state_hash();
+        validate_world_view_runtime_links_v1(&staged.world_view.state, &staged.gameplay.state, &staged.entities)
+            .map_err(|error| IntegratedRuntimeError::new(code, error.to_string()))?;
+        staged.entity_command_sequence = staged.entity_command_sequence.max(receipt.sequence);
+        staged.sync_entity_schedules(std::slice::from_ref(&receipt))?;
+        staged.invalidate_state_hash();
+        *self = staged;
         Ok(receipt)
     }
 
@@ -3429,47 +4317,71 @@ impl IntegratedRuntimeV2 {
         self.advance_entity_scheduler()?;
         self.advance_ecology_scheduler();
 
-        self.gameplay.state.tick = self.tick;
-        self.gameplay
-            .state
-            .combat
-            .apply(&CombatCommand::Advance { to_tick: self.tick })
-            .map_err(|error| IntegratedRuntimeError::new("combat-schedule", error.message))?;
-        let machine_jobs = self
-            .gameplay
-            .state
-            .machines
-            .machines
-            .values()
-            .filter(|machine| machine.active && machine.last_tick < self.tick && machine.recipe_id.is_some())
-            .take(INTEGRATED_RUNTIME_MAX_MACHINES_PER_STEP)
-            .map(|machine| (machine.machine_id.clone(), machine.revision))
-            .collect::<Vec<_>>();
-        let mut machines_advanced = 0_u64;
-        for (machine_id, expected_revision) in machine_jobs {
-            if self
-                .gameplay
-                .state
-                .machines
-                .apply(
-                    &MachineCommand::Advance {
-                        machine_id,
-                        expected_revision,
-                        to_tick: self.tick,
-                    },
-                    self.tick,
-                )
-                .is_ok()
-            {
-                machines_advanced = machines_advanced.saturating_add(1);
+        let expected_tick = self.gameplay.state.tick;
+        let expected_world_view_tick = self.world_view.state.tick;
+        if self.tick <= expected_tick || self.tick <= expected_world_view_tick {
+            return Err(IntegratedRuntimeError::new(
+                "gameplay-schedule-clock",
+                "fixed-step runtime tick did not advance beyond gameplay and world-view authority",
+            ));
+        }
+        let batch_id = format!("gameplay-schedule:{}", self.tick);
+        let batch = GameplayBatch::new(
+            &batch_id,
+            &batch_id,
+            GameplayActor {
+                actor_id: GAMEPLAY_SCHEDULER_ACTOR_ID_V1.into(),
+                player_id: None,
+                entity_id: None,
+                role: ActorRole::System,
+            },
+            self.gameplay.state.identity(),
+            vec![GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+                expected_tick,
+                to_tick: self.tick,
+                machine_budget: INTEGRATED_RUNTIME_MAX_MACHINES_PER_STEP as u16,
+            })],
+        );
+        let mut staged_gameplay = self.gameplay.clone();
+        match staged_gameplay.apply_batch(&batch) {
+            GameplayReceipt::Accepted(_) => {}
+            GameplayReceipt::Rejected { rejection, .. } => {
+                return Err(IntegratedRuntimeError::new(
+                    "gameplay-schedule",
+                    format!("{:?}: {}", rejection.code, rejection.message),
+                ));
             }
         }
-        self.gameplay.state.revision.sequence = self.gameplay.state.revision.sequence.saturating_add(1);
-        self.gameplay.state.revision.combat = self.gameplay.state.revision.combat.saturating_add(1);
-        if machines_advanced > 0 {
-            self.gameplay.state.revision.machines = self.gameplay.state.revision.machines.saturating_add(1);
+        let world_view_batch_id = format!("world-view-schedule:{}", self.tick);
+        let world_view_batch = WorldViewBatchV1::new(
+            &world_view_batch_id,
+            &world_view_batch_id,
+            GameplayActor {
+                actor_id: "system".into(),
+                player_id: None,
+                entity_id: None,
+                role: ActorRole::System,
+            },
+            self.world_view.state.identity(),
+            vec![WorldViewCommandV1::AdvanceTick {
+                expected_tick: expected_world_view_tick,
+                to_tick: self.tick,
+            }],
+        );
+        let mut staged_world_view = self.world_view.clone();
+        match staged_world_view.apply_batch(&world_view_batch, &staged_gameplay.state) {
+            WorldViewReceiptV1::Accepted(_) => {}
+            WorldViewReceiptV1::Rejected { rejection, .. } => {
+                return Err(IntegratedRuntimeError::new(
+                    "world-view-schedule",
+                    format!("{:?}: {}", rejection.code, rejection.message),
+                ));
+            }
         }
-        self.gameplay_authority_revision = self.gameplay_authority_revision.saturating_add(1);
+        validate_world_view_runtime_links_v1(&staged_world_view.state, &staged_gameplay.state, &self.entities)
+            .map_err(|error| IntegratedRuntimeError::new("world-view-schedule", error.to_string()))?;
+        self.gameplay = staged_gameplay;
+        self.world_view = staged_world_view;
         Ok(())
     }
 
@@ -3536,18 +4448,13 @@ impl IntegratedRuntimeV2 {
                     "fixed-step input contains an unregistered button or state flag",
                 ));
             }
-            if input.buttons & !RUNTIME_INPUT_LIVE_MOVEMENT_BUTTON_MASK_V1 != 0 {
-                return Err(IntegratedRuntimeError::new(
-                    "input-action-unavailable",
-                    "attack, use, interact, mount, flight-toggle, and drop inputs remain fail-closed until their native command dispatch is attached",
-                ));
-            }
-            if input.flags != 0 {
-                return Err(IntegratedRuntimeError::new(
-                    "input-state-unavailable",
-                    "creative, flight, and mounted state flags remain fail-closed until Rust owns their eligibility transitions",
-                ));
-            }
+            // Flags are a browser observation, never an authority input.  In
+            // particular, a single queued batch may contain the edge that
+            // changes flight/mount state and later frames sampled after that
+            // edge.  Requiring every sample to equal the state at queue time
+            // would make that deterministic batch impossible to submit.  The
+            // fixed-step simulation reads only `player.flags`, and receipts
+            // return the resulting authoritative value.
             previous = Some(input.sequence);
         }
         self.queued_inputs.extend(inputs.iter().copied());
@@ -3886,6 +4793,9 @@ impl IntegratedRuntimeV2 {
         self.receipts.clear();
         self.idempotency.clear();
         self.idempotency_order.clear();
+        self.command_receipts.clear();
+        self.command_receipt_order.clear();
+        self.command_receipt_bytes = 0;
         self.queued_inputs.clear();
         self.entity_scheduler = EntityScheduler::default();
         self.entity_ecology_jobs = EcologyJobQueue::default();
@@ -4144,6 +5054,9 @@ fn write_runtime_input(hasher: &mut CanonicalHasher, input: &RuntimeInputFrameV1
 fn write_player_state(hasher: &mut CanonicalHasher, player: &IntegratedRuntimePlayerStateV2) {
     let binding = &player.binding;
     hasher.write_str(&binding.external_entity_id);
+    hasher.write_str(&binding.actor_id);
+    hasher.write_u64(binding.player_id.packed());
+    hasher.write_u16(u16::from(binding.creative_mode));
     for value in [
         binding.radius,
         binding.standing_height,
@@ -4299,6 +5212,92 @@ fn reject_batch(
         message: message.to_owned(),
         current,
     })
+}
+
+fn runtime_command_receipt_key_hash_v1(receipt: &RuntimeCommandReceiptV1) -> (&str, WireHash) {
+    match receipt {
+        RuntimeCommandReceiptV1::Accepted {
+            idempotency_key,
+            command_hash,
+            ..
+        }
+        | RuntimeCommandReceiptV1::Rejected {
+            idempotency_key,
+            command_hash,
+            ..
+        } => (idempotency_key, *command_hash),
+    }
+}
+
+fn runtime_command_receipt_cache_entry_bytes_v1(actor_id: &str, idempotency_key: &str, receipt_bytes: usize) -> usize {
+    // Two u32 string lengths, the exact labels, the command hash, and one u32
+    // receipt length are all included in the durable aggregate bound.
+    4_usize
+        .saturating_add(actor_id.len())
+        .saturating_add(4)
+        .saturating_add(idempotency_key.len())
+        .saturating_add(16)
+        .saturating_add(4)
+        .saturating_add(receipt_bytes)
+}
+
+fn validate_runtime_command_receipt_cache_v1(
+    entries: &BTreeMap<(String, String), IntegratedRuntimeCommandReceiptCacheEntryV1>,
+    order: &VecDeque<(String, String)>,
+    expected_bytes: usize,
+) -> Result<(), IntegratedRuntimeError> {
+    if entries.len() != order.len() || entries.len() > INTEGRATED_RUNTIME_MAX_IDEMPOTENCY_RECEIPTS {
+        return Err(IntegratedRuntimeError::new(
+            "native-command-receipt-order",
+            "command receipt cache map and insertion order are inconsistent",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut total = 0_usize;
+    for key in order {
+        if !seen.insert(key.clone()) {
+            return Err(IntegratedRuntimeError::new(
+                "native-command-receipt-duplicate",
+                "command receipt cache insertion order repeats a key",
+            ));
+        }
+        let entry = entries.get(key).ok_or_else(|| {
+            IntegratedRuntimeError::new(
+                "native-command-receipt-order",
+                "command receipt cache insertion order references a missing entry",
+            )
+        })?;
+        let canonical = encode_command_receipt_v1(&entry.receipt)
+            .map_err(|error| IntegratedRuntimeError::new(error.code, error.message))?;
+        let (receipt_key, receipt_hash) = runtime_command_receipt_key_hash_v1(&entry.receipt);
+        if key.0.is_empty()
+            || key.0.len() > 160
+            || key.1.is_empty()
+            || key.1.len() > 256
+            || receipt_key != key.1
+            || receipt_hash != entry.command_hash
+            || canonical != entry.encoded_receipt
+        {
+            return Err(IntegratedRuntimeError::new(
+                "native-command-receipt-mismatch",
+                "command receipt cache entry is not canonical for its key and hash",
+            ));
+        }
+        validate_command_receipt_hash_v1(&entry.receipt)
+            .map_err(|error| IntegratedRuntimeError::new(error.code, error.message))?;
+        total = total.saturating_add(runtime_command_receipt_cache_entry_bytes_v1(
+            &key.0,
+            &key.1,
+            entry.encoded_receipt.len(),
+        ));
+    }
+    if total != expected_bytes || total > INTEGRATED_RUNTIME_MAX_COMMAND_RECEIPT_CACHE_BYTES_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-command-receipt-capacity",
+            "command receipt cache aggregate byte accounting is invalid",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4680,7 +5679,7 @@ fn decode_and_validate_native_bundle_v1(
     if bundle.envelopes.len() != IntegratedRuntimeNativeRecordKindV1::ALL.len() {
         return Err(IntegratedRuntimeError::new(
             "recovery-native-missing",
-            "native authority bundle does not contain exactly five required records",
+            "native authority bundle does not contain exactly six required records",
         ));
     }
     let first =
@@ -4872,6 +5871,9 @@ fn write_runtime_player_v1(
 ) -> Result<(), IntegratedRuntimeError> {
     let binding = &player.binding;
     writer.string(&binding.external_entity_id)?;
+    writer.string(&binding.actor_id)?;
+    writer.u64(binding.player_id.packed());
+    writer.bool(binding.creative_mode);
     for value in [
         binding.radius,
         binding.standing_height,
@@ -4921,9 +5923,29 @@ fn write_runtime_player_v1(
 
 fn read_runtime_player_v1(
     reader: &mut NativeReaderV1<'_>,
+    schema: u16,
 ) -> Result<IntegratedRuntimePlayerStateV2, IntegratedRuntimeError> {
+    let external_entity_id = reader.string()?;
+    let authority = if schema >= NATIVE_RUNTIME_CORE_SCHEMA_V2 {
+        let actor_id = reader.string()?;
+        let packed = reader.u64()?;
+        Some((
+            actor_id,
+            PlayerId::new(packed as u32, (packed >> 32) as u32),
+            reader.bool()?,
+        ))
+    } else {
+        None
+    };
     let binding = RuntimePlayerBindingWireV1 {
-        external_entity_id: reader.string()?,
+        external_entity_id,
+        actor_id: authority
+            .as_ref()
+            .map_or_else(String::new, |(actor_id, _, _)| actor_id.clone()),
+        player_id: authority
+            .as_ref()
+            .map_or_else(PlayerId::default, |(_, player_id, _)| *player_id),
+        creative_mode: authority.as_ref().is_some_and(|(_, _, creative)| *creative),
         radius: reader.f64()?,
         standing_height: reader.f64()?,
         crouching_height: reader.f64()?,
@@ -4933,10 +5955,20 @@ fn read_runtime_player_v1(
         creative_flight_speed: reader.f64()?,
         maximum_oxygen_seconds: reader.f64()?,
     };
+    let packed_id = reader.u64()?;
+    let entity_id = EntityId::new(packed_id as u32, (packed_id >> 32) as u32);
+    let binding = if schema >= NATIVE_RUNTIME_CORE_SCHEMA_V2 {
+        binding
+    } else {
+        RuntimePlayerBindingWireV1 {
+            actor_id: binding.external_entity_id.clone(),
+            player_id: PlayerId::new(entity_id.0.index(), entity_id.0.generation()),
+            ..binding
+        }
+    };
     binding
         .validate()
         .map_err(|error| IntegratedRuntimeError::new("native-player-binding", error.message))?;
-    let packed_id = reader.u64()?;
     let body = PhysicsBodyV1 {
         handle: reader.string()?,
         position: SimulationVec3::new(reader.f64()?, reader.f64()?, reader.f64()?),
@@ -4981,7 +6013,7 @@ fn read_runtime_player_v1(
     }
     Ok(IntegratedRuntimePlayerStateV2 {
         binding,
-        entity_id: EntityId::new(packed_id as u32, (packed_id >> 32) as u32),
+        entity_id,
         body,
         contact_flags,
         selected_slot,
@@ -5064,9 +6096,14 @@ fn encode_runtime_core_snapshot_v1(runtime: &IntegratedRuntimeV2) -> Result<Vec<
             "runtime core state exceeds its checkpoint bounds",
         ));
     }
+    validate_runtime_command_receipt_cache_v1(
+        &runtime.command_receipts,
+        &runtime.command_receipt_order,
+        runtime.command_receipt_bytes,
+    )?;
     let mut writer = NativeWriterV1::default();
     writer.raw(NATIVE_RUNTIME_MAGIC_V1);
-    writer.u16(NATIVE_RECORD_SCHEMA_V1);
+    writer.u16(NATIVE_RUNTIME_CORE_SCHEMA_V3);
     write_runtime_config_v1(&mut writer, &runtime.config)?;
     write_runtime_revision_v1(&mut writer, runtime.revision());
     writer.u64(runtime.tick);
@@ -5102,6 +6139,7 @@ fn encode_runtime_core_snapshot_v1(runtime: &IntegratedRuntimeV2) -> Result<Vec<
     if let Some(input) = runtime.last_applied_input {
         write_runtime_input_v1(&mut writer, input);
     }
+    writer.u64(runtime.next_action_sequence);
     writer.u32(runtime.replay.len() as u32);
     for entry in &runtime.replay {
         writer.u64(entry.sequence);
@@ -5109,6 +6147,17 @@ fn encode_runtime_core_snapshot_v1(runtime: &IntegratedRuntimeV2) -> Result<Vec<
         writer.hash(entry.before_hash);
         writer.hash(entry.after_hash);
         writer.hash(entry.receipt_hash);
+    }
+    writer.u32(runtime.command_receipt_order.len() as u32);
+    for key in &runtime.command_receipt_order {
+        let entry = runtime
+            .command_receipts
+            .get(key)
+            .expect("validated command receipt order contains every cache key");
+        writer.string(&key.0)?;
+        writer.string(&key.1)?;
+        writer.raw(&entry.command_hash.0);
+        writer.bytes(&entry.encoded_receipt)?;
     }
     write_compatibility_journal_v1(&mut writer, &runtime.persistence)?;
     writer.bytes(&runtime.native_runtime_extension_bytes)?;
@@ -5118,7 +6167,11 @@ fn encode_runtime_core_snapshot_v1(runtime: &IntegratedRuntimeV2) -> Result<Vec<
 fn decode_runtime_core_snapshot_v1(bytes: &[u8]) -> Result<IntegratedRuntimeCoreSnapshotV1, IntegratedRuntimeError> {
     let mut reader = NativeReaderV1::new(bytes);
     reader.magic(NATIVE_RUNTIME_MAGIC_V1)?;
-    if reader.u16()? != NATIVE_RECORD_SCHEMA_V1 {
+    let schema = reader.u16()?;
+    if schema != NATIVE_RECORD_SCHEMA_V1
+        && schema != NATIVE_RUNTIME_CORE_SCHEMA_V2
+        && schema != NATIVE_RUNTIME_CORE_SCHEMA_V3
+    {
         return Err(IntegratedRuntimeError::new(
             "native-runtime-schema",
             "runtime core snapshot schema is unsupported",
@@ -5141,7 +6194,7 @@ fn decode_runtime_core_snapshot_v1(bytes: &[u8]) -> Result<IntegratedRuntimeCore
     let gameplay_authority_revision = reader.u64()?;
     let entity_command_sequence = reader.u64()?;
     let player = if reader.bool()? {
-        Some(read_runtime_player_v1(&mut reader)?)
+        Some(read_runtime_player_v1(&mut reader, schema)?)
     } else {
         None
     };
@@ -5209,6 +6262,17 @@ fn decode_runtime_core_snapshot_v1(bytes: &[u8]) -> Result<IntegratedRuntimeCore
     } else {
         None
     };
+    let next_action_sequence = if schema >= NATIVE_RUNTIME_CORE_SCHEMA_V2 {
+        reader.u64()?
+    } else {
+        1
+    };
+    if next_action_sequence == 0 {
+        return Err(IntegratedRuntimeError::new(
+            "native-action-order",
+            "runtime next action sequence is reserved",
+        ));
+    }
     if last_input_sequence.is_some_and(|sequence| sequence < previous_input_sequence) {
         return Err(IntegratedRuntimeError::new(
             "native-input-order",
@@ -5235,6 +6299,67 @@ fn decode_runtime_core_snapshot_v1(bytes: &[u8]) -> Result<IntegratedRuntimeCore
             receipt_hash: reader.hash()?,
         });
     }
+    let mut command_receipts = BTreeMap::new();
+    let mut command_receipt_order = VecDeque::new();
+    let mut command_receipt_bytes = 0_usize;
+    if schema >= NATIVE_RUNTIME_CORE_SCHEMA_V3 {
+        let receipt_count = reader.count(
+            INTEGRATED_RUNTIME_MAX_IDEMPOTENCY_RECEIPTS,
+            "command receipt cache entries",
+        )?;
+        for _ in 0..receipt_count {
+            let actor_id = reader.string()?;
+            let idempotency_key = reader.string()?;
+            if actor_id.is_empty() || actor_id.len() > 160 || idempotency_key.is_empty() || idempotency_key.len() > 256
+            {
+                return Err(IntegratedRuntimeError::new(
+                    "native-command-receipt-key",
+                    "checkpoint command receipt cache key is outside BWRQ label bounds",
+                ));
+            }
+            let command_hash = WireHash(reader.take(16)?.try_into().expect("fixed slice"));
+            let encoded_receipt = reader.bytes(MAX_WIRE_BYTES)?;
+            command_receipt_bytes = command_receipt_bytes.saturating_add(runtime_command_receipt_cache_entry_bytes_v1(
+                &actor_id,
+                &idempotency_key,
+                encoded_receipt.len(),
+            ));
+            if command_receipt_bytes > INTEGRATED_RUNTIME_MAX_COMMAND_RECEIPT_CACHE_BYTES_V1 {
+                return Err(IntegratedRuntimeError::new(
+                    "native-command-receipt-capacity",
+                    "checkpoint command receipt cache exceeds its aggregate byte budget",
+                ));
+            }
+            let receipt = decode_command_receipt_v1(&encoded_receipt)
+                .map_err(|error| IntegratedRuntimeError::new(error.code, error.message))?;
+            let key = (actor_id, idempotency_key);
+            let (receipt_key, receipt_hash) = runtime_command_receipt_key_hash_v1(&receipt);
+            if receipt_key != key.1 || receipt_hash != command_hash {
+                return Err(IntegratedRuntimeError::new(
+                    "native-command-receipt-mismatch",
+                    "checkpoint command receipt bytes do not match their cache key and hash",
+                ));
+            }
+            if command_receipts
+                .insert(
+                    key.clone(),
+                    IntegratedRuntimeCommandReceiptCacheEntryV1 {
+                        command_hash,
+                        receipt,
+                        encoded_receipt,
+                    },
+                )
+                .is_some()
+            {
+                return Err(IntegratedRuntimeError::new(
+                    "native-command-receipt-duplicate",
+                    "checkpoint command receipt cache repeats an actor and idempotency key",
+                ));
+            }
+            command_receipt_order.push_back(key);
+        }
+    }
+    validate_runtime_command_receipt_cache_v1(&command_receipts, &command_receipt_order, command_receipt_bytes)?;
     let compatibility_journal = read_compatibility_journal_v1(&mut reader, &config)?;
     let unknown_extension_bytes = reader.bytes(NATIVE_EXTENSION_MAX_BYTES_V1)?;
     reader.finish()?;
@@ -5255,7 +6380,11 @@ fn decode_runtime_core_snapshot_v1(bytes: &[u8]) -> Result<IntegratedRuntimeCore
         queued_inputs,
         last_input_sequence,
         last_applied_input,
+        next_action_sequence,
         replay,
+        command_receipts,
+        command_receipt_order,
+        command_receipt_bytes,
         compatibility_journal,
         unknown_extension_bytes,
     })
@@ -5558,7 +6687,10 @@ mod tests {
     use blockwild_authority::{
         CellPositionV1, SectionInstallV1, WORLD_SECTION_CELL_COUNT_V1, WorldCellV1, WorldSectionAddressV1,
     };
-    use blockwild_entity::{ENTITY_COMMAND_SCHEMA, EntityCommand, EntityCompatibilityRecord, EntityResidency};
+    use blockwild_entity::{
+        ENTITY_COMMAND_SCHEMA, EntityCommand, EntityCompatibilityRecord, EntityResidency, MountSeat, MountState,
+    };
+    use blockwild_gameplay::{ItemDefinition, ItemStack};
 
     use super::*;
 
@@ -5618,6 +6750,9 @@ mod tests {
         runtime
             .bind_player(RuntimePlayerBindingWireV1 {
                 external_entity_id: "player:one".into(),
+                actor_id: "player:one".into(),
+                player_id: PlayerId::new(1, 1),
+                creative_mode: true,
                 radius: 0.35,
                 standing_height: 1.8,
                 crouching_height: 1.35,
@@ -5628,6 +6763,46 @@ mod tests {
                 maximum_oxygen_seconds: 15.0,
             })
             .unwrap();
+        runtime
+    }
+
+    fn runtime_with_bound_player_item(count: u32) -> IntegratedRuntimeV2 {
+        let mut runtime = runtime_with_bound_player();
+        let player_id = runtime.player().unwrap().binding.player_id;
+        let player_entity_id = runtime.player().unwrap().entity_id;
+        let actor_id = runtime.player().unwrap().binding.actor_id.clone();
+        let inventory_key = runtime
+            .world_view()
+            .state
+            .player_binding(player_id)
+            .unwrap()
+            .inventory_container
+            .clone();
+        let mut state = runtime.gameplay().state.clone();
+        state
+            .inventory
+            .register_item(ItemDefinition {
+                code: 42,
+                content_id: "item.blockwild.test-drop".into(),
+                max_stack: 64,
+                tags: BTreeSet::new(),
+            })
+            .unwrap();
+        state.inventory.containers.get_mut(&inventory_key).unwrap().slots[0] = Some(ItemStack::simple(42, count));
+        state.revision.sequence = state.revision.sequence.saturating_add(1);
+        state.revision.inventory = state.revision.inventory.saturating_add(1);
+        runtime.gameplay = GameplayAuthority::new(state);
+        runtime
+            .gameplay
+            .grant_actor(actor_id.clone(), ActorGrant::host(player_id, player_entity_id))
+            .unwrap();
+        runtime
+            .gameplay
+            .grant_actor(GAMEPLAY_SCHEDULER_ACTOR_ID_V1, ActorGrant::system())
+            .unwrap();
+        validate_world_view_runtime_links_v1(&runtime.world_view.state, &runtime.gameplay.state, &runtime.entities)
+            .unwrap();
+        runtime.invalidate_state_hash();
         runtime
     }
 
@@ -5732,6 +6907,172 @@ mod tests {
         assert_eq!(hasher.finish().to_hex(), "1077e0e354d95fe1f0fc9f1ea3ffc021");
     }
 
+    fn command_cache_identity(state_hash_byte: u8) -> blockwild_runtime_wire::RuntimeIdentityV1 {
+        blockwild_runtime_wire::RuntimeIdentityV1 {
+            universe_id: "1".into(),
+            location_id: "blockwild".into(),
+            revision: blockwild_runtime_wire::RuntimeRevisionV1 {
+                epoch: 1,
+                world: 2,
+                entities: 3,
+                gameplay: 4,
+                persistence: 5,
+                network: 6,
+                simulation: 7,
+            },
+            tick: 8,
+            state_hash: WireHash([state_hash_byte; 16]),
+        }
+    }
+
+    fn accepted_command_cache_receipt(
+        idempotency_key: &str,
+        command_hash: WireHash,
+        domain_receipts: Vec<blockwild_runtime_wire::RuntimeDomainOperationV1>,
+    ) -> RuntimeCommandReceiptV1 {
+        let mut receipt = RuntimeCommandReceiptV1::Accepted {
+            command_id: "command:cached".into(),
+            idempotency_key: idempotency_key.into(),
+            command_hash,
+            before: command_cache_identity(0x11),
+            after: command_cache_identity(0x22),
+            domain_receipts,
+            receipt_hash: WireHash::default(),
+        };
+        let hash = blockwild_runtime_wire::command_receipt_hash_v1(&receipt);
+        let RuntimeCommandReceiptV1::Accepted { receipt_hash, .. } = &mut receipt else {
+            unreachable!()
+        };
+        *receipt_hash = hash;
+        receipt
+    }
+
+    #[test]
+    fn command_receipt_cache_is_identity_neutral_checkpointed_and_capacity_atomic() {
+        let mut runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2::default()).unwrap();
+        let command_hash = WireHash([0x33; 16]);
+        let receipt = accepted_command_cache_receipt("key:cached", command_hash, Vec::new());
+        let before_identity = runtime.identity();
+        runtime
+            .cache_runtime_command_receipt("actor:cached", "key:cached", command_hash, receipt.clone())
+            .unwrap();
+        assert_eq!(
+            runtime.identity(),
+            before_identity,
+            "reliability metadata is identity-neutral"
+        );
+
+        let checkpoint = runtime.export_runtime_checkpoint().unwrap();
+        let restored = IntegratedRuntimeV2::restore_runtime_checkpoint(
+            &checkpoint,
+            integrated_runtime_checkpoint_hash_v1(&checkpoint),
+        )
+        .unwrap();
+        assert_eq!(restored.identity(), before_identity);
+        assert_eq!(
+            restored.lookup_runtime_command_receipt("actor:cached", "key:cached", command_hash),
+            RuntimeCommandCacheLookupV1::Exact(Box::new(receipt))
+        );
+        assert_eq!(
+            restored.lookup_runtime_command_receipt("actor:cached", "key:cached", WireHash([0x44; 16])),
+            RuntimeCommandCacheLookupV1::Conflict
+        );
+
+        let large_receipts = (0..5)
+            .map(|index| {
+                let payload = vec![index as u8; 900_000];
+                blockwild_runtime_wire::RuntimeDomainOperationV1 {
+                    domain: blockwild_runtime_wire::RuntimeDomainV1::World,
+                    type_id: format!("large:{index}"),
+                    schema: 1,
+                    payload_hash: WireHash(blockwild_runtime_wire::wire_checksum_v1(&payload)),
+                    payload,
+                }
+            })
+            .collect();
+        let large_hash = WireHash([0x55; 16]);
+        let large = accepted_command_cache_receipt("key:large", large_hash, large_receipts);
+        let before_large = restored.identity();
+        let mut capacity_candidate = restored.clone();
+        assert_eq!(
+            capacity_candidate
+                .cache_runtime_command_receipt("actor:large", "key:large", large_hash, large)
+                .unwrap_err()
+                .code,
+            "idempotency-receipt-capacity"
+        );
+        assert_eq!(capacity_candidate.identity(), before_large);
+        assert_eq!(
+            capacity_candidate.lookup_runtime_command_receipt("actor:large", "key:large", large_hash),
+            RuntimeCommandCacheLookupV1::Miss
+        );
+    }
+
+    #[test]
+    fn command_receipt_cache_rejects_tampered_hash_duplicate_order_and_bad_byte_accounting() {
+        let mut runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2::default()).unwrap();
+        let command_hash = WireHash([0x66; 16]);
+        let receipt = accepted_command_cache_receipt("key:tamper", command_hash, Vec::new());
+        runtime
+            .cache_runtime_command_receipt("actor:tamper", "key:tamper", command_hash, receipt.clone())
+            .unwrap();
+        let mut core = encode_runtime_core_snapshot_v1(&runtime).unwrap();
+        let embedded_hash = match receipt {
+            RuntimeCommandReceiptV1::Accepted { receipt_hash, .. } => receipt_hash.0,
+            RuntimeCommandReceiptV1::Rejected { .. } => unreachable!(),
+        };
+        let offset = core
+            .windows(embedded_hash.len())
+            .rposition(|window| window == embedded_hash)
+            .expect("focused receipt hash is embedded in schema-3 core");
+        core[offset] ^= 0xff;
+        assert_eq!(decode_runtime_core_snapshot_v1(&core).unwrap_err().code, "receipt-hash");
+
+        let key = ("actor:tamper".to_owned(), "key:tamper".to_owned());
+        let mut duplicate_order = runtime.command_receipt_order.clone();
+        duplicate_order.push_back(key);
+        assert_eq!(
+            validate_runtime_command_receipt_cache_v1(
+                &runtime.command_receipts,
+                &duplicate_order,
+                runtime.command_receipt_bytes,
+            )
+            .unwrap_err()
+            .code,
+            "native-command-receipt-order"
+        );
+        assert_eq!(
+            validate_runtime_command_receipt_cache_v1(
+                &runtime.command_receipts,
+                &runtime.command_receipt_order,
+                INTEGRATED_RUNTIME_MAX_COMMAND_RECEIPT_CACHE_BYTES_V1 + 1,
+            )
+            .unwrap_err()
+            .code,
+            "native-command-receipt-capacity"
+        );
+    }
+
+    #[test]
+    fn player_rebind_rejects_changed_actor_or_player_without_mutation() {
+        let mut runtime = runtime_with_bound_player();
+        let before_identity = runtime.identity();
+        let before_gameplay = runtime.gameplay.state.identity();
+        let before_world_view = runtime.world_view.state.identity();
+        let mut changed = runtime.player().unwrap().binding.clone();
+        changed.actor_id = "player:impostor".into();
+        changed.player_id = PlayerId::new(2, 1);
+
+        let error = runtime.bind_player(changed).unwrap_err();
+
+        assert_eq!(error.code, "player-binding-conflict");
+        assert_eq!(runtime.identity(), before_identity);
+        assert_eq!(runtime.gameplay.state.identity(), before_gameplay);
+        assert_eq!(runtime.world_view.state.identity(), before_world_view);
+        assert_eq!(runtime.player().unwrap().binding.actor_id, "player:one");
+        assert_eq!(runtime.player().unwrap().binding.player_id, PlayerId::new(1, 1));
+    }
+
     #[test]
     fn fixed_step_input_moves_the_bound_authoritative_player_and_updates_vitals() {
         let mut runtime = runtime_with_bound_player();
@@ -5757,6 +7098,7 @@ mod tests {
         assert_eq!(entity.record.age_ticks, 1);
         assert_eq!(runtime.gameplay().state.tick, 1);
         assert_eq!(runtime.gameplay().state.combat.tick, 1);
+        assert_eq!(runtime.world_view().state.tick, 1);
     }
 
     #[test]
@@ -5794,35 +7136,330 @@ mod tests {
     }
 
     #[test]
-    fn registered_but_unintegrated_action_bits_fail_closed() {
+    fn fixed_step_rolls_back_gameplay_when_world_view_clock_rejects() {
         let mut runtime = runtime_with_bound_player();
+        runtime.world_view = WorldViewAuthorityV1::new(runtime.world_view.state.clone());
+        runtime.step(1_000_000, 8_000).unwrap();
         let before = runtime.identity();
-        let error = runtime
-            .accept_inputs(&[RuntimeInputFrameV1 {
-                sequence: 1,
-                target_tick: 1,
-                buttons: blockwild_runtime_wire::RUNTIME_INPUT_BUTTON_PRIMARY_ATTACK_V1,
-                ..RuntimeInputFrameV1::default()
-            }])
-            .unwrap_err();
-        assert_eq!(error.code, "input-action-unavailable");
+        let before_gameplay = runtime.gameplay().state.identity();
+        let before_world_view = runtime.world_view().state.identity();
+        let error = runtime.step(1_050_000, 8_000).unwrap_err();
+        assert_eq!(error.code, "world-view-schedule");
         assert_eq!(runtime.identity(), before);
+        assert_eq!(runtime.gameplay().state.identity(), before_gameplay);
+        assert_eq!(runtime.world_view().state.identity(), before_world_view);
     }
 
     #[test]
-    fn registered_but_unintegrated_state_flags_fail_closed() {
+    fn rising_edge_actions_are_consumed_once_and_return_authoritative_receipts() {
         let mut runtime = runtime_with_bound_player();
-        let before = runtime.identity();
-        let error = runtime
+        runtime
             .accept_inputs(&[RuntimeInputFrameV1 {
                 sequence: 1,
                 target_tick: 1,
-                flags: blockwild_runtime_wire::RUNTIME_INPUT_FLAG_FLYING_V1,
+                buttons: RUNTIME_INPUT_BUTTON_INTERACT_V1 | RUNTIME_INPUT_BUTTON_CREATIVE_FLIGHT_TOGGLE_V1,
                 ..RuntimeInputFrameV1::default()
             }])
+            .unwrap();
+        runtime.step(1_000_000, 8_000).unwrap();
+        let first = runtime.step(1_050_000, 8_000).unwrap();
+        assert_eq!(first.action_receipts.len(), 2);
+        assert_eq!(first.action_receipts[0].kind, RuntimeInputActionKindV1::Interact);
+        assert_eq!(
+            first.action_receipts[1].kind,
+            RuntimeInputActionKindV1::CreativeFlightToggle
+        );
+        assert_eq!(first.action_receipts[1].outcome, RuntimeInputActionOutcomeV1::Applied);
+        assert_ne!(
+            first.action_receipts[1].authoritative_flags & RUNTIME_INPUT_FLAG_FLYING_V1,
+            0
+        );
+        let held = runtime.step(1_100_000, 8_000).unwrap();
+        assert!(
+            held.action_receipts.is_empty(),
+            "a held sampled button is not a second rising edge"
+        );
+    }
+
+    #[test]
+    fn player_drop_atomically_moves_one_item_spawns_entity_and_round_trips() {
+        let mut runtime = runtime_with_bound_player_item(2);
+        runtime.native_world_view_extension_bytes = vec![0x80, 0xff, 7];
+        runtime
+            .accept_inputs(&[RuntimeInputFrameV1 {
+                sequence: 1,
+                target_tick: 1,
+                buttons: RUNTIME_INPUT_BUTTON_DROP_V1,
+                ..RuntimeInputFrameV1::default()
+            }])
+            .unwrap();
+        runtime.step(1_000_000, 8_000).unwrap();
+        let summary = runtime.step(1_050_000, 8_000).unwrap();
+        assert_eq!(summary.action_receipts.len(), 1);
+        let action = &summary.action_receipts[0];
+        assert_eq!(action.kind, RuntimeInputActionKindV1::Drop);
+        assert_eq!(action.outcome, RuntimeInputActionOutcomeV1::Applied);
+        let drop_entity_id = EntityId::new(action.target_entity_id as u32, (action.target_entity_id >> 32) as u32);
+        assert!(runtime.entities().contains(drop_entity_id));
+        assert_eq!(runtime.world_view().state.dropped_items.len(), 1);
+        let drop = runtime.world_view().state.dropped_items.values().next().unwrap();
+        assert_eq!(drop.entity_id, drop_entity_id);
+        assert_eq!(
+            runtime
+                .world_view()
+                .state
+                .dropped_stack(&runtime.gameplay().state, &drop.drop_id)
+                .unwrap()
+                .count,
+            1
+        );
+        let player_id = runtime.player().unwrap().binding.player_id;
+        assert_eq!(
+            runtime
+                .world_view()
+                .state
+                .held_stack(&runtime.gameplay().state, player_id)
+                .unwrap()
+                .unwrap()
+                .count,
+            1
+        );
+        let drop_id = drop.drop_id.clone();
+        assert!(runtime.step(1_100_000, 8_000).unwrap().action_receipts.is_empty());
+        let extraction = runtime.world_view_extraction().unwrap();
+        assert_eq!(extraction.dropped_items.len(), 1);
+
+        let checkpoint = runtime.export_runtime_checkpoint().unwrap();
+        let checkpoint_hash = integrated_runtime_checkpoint_hash_v1(&checkpoint);
+        let mut restored = IntegratedRuntimeV2::restore_runtime_checkpoint(&checkpoint, checkpoint_hash).unwrap();
+        assert_eq!(restored.identity(), runtime.identity());
+        assert_eq!(restored.world_view_extraction().unwrap(), extraction);
+        assert_eq!(restored.native_world_view_extension_bytes, vec![0x80, 0xff, 7]);
+
+        let future = restored.step(1_150_000, 8_000).unwrap();
+        assert_eq!(future.fixed_steps, 1);
+        assert_eq!(restored.tick(), restored.gameplay().state.tick);
+        assert_eq!(restored.tick(), restored.gameplay().state.combat.tick);
+        assert_eq!(restored.tick(), restored.world_view().state.tick);
+        let future_identity = restored.identity();
+        let future_checkpoint = restored.export_runtime_checkpoint().unwrap();
+        let future_restored = IntegratedRuntimeV2::restore_runtime_checkpoint(
+            &future_checkpoint,
+            integrated_runtime_checkpoint_hash_v1(&future_checkpoint),
+        )
+        .unwrap();
+        assert_eq!(future_restored.identity(), future_identity);
+        assert_eq!(future_restored.tick(), future_restored.gameplay().state.tick);
+        assert_eq!(future_restored.tick(), future_restored.world_view().state.tick);
+        let future_extraction = future_restored.world_view_extraction().unwrap();
+        assert_eq!(future_extraction.dropped_items.len(), 1);
+        assert_eq!(future_extraction.dropped_items[0].spatial.drop_id, drop_id);
+        assert_eq!(future_extraction.dropped_items[0].stack.count, 1);
+        assert_eq!(future_extraction.players[0].held_stack.as_ref().unwrap().count, 1);
+    }
+
+    #[test]
+    fn player_drop_rolls_back_entity_and_custody_when_spatial_registration_rejects() {
+        let mut runtime = runtime_with_bound_player_item(1);
+        runtime.world_view = WorldViewAuthorityV1::new(runtime.world_view.state.clone());
+        let before_entities = runtime.entities.canonical_hash();
+        let before_gameplay = runtime.gameplay.state.state_hash();
+        let before_world_view = runtime.world_view.state.state_hash();
+        let before_held = runtime
+            .world_view
+            .state
+            .held_stack(&runtime.gameplay.state, runtime.player().unwrap().binding.player_id)
+            .unwrap()
+            .cloned();
+        let error = runtime
+            .apply_player_drop(RuntimeInputFrameV1 {
+                sequence: 1,
+                target_tick: 1,
+                buttons: RUNTIME_INPUT_BUTTON_DROP_V1,
+                ..RuntimeInputFrameV1::default()
+            })
             .unwrap_err();
-        assert_eq!(error.code, "input-state-unavailable");
-        assert_eq!(runtime.identity(), before);
+        assert_eq!(error.code, "input-drop-world-view");
+        assert_eq!(runtime.entities.canonical_hash(), before_entities);
+        assert_eq!(runtime.gameplay.state.state_hash(), before_gameplay);
+        assert_eq!(runtime.world_view.state.state_hash(), before_world_view);
+        assert_eq!(
+            runtime
+                .world_view
+                .state
+                .held_stack(&runtime.gameplay.state, runtime.player().unwrap().binding.player_id)
+                .unwrap()
+                .cloned(),
+            before_held
+        );
+    }
+
+    #[test]
+    fn mount_toggle_updates_r6_seats_and_player_flags_on_each_rising_edge() {
+        let mut runtime = runtime_with_bound_player();
+        let mut mount = EntityCompatibilityRecord::new("mount:test", "mount:test", "test-mount");
+        mount.class = EntityClass::Vehicle;
+        mount.position = EntityVec3::new(8.0, 64.25, 5.5);
+        commit_entity_commands(
+            &mut runtime,
+            "spawn-test-mount",
+            vec![EntityCommand::Spawn {
+                record: mount,
+                residency: EntityResidency::Hot,
+            }],
+        );
+        let player_entity_id = runtime.player().unwrap().entity_id;
+        let mount_id = runtime
+            .entities()
+            .hot()
+            .keys()
+            .copied()
+            .find(|id| *id != player_entity_id)
+            .unwrap();
+        commit_entity_commands(
+            &mut runtime,
+            "configure-test-mount",
+            vec![EntityCommand::SetMountState {
+                id: mount_id,
+                value: MountState {
+                    parent_mount: None,
+                    occupied_seat: None,
+                    seats: vec![MountSeat {
+                        index: 0,
+                        role: "driver".into(),
+                        offset: EntityVec3::ZERO,
+                        occupant: None,
+                        control_weight_milli: 1_000,
+                    }],
+                    saddle_key: Some("test-saddle".into()),
+                    accepts_riders: true,
+                },
+            }],
+        );
+        let mounted = runtime
+            .dispatch_input_edges(
+                RuntimeInputFrameV1 {
+                    sequence: 1,
+                    buttons: RUNTIME_INPUT_BUTTON_MOUNT_TOGGLE_V1,
+                    ..RuntimeInputFrameV1::default()
+                },
+                0,
+            )
+            .unwrap();
+        assert_eq!(mounted[0].outcome, RuntimeInputActionOutcomeV1::Applied);
+        assert_eq!(mounted[0].target_entity_id, mount_id.packed());
+        assert_ne!(runtime.player().unwrap().flags & RUNTIME_INPUT_FLAG_MOUNTED_V1, 0);
+        assert_eq!(
+            runtime
+                .entities()
+                .components(player_entity_id)
+                .unwrap()
+                .mount
+                .parent_mount,
+            Some(mount_id)
+        );
+        assert_eq!(
+            runtime.entities().components(mount_id).unwrap().mount.seats[0].occupant,
+            Some(player_entity_id)
+        );
+
+        let dismounted = runtime
+            .dispatch_input_edges(
+                RuntimeInputFrameV1 {
+                    sequence: 2,
+                    buttons: RUNTIME_INPUT_BUTTON_MOUNT_TOGGLE_V1,
+                    ..RuntimeInputFrameV1::default()
+                },
+                0,
+            )
+            .unwrap();
+        assert_eq!(dismounted[0].outcome, RuntimeInputActionOutcomeV1::Applied);
+        assert_eq!(runtime.player().unwrap().flags & RUNTIME_INPUT_FLAG_MOUNTED_V1, 0);
+        assert_eq!(
+            runtime
+                .entities()
+                .components(player_entity_id)
+                .unwrap()
+                .mount
+                .parent_mount,
+            None
+        );
+        assert_eq!(
+            runtime.entities().components(mount_id).unwrap().mount.seats[0].occupant,
+            None
+        );
+    }
+
+    #[test]
+    fn input_sequence_staleness_and_unloaded_action_boundaries_fail_closed() {
+        let mut runtime = runtime_with_bound_player();
+        runtime
+            .accept_inputs(&[RuntimeInputFrameV1 {
+                sequence: 1,
+                target_tick: 0,
+                ..RuntimeInputFrameV1::default()
+            }])
+            .unwrap();
+        assert_eq!(
+            runtime
+                .accept_inputs(&[RuntimeInputFrameV1 {
+                    sequence: 1,
+                    target_tick: 0,
+                    ..RuntimeInputFrameV1::default()
+                }])
+                .unwrap_err()
+                .code,
+            "input-sequence"
+        );
+        runtime.step(1_000_000, 8_000).unwrap();
+        runtime.step(1_050_000, 8_000).unwrap();
+        assert_eq!(
+            runtime
+                .accept_inputs(&[RuntimeInputFrameV1 {
+                    sequence: 2,
+                    target_tick: 0,
+                    ..RuntimeInputFrameV1::default()
+                }])
+                .unwrap_err()
+                .code,
+            "input-target"
+        );
+
+        runtime.player.as_mut().unwrap().body.position.x = 15.9;
+        let outcome = runtime
+            .apply_primary_attack(RuntimeInputFrameV1 {
+                sequence: 3,
+                look_yaw: -16_384,
+                buttons: RUNTIME_INPUT_BUTTON_PRIMARY_ATTACK_V1,
+                ..RuntimeInputFrameV1::default()
+            })
+            .unwrap();
+        assert_eq!(outcome, (RuntimeInputActionOutcomeV1::Blocked, 0));
+    }
+
+    #[test]
+    fn browser_state_flags_cannot_grant_creative_flight_authority() {
+        let mut runtime = runtime_with_bound_player();
+        runtime.player.as_mut().unwrap().binding.creative_mode = false;
+        runtime.player.as_mut().unwrap().flags = 0;
+        runtime
+            .accept_inputs(&[RuntimeInputFrameV1 {
+                sequence: 1,
+                target_tick: 1,
+                flags: RUNTIME_INPUT_FLAG_CREATIVE_V1 | RUNTIME_INPUT_FLAG_FLYING_V1,
+                buttons: RUNTIME_INPUT_BUTTON_CREATIVE_FLIGHT_TOGGLE_V1,
+                ..RuntimeInputFrameV1::default()
+            }])
+            .unwrap();
+        runtime.step(1_000_000, 8_000).unwrap();
+        let summary = runtime.step(1_050_000, 8_000).unwrap();
+        assert_eq!(summary.action_receipts.len(), 1);
+        assert_eq!(
+            summary.action_receipts[0].outcome,
+            RuntimeInputActionOutcomeV1::Ineligible
+        );
+        assert_eq!(summary.action_receipts[0].authoritative_flags, 0);
+        assert_eq!(runtime.player().unwrap().flags, 0);
     }
 
     #[test]
@@ -6934,6 +8571,7 @@ mod tests {
                 goal,
             })
             .unwrap();
+        runtime.tick = runtime.tick.saturating_add(1);
         runtime.advance_entity_and_gameplay_schedules().unwrap();
         let rejected = runtime.entity_schedule_diagnostics();
         assert!(rejected.entity_jobs_rejected_stale > completed.entity_jobs_rejected_stale);

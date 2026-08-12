@@ -5,16 +5,20 @@ import {
 } from "./rust-integrated-runtime-codec";
 import { RustIntegratedRuntimeServiceV1 } from "./rust-integrated-runtime-service";
 
-export const RUST_INTEGRATED_PLAYER_BIND_TYPE_V1 = "blockwild.simulation.player-bind.r5.v1";
-export const RUST_INTEGRATED_PLAYER_BIND_RECEIPT_TYPE_V1 = "blockwild.simulation.player-bind-receipt.r5.v1";
+export const RUST_INTEGRATED_PLAYER_BIND_TYPE_V2 = "blockwild.simulation.player-bind.r5.v2";
+export const RUST_INTEGRATED_PLAYER_BIND_RECEIPT_TYPE_V2 = "blockwild.simulation.player-bind-receipt.r5.v2";
 
-const MAGIC = Uint8Array.from([0x42, 0x57, 0x42, 0x35]); // BWB5
+const MAGIC = Uint8Array.from([0x42, 0x57, 0x42, 0x36]); // BWB6
 const HEADER_BYTES = 28;
+const MAX_U64 = (BigInt(1) << BigInt(64)) - BigInt(1);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export type RustIntegratedPlayerBindingV1 = Readonly<{
   externalEntityId: string;
+  actorId: string;
+  playerId: bigint;
+  creativeMode: boolean;
   radius: number;
   standingHeight: number;
   crouchingHeight: number;
@@ -35,11 +39,11 @@ export class RustIntegratedPlayerContractError extends Error {
 
 function validate(value: RustIntegratedPlayerBindingV1) {
   const identity = value.externalEntityId;
-  const malformedIdentity = typeof identity !== "string"
-    || identity.length === 0
-    || textEncoder.encode(identity).byteLength > 512
-    || /[\u0000-\u001f\u007f-\u009f]/u.test(identity)
-    || /[\ud800-\udfff]/u.test(identity);
+  const malformed = (candidate: unknown) => typeof candidate !== "string"
+    || candidate.length === 0
+    || textEncoder.encode(candidate).byteLength > 512
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(candidate)
+    || /[\ud800-\udfff]/u.test(candidate);
   const values = [
     value.radius,
     value.standingHeight,
@@ -50,7 +54,12 @@ function validate(value: RustIntegratedPlayerBindingV1) {
     value.creativeFlightSpeed,
     value.maximumOxygenSeconds,
   ];
-  if (malformedIdentity
+  if (malformed(identity)
+    || malformed(value.actorId)
+    || typeof value.playerId !== "bigint"
+    || value.playerId < BigInt(1)
+    || value.playerId > MAX_U64
+    || typeof value.creativeMode !== "boolean"
     || values.some((number) => !Number.isFinite(number) || number <= 0)
     || value.radius < 0.1 || value.radius > 4
     || value.standingHeight < 0.5 || value.standingHeight > 8
@@ -72,11 +81,20 @@ function checksumBytes(bytes: Uint8Array) {
 export function encodeRustIntegratedPlayerBindingV1(value: RustIntegratedPlayerBindingV1) {
   validate(value);
   const identity = textEncoder.encode(value.externalEntityId);
-  const body = new Uint8Array(4 + identity.byteLength + 8 * 8);
+  const actor = textEncoder.encode(value.actorId);
+  const body = new Uint8Array(4 + identity.byteLength + 4 + actor.byteLength + 8 + 1 + 8 * 8);
   const view = new DataView(body.buffer);
   view.setUint32(0, identity.byteLength, true);
   body.set(identity, 4);
   let offset = 4 + identity.byteLength;
+  view.setUint32(offset, actor.byteLength, true);
+  offset += 4;
+  body.set(actor, offset);
+  offset += actor.byteLength;
+  view.setBigUint64(offset, value.playerId, true);
+  offset += 8;
+  view.setUint8(offset, value.creativeMode ? 1 : 0);
+  offset += 1;
   for (const number of [
     value.radius,
     value.standingHeight,
@@ -114,12 +132,30 @@ export function decodeRustIntegratedPlayerBindingV1(packet: Uint8Array): RustInt
   if (!checksumBytes(body).every((byte, index) => packet[12 + index] === byte)) {
     throw new RustIntegratedPlayerContractError("player-binding", "player binding packet checksum is invalid");
   }
-  const identityLength = new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(0, true);
-  if (identityLength === 0 || 4 + identityLength + 64 !== body.byteLength) {
+  const bodyView = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  const identityLength = bodyView.getUint32(0, true);
+  if (identityLength === 0 || 4 + identityLength + 4 + 8 + 1 + 64 > body.byteLength) {
     throw new RustIntegratedPlayerContractError("player-binding", "player binding body is truncated or has trailing bytes");
   }
   let offset = 4 + identityLength;
-  const bodyView = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  const actorLength = bodyView.getUint32(offset, true);
+  offset += 4;
+  if (actorLength === 0 || offset + actorLength + 8 + 1 + 64 !== body.byteLength) {
+    throw new RustIntegratedPlayerContractError("player-binding", "player binding authority identity is truncated or has trailing bytes");
+  }
+  let actorId: string;
+  try {
+    actorId = textDecoder.decode(body.subarray(offset, offset + actorLength));
+  } catch {
+    throw new RustIntegratedPlayerContractError("player-binding", "player binding actor identity is not UTF-8");
+  }
+  offset += actorLength;
+  const playerId = bodyView.getBigUint64(offset, true);
+  offset += 8;
+  const creativeFlag = bodyView.getUint8(offset);
+  if (creativeFlag > 1) throw new RustIntegratedPlayerContractError("player-binding", "creative mode flag is not boolean");
+  const creativeMode = creativeFlag === 1;
+  offset += 1;
   const numbers = Array.from({ length: 8 }, () => {
     const number = bodyView.getFloat64(offset, true);
     offset += 8;
@@ -133,6 +169,9 @@ export function decodeRustIntegratedPlayerBindingV1(packet: Uint8Array): RustInt
   }
   const value = Object.freeze({
     externalEntityId,
+    actorId,
+    playerId,
+    creativeMode,
     radius: numbers[0],
     standingHeight: numbers[1],
     crouchingHeight: numbers[2],
@@ -165,8 +204,8 @@ export class RustIntegratedPlayerRuntimePortV1 {
       expected: this.runtime.identity(),
       operations: [createRustIntegratedRuntimeDomainOperationV1({
         domain: "simulation",
-        typeId: RUST_INTEGRATED_PLAYER_BIND_TYPE_V1,
-        schema: 1,
+        typeId: RUST_INTEGRATED_PLAYER_BIND_TYPE_V2,
+        schema: 2,
         payload,
       })],
     })).then((receipt) => {
@@ -174,8 +213,8 @@ export class RustIntegratedPlayerRuntimePortV1 {
       const response = receipt.domainReceipts[0];
       if (receipt.domainReceipts.length !== 1
         || response.domain !== "simulation"
-        || response.typeId !== RUST_INTEGRATED_PLAYER_BIND_RECEIPT_TYPE_V1
-        || response.schema !== 1) {
+        || response.typeId !== RUST_INTEGRATED_PLAYER_BIND_RECEIPT_TYPE_V2
+        || response.schema !== 2) {
         throw new RustIntegratedPlayerContractError("player-binding-receipt", "player binding returned an unexpected native receipt");
       }
     });

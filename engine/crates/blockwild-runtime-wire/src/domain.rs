@@ -13,6 +13,8 @@ pub const SIMULATION_AIR_REQUEST_TYPE_V1: &str = "blockwild.simulation.air-zone-
 pub const SIMULATION_AIR_RESPONSE_TYPE_V1: &str = "blockwild.simulation.air-zone-result.r5.v1";
 pub const SIMULATION_PLAYER_BIND_TYPE_V1: &str = "blockwild.simulation.player-bind.r5.v1";
 pub const SIMULATION_PLAYER_BIND_RECEIPT_TYPE_V1: &str = "blockwild.simulation.player-bind-receipt.r5.v1";
+pub const SIMULATION_PLAYER_BIND_TYPE_V2: &str = "blockwild.simulation.player-bind.r5.v2";
+pub const SIMULATION_PLAYER_BIND_RECEIPT_TYPE_V2: &str = "blockwild.simulation.player-bind-receipt.r5.v2";
 
 pub const ENTITY_COMMAND_TYPE_V1: &str = "blockwild.entities.command-batch.r6.v1";
 pub const ENTITY_RECEIPT_TYPE_V1: &str = "blockwild.entities.event-batch.r6.v1";

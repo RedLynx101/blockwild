@@ -2,10 +2,12 @@ use std::collections::BTreeSet;
 
 use crate::checksum::wire_checksum_v1;
 use crate::model::{
-    MAX_DOMAIN_PAYLOAD_BYTES, MAX_EXTRACTION_BYTES, MAX_INPUT_FRAMES, MAX_OPERATIONS, MAX_SAFE_U64, MAX_WIRE_BYTES,
-    RUNTIME_SCHEMA_V2, RUNTIME_WIRE_V1, RuntimeCommandBatchV1, RuntimeCommandReceiptV1, RuntimeConfigV1,
-    RuntimeDomainOperationV1, RuntimeDomainV1, RuntimeExtractionV1, RuntimeIdentityV1, RuntimeInputFrameV1,
-    RuntimeRequestV1, RuntimeResponseV1, RuntimeRevisionV1, WireError, WireHash,
+    MAX_ACTION_RECEIPTS, MAX_DOMAIN_PAYLOAD_BYTES, MAX_EXTRACTION_BYTES, MAX_INPUT_FRAMES, MAX_OPERATIONS,
+    MAX_SAFE_U64, MAX_WIRE_BYTES, RUNTIME_INPUT_FLAG_MASK_V1, RUNTIME_SCHEMA_V2, RUNTIME_SCHEMA_V3, RUNTIME_WIRE_V1,
+    RuntimeCommandBatchV1, RuntimeCommandReceiptV1, RuntimeConfigV1, RuntimeDomainOperationV1, RuntimeDomainV1,
+    RuntimeExtractionV1, RuntimeIdentityV1, RuntimeInputActionKindV1, RuntimeInputActionOutcomeV1,
+    RuntimeInputActionReceiptV1, RuntimeInputFrameV1, RuntimeRequestV1, RuntimeResponseV1, RuntimeRevisionV1,
+    WireError, WireHash,
 };
 
 const REQUEST_MAGIC: [u8; 4] = *b"BWRQ";
@@ -51,6 +53,10 @@ impl Writer {
         self.raw(&value.to_le_bytes());
     }
 
+    fn raw_u64(&mut self, value: u64) {
+        self.raw(&value.to_le_bytes());
+    }
+
     fn u64(&mut self, value: u64, name: &str) -> Result<(), WireError> {
         if value > MAX_SAFE_U64 {
             return Err(WireError::new(
@@ -58,7 +64,7 @@ impl Writer {
                 format!("{name} exceeds JavaScript's safe integer range"),
             ));
         }
-        self.raw(&value.to_le_bytes());
+        self.raw_u64(value);
         Ok(())
     }
 
@@ -156,12 +162,16 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes(bytes))
     }
 
-    fn u64(&mut self) -> Result<u64, WireError> {
+    fn raw_u64(&mut self) -> Result<u64, WireError> {
         let bytes: [u8; 8] = self
             .take(8)?
             .try_into()
             .map_err(|_| WireError::new("truncated", "u64 is truncated"))?;
-        let value = u64::from_le_bytes(bytes);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn u64(&mut self) -> Result<u64, WireError> {
+        let value = self.raw_u64()?;
         if value > MAX_SAFE_U64 {
             return Err(WireError::new(
                 "unsafe-u64",
@@ -210,6 +220,7 @@ impl<'a> Reader<'a> {
 
 #[derive(Clone, Copy)]
 struct EnvelopeHeader {
+    schema: u16,
     operation: u8,
     status: u8,
     request_id: u32,
@@ -217,7 +228,12 @@ struct EnvelopeHeader {
     worker_epoch: u32,
 }
 
-fn encode_envelope(magic: [u8; 4], header: EnvelopeHeader, payload: Vec<u8>) -> Result<Vec<u8>, WireError> {
+fn encode_envelope(
+    magic: [u8; 4],
+    schema: u16,
+    header: EnvelopeHeader,
+    payload: Vec<u8>,
+) -> Result<Vec<u8>, WireError> {
     if header.request_id == 0 || header.client_epoch == 0 {
         return Err(WireError::new(
             "request-header",
@@ -235,7 +251,13 @@ fn encode_envelope(magic: [u8; 4], header: EnvelopeHeader, payload: Vec<u8>) -> 
     let mut output = Vec::with_capacity(HEADER_BYTES + payload.len());
     output.extend_from_slice(&magic);
     output.extend_from_slice(&RUNTIME_WIRE_V1.to_le_bytes());
-    output.extend_from_slice(&RUNTIME_SCHEMA_V2.to_le_bytes());
+    if !matches!(schema, RUNTIME_SCHEMA_V2 | RUNTIME_SCHEMA_V3) {
+        return Err(WireError::new(
+            "runtime-schema",
+            "integrated runtime schema is unsupported",
+        ));
+    }
+    output.extend_from_slice(&schema.to_le_bytes());
     output.push(header.operation);
     output.push(header.status);
     output.extend_from_slice(&0_u16.to_le_bytes());
@@ -265,7 +287,8 @@ fn decode_envelope(value: &[u8], magic: [u8; 4]) -> Result<(EnvelopeHeader, &[u8
             "integrated runtime wire version is unsupported",
         ));
     }
-    if reader.u16()? != RUNTIME_SCHEMA_V2 {
+    let schema = reader.u16()?;
+    if !matches!(schema, RUNTIME_SCHEMA_V2 | RUNTIME_SCHEMA_V3) {
         return Err(WireError::new(
             "runtime-schema",
             "integrated runtime schema is unsupported",
@@ -307,6 +330,7 @@ fn decode_envelope(value: &[u8], magic: [u8; 4]) -> Result<(EnvelopeHeader, &[u8
     }
     Ok((
         EnvelopeHeader {
+            schema,
             operation,
             status,
             request_id,
@@ -568,6 +592,57 @@ fn read_input(reader: &mut Reader<'_>) -> Result<RuntimeInputFrameV1, WireError>
     Ok(value)
 }
 
+fn write_action_receipt(writer: &mut Writer, value: RuntimeInputActionReceiptV1) -> Result<(), WireError> {
+    if value.sequence == 0
+        || value.input_sequence == 0
+        || value.selected_slot > 8
+        || value.authoritative_flags & !RUNTIME_INPUT_FLAG_MASK_V1 != 0
+    {
+        return Err(WireError::new(
+            "input-action-receipt",
+            "input action receipt has a reserved sequence or state flag",
+        ));
+    }
+    writer.u64(value.sequence, "action.sequence")?;
+    writer.u64(value.input_sequence, "action.inputSequence")?;
+    writer.u64(value.tick, "action.tick")?;
+    writer.u8(value.kind as u8);
+    writer.u8(value.outcome as u8);
+    writer.u8(value.selected_slot);
+    writer.u8(value.authoritative_flags);
+    // EntityId is a packed u32 index + u32 generation. Unlike clock and
+    // revision counters, its complete bit pattern is an identity and must not
+    // be constrained to JavaScript's Number-safe range.
+    writer.raw_u64(value.target_entity_id);
+    writer.hash(value.effect_hash);
+    Ok(())
+}
+
+fn read_action_receipt(reader: &mut Reader<'_>) -> Result<RuntimeInputActionReceiptV1, WireError> {
+    let value = RuntimeInputActionReceiptV1 {
+        sequence: reader.u64()?,
+        input_sequence: reader.u64()?,
+        tick: reader.u64()?,
+        kind: RuntimeInputActionKindV1::from_code(reader.u8()?)?,
+        outcome: RuntimeInputActionOutcomeV1::from_code(reader.u8()?)?,
+        selected_slot: reader.u8()?,
+        authoritative_flags: reader.u8()?,
+        target_entity_id: reader.raw_u64()?,
+        effect_hash: reader.hash()?,
+    };
+    if value.sequence == 0
+        || value.input_sequence == 0
+        || value.selected_slot > 8
+        || value.authoritative_flags & !RUNTIME_INPUT_FLAG_MASK_V1 != 0
+    {
+        return Err(WireError::new(
+            "input-action-receipt",
+            "input action receipt has a reserved sequence or state flag",
+        ));
+    }
+    Ok(value)
+}
+
 fn write_receipt(writer: &mut Writer, value: &RuntimeCommandReceiptV1) -> Result<(), WireError> {
     match value {
         RuntimeCommandReceiptV1::Accepted {
@@ -666,6 +741,83 @@ fn read_receipt(reader: &mut Reader<'_>) -> Result<RuntimeCommandReceiptV1, Wire
         current: read_identity(reader)?,
         receipt_hash: reader.hash()?,
     })
+}
+
+/// Encodes one exact command receipt without a request/response envelope.
+///
+/// This focused codec is used by checkpoint-owned reliability metadata. It
+/// preserves the same bounded canonical receipt layout as BWRS while leaving
+/// request and Worker-generation fields outside the durable value.
+pub fn encode_command_receipt_v1(value: &RuntimeCommandReceiptV1) -> Result<Vec<u8>, WireError> {
+    let mut writer = Writer::new();
+    write_receipt(&mut writer, value)?;
+    writer.finish(MAX_WIRE_BYTES)
+}
+
+/// Decodes one focused command receipt and rejects trailing bytes.
+pub fn decode_command_receipt_v1(bytes: &[u8]) -> Result<RuntimeCommandReceiptV1, WireError> {
+    if bytes.len() > MAX_WIRE_BYTES {
+        return Err(WireError::new(
+            "wire-capacity",
+            "encoded command receipt exceeds the wire byte budget",
+        ));
+    }
+    let mut reader = Reader::new(bytes);
+    let value = read_receipt(&mut reader)?;
+    reader.finish()?;
+    Ok(value)
+}
+
+/// Recomputes the canonical reliability hash embedded by the integrated
+/// runtime for either accepted or rejected command receipts.
+#[must_use]
+pub fn command_receipt_hash_v1(value: &RuntimeCommandReceiptV1) -> WireHash {
+    let mut payload = Vec::new();
+    match value {
+        RuntimeCommandReceiptV1::Accepted {
+            command_hash,
+            before,
+            after,
+            domain_receipts,
+            ..
+        } => {
+            payload.reserve(48 + domain_receipts.len() * 16);
+            payload.extend_from_slice(&command_hash.0);
+            payload.extend_from_slice(&before.state_hash.0);
+            payload.extend_from_slice(&after.state_hash.0);
+            for receipt in domain_receipts {
+                payload.extend_from_slice(&receipt.payload_hash.0);
+            }
+        }
+        RuntimeCommandReceiptV1::Rejected {
+            command_hash,
+            code,
+            message,
+            current,
+            ..
+        } => {
+            payload.reserve(32 + code.len() + message.len());
+            payload.extend_from_slice(&command_hash.0);
+            payload.extend_from_slice(&current.state_hash.0);
+            payload.extend_from_slice(code.as_bytes());
+            payload.extend_from_slice(message.as_bytes());
+        }
+    }
+    WireHash(wire_checksum_v1(&payload))
+}
+
+pub fn validate_command_receipt_hash_v1(value: &RuntimeCommandReceiptV1) -> Result<(), WireError> {
+    let embedded = match value {
+        RuntimeCommandReceiptV1::Accepted { receipt_hash, .. }
+        | RuntimeCommandReceiptV1::Rejected { receipt_hash, .. } => *receipt_hash,
+    };
+    if embedded != command_receipt_hash_v1(value) {
+        return Err(WireError::new(
+            "receipt-hash",
+            "runtime command receipt hash does not match its canonical authority fields",
+        ));
+    }
+    Ok(())
 }
 
 fn extraction_total(value: &RuntimeExtractionV1) -> Result<usize, WireError> {
@@ -816,6 +968,10 @@ pub fn encode_request_v1(request: &RuntimeRequestV1) -> Result<Vec<u8>, WireErro
             write_command(&mut writer, batch)?;
             2
         }
+        RuntimeRequestV1::RecoverCommand { batch, .. } => {
+            write_command(&mut writer, batch)?;
+            8
+        }
         RuntimeRequestV1::Step {
             expected,
             monotonic_time_us,
@@ -881,7 +1037,9 @@ pub fn encode_request_v1(request: &RuntimeRequestV1) -> Result<Vec<u8>, WireErro
     };
     encode_envelope(
         REQUEST_MAGIC,
+        RUNTIME_SCHEMA_V2,
         EnvelopeHeader {
+            schema: RUNTIME_SCHEMA_V2,
             operation,
             status: 0,
             request_id: request.request_id(),
@@ -909,6 +1067,11 @@ pub fn decode_request_v1(value: &[u8]) -> Result<RuntimeRequestV1, WireError> {
             config: read_config(&mut reader)?,
         },
         2 => RuntimeRequestV1::Command {
+            request_id: header.request_id,
+            client_epoch: header.client_epoch,
+            batch: read_command(&mut reader)?,
+        },
+        8 => RuntimeRequestV1::RecoverCommand {
             request_id: header.request_id,
             client_epoch: header.client_epoch,
             batch: read_command(&mut reader)?,
@@ -1026,6 +1189,7 @@ pub fn encode_response_v1(response: &RuntimeResponseV1) -> Result<Vec<u8>, WireE
             inputs_applied,
             commands_processed,
             commands_accepted,
+            action_receipts,
             replay_hash,
             ..
         } => {
@@ -1034,6 +1198,19 @@ pub fn encode_response_v1(response: &RuntimeResponseV1) -> Result<Vec<u8>, WireE
             writer.u16(*inputs_applied);
             writer.u16(*commands_processed);
             writer.u16(*commands_accepted);
+            if action_receipts.len() > MAX_ACTION_RECEIPTS {
+                return Err(WireError::new(
+                    "input-action-capacity",
+                    "step action receipts exceed their bound",
+                ));
+            }
+            writer.u16(
+                u16::try_from(action_receipts.len())
+                    .map_err(|_| WireError::new("input-action-capacity", "step action receipt count exceeds u16"))?,
+            );
+            for receipt in action_receipts {
+                write_action_receipt(&mut writer, *receipt)?;
+            }
             writer.hash(*replay_hash);
             (3, 0)
         }
@@ -1085,9 +1262,16 @@ pub fn encode_response_v1(response: &RuntimeResponseV1) -> Result<Vec<u8>, WireE
             (255, 1)
         }
     };
+    let schema = if operation == 3 {
+        RUNTIME_SCHEMA_V3
+    } else {
+        RUNTIME_SCHEMA_V2
+    };
     encode_envelope(
         RESPONSE_MAGIC,
+        schema,
         EnvelopeHeader {
+            schema,
             operation,
             status,
             request_id: response.request_id(),
@@ -1140,6 +1324,31 @@ pub fn decode_response_v1(value: &[u8]) -> Result<RuntimeResponseV1, WireError> 
             inputs_applied: reader.u16()?,
             commands_processed: reader.u16()?,
             commands_accepted: reader.u16()?,
+            action_receipts: if header.schema >= RUNTIME_SCHEMA_V3 {
+                let count = usize::from(reader.u16()?);
+                if count > MAX_ACTION_RECEIPTS {
+                    return Err(WireError::new(
+                        "input-action-capacity",
+                        "step action receipts exceed their bound",
+                    ));
+                }
+                let mut receipts = Vec::with_capacity(count);
+                let mut previous = 0_u64;
+                for _ in 0..count {
+                    let receipt = read_action_receipt(&mut reader)?;
+                    if receipt.sequence <= previous {
+                        return Err(WireError::new(
+                            "input-action-order",
+                            "step action receipt sequences must be strictly increasing",
+                        ));
+                    }
+                    previous = receipt.sequence;
+                    receipts.push(receipt);
+                }
+                receipts
+            } else {
+                Vec::new()
+            },
             replay_hash: reader.hash()?,
         },
         4 => RuntimeResponseV1::Extraction {
@@ -1299,6 +1508,49 @@ mod tests {
         };
         let bytes = encode_request_v1(&request).expect("encode request");
         assert_eq!(decode_request_v1(&bytes).expect("decode request"), request);
+        let RuntimeRequestV1::Command { batch, .. } = request else {
+            unreachable!()
+        };
+        let recovery = RuntimeRequestV1::RecoverCommand {
+            request_id: 10,
+            client_epoch: 3,
+            batch,
+        };
+        let recovery_bytes = encode_request_v1(&recovery).expect("encode recovery request");
+        assert_eq!(recovery_bytes[8], 8);
+        assert_eq!(decode_request_v1(&recovery_bytes).unwrap(), recovery);
+    }
+
+    #[test]
+    fn focused_command_receipt_codec_validates_canonical_hash_and_trailing_bytes() {
+        let mut receipt = RuntimeCommandReceiptV1::Rejected {
+            command_id: "command:one".into(),
+            idempotency_key: "key:one".into(),
+            command_hash: hash(0x11),
+            code: "blocked".into(),
+            message: "fixture rejection".into(),
+            current: identity(),
+            receipt_hash: WireHash::default(),
+        };
+        let hash = command_receipt_hash_v1(&receipt);
+        let RuntimeCommandReceiptV1::Rejected { receipt_hash, .. } = &mut receipt else {
+            unreachable!()
+        };
+        *receipt_hash = hash;
+        validate_command_receipt_hash_v1(&receipt).unwrap();
+        let encoded = encode_command_receipt_v1(&receipt).unwrap();
+        assert_eq!(decode_command_receipt_v1(&encoded).unwrap(), receipt);
+        let mut trailing = encoded;
+        trailing.push(0xaa);
+        assert_eq!(decode_command_receipt_v1(&trailing).unwrap_err().code, "trailing-bytes");
+        let RuntimeCommandReceiptV1::Rejected { receipt_hash, .. } = &mut receipt else {
+            unreachable!()
+        };
+        receipt_hash.0[0] ^= 0xff;
+        assert_eq!(
+            validate_command_receipt_hash_v1(&receipt).unwrap_err().code,
+            "receipt-hash"
+        );
     }
 
     #[test]
@@ -1387,6 +1639,118 @@ mod tests {
                 .expect_err("tampered extraction must reject")
                 .code,
             "extraction-hash"
+        );
+    }
+
+    #[test]
+    fn action_receipts_round_trip_v3_and_reject_unknown_trailing_or_invalid_slots() {
+        let action = RuntimeInputActionReceiptV1 {
+            sequence: 0x0102_0304,
+            input_sequence: 9,
+            tick: 1,
+            kind: RuntimeInputActionKindV1::Interact,
+            outcome: RuntimeInputActionOutcomeV1::Applied,
+            selected_slot: 2,
+            authoritative_flags: crate::RUNTIME_INPUT_FLAG_CREATIVE_V1,
+            target_entity_id: 0xfedc_ba98_7654_3210,
+            effect_hash: hash(0xcd),
+        };
+        let response = RuntimeResponseV1::StepResult {
+            request_id: 31,
+            client_epoch: 2,
+            worker_epoch: 3,
+            identity: identity(),
+            fixed_steps: 1,
+            inputs_applied: 1,
+            commands_processed: 0,
+            commands_accepted: 0,
+            action_receipts: vec![action],
+            replay_hash: WireHash::default(),
+        };
+        let encoded = encode_response_v1(&response).expect("encode action receipt");
+        assert_eq!(u16::from_le_bytes([encoded[6], encoded[7]]), RUNTIME_SCHEMA_V3);
+        assert_eq!(decode_response_v1(&encoded).expect("decode action receipt"), response);
+
+        let sequence = action.sequence.to_le_bytes();
+        let sequence_offset = encoded
+            .windows(sequence.len())
+            .position(|window| window == sequence)
+            .expect("action receipt sequence exists in payload");
+        assert!(sequence_offset >= HEADER_BYTES);
+        let mut unknown = encoded.clone();
+        unknown[sequence_offset + 24] = u8::MAX;
+        let unknown_checksum = wire_checksum_v1(&unknown[HEADER_BYTES..]);
+        unknown[28..HEADER_BYTES].copy_from_slice(&unknown_checksum);
+        assert_eq!(
+            decode_response_v1(&unknown)
+                .expect_err("unknown action kind rejects")
+                .code,
+            "input-action-kind"
+        );
+
+        let mut trailing = encoded.clone();
+        trailing.push(0xaa);
+        let trailing_payload_length = u32::try_from(trailing.len() - HEADER_BYTES).unwrap();
+        let trailing_checksum = wire_checksum_v1(&trailing[HEADER_BYTES..]);
+        trailing[24..28].copy_from_slice(&trailing_payload_length.to_le_bytes());
+        trailing[28..HEADER_BYTES].copy_from_slice(&trailing_checksum);
+        assert_eq!(
+            decode_response_v1(&trailing)
+                .expect_err("trailing action bytes reject")
+                .code,
+            "trailing-bytes"
+        );
+
+        let invalid = RuntimeResponseV1::StepResult {
+            request_id: 31,
+            client_epoch: 2,
+            worker_epoch: 3,
+            identity: identity(),
+            fixed_steps: 1,
+            inputs_applied: 1,
+            commands_processed: 0,
+            commands_accepted: 0,
+            action_receipts: vec![RuntimeInputActionReceiptV1 {
+                selected_slot: 9,
+                ..action
+            }],
+            replay_hash: WireHash::default(),
+        };
+        assert_eq!(
+            encode_response_v1(&invalid)
+                .expect_err("invalid selected slot rejects")
+                .code,
+            "input-action-receipt"
+        );
+    }
+
+    #[test]
+    fn legacy_v2_step_bytes_decode_with_an_intentionally_empty_action_receipt_list() {
+        let response = RuntimeResponseV1::StepResult {
+            request_id: 32,
+            client_epoch: 2,
+            worker_epoch: 3,
+            identity: identity(),
+            fixed_steps: 1,
+            inputs_applied: 0,
+            commands_processed: 0,
+            commands_accepted: 0,
+            action_receipts: Vec::new(),
+            replay_hash: hash(0xee),
+        };
+        let encoded_v3 = encode_response_v1(&response).expect("encode v3 empty action list");
+        let count_offset = encoded_v3.len() - 16 - 2;
+        assert_eq!(&encoded_v3[count_offset..count_offset + 2], &[0, 0]);
+        let mut encoded_v2 = encoded_v3;
+        encoded_v2.drain(count_offset..count_offset + 2);
+        encoded_v2[6..8].copy_from_slice(&RUNTIME_SCHEMA_V2.to_le_bytes());
+        let payload_length = u32::try_from(encoded_v2.len() - HEADER_BYTES).unwrap();
+        let payload_checksum = wire_checksum_v1(&encoded_v2[HEADER_BYTES..]);
+        encoded_v2[24..28].copy_from_slice(&payload_length.to_le_bytes());
+        encoded_v2[28..HEADER_BYTES].copy_from_slice(&payload_checksum);
+        assert_eq!(
+            decode_response_v1(&encoded_v2).expect("decode legacy v2 step"),
+            response
         );
     }
 

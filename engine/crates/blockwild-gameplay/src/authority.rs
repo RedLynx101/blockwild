@@ -5,8 +5,9 @@ use blockwild_types::{CanonicalHash, CanonicalHasher};
 use crate::{
     AcceptedReceipt, ActorGrant, AuthorityIdentity, CardforgeCommand, CardforgeState, CombatCommand, CombatState,
     ContainerKey, Domain, GameplayActor, GameplayBatch, GameplayCommand, GameplayEvent, GameplayReceipt,
-    GameplayRevision, IDEMPOTENCY_WINDOW, InventoryCommand, InventoryState, MachineCommand, MachineStateSet,
-    OpaquePayload, ProgressionState, Rejection, RejectionCode, ResourceDelta, Scope, StatDelta, WorldKey, validate_id,
+    GameplayRevision, GameplayScheduleAdvanceV1, IDEMPOTENCY_WINDOW, InventoryCommand, InventoryState,
+    MAX_SCHEDULE_MACHINE_ADVANCES_V1, MachineCommand, MachineStateSet, OpaquePayload, ProgressionState, Rejection,
+    RejectionCode, ResourceDelta, Scope, StatDelta, WorldKey, validate_id,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -554,6 +555,99 @@ fn dispatch(
             }
             touched.insert(Domain::Cardforge);
         }
+        GameplayCommand::AdvanceSchedule(command) => advance_schedule(
+            state,
+            actor,
+            command,
+            command_index,
+            batch_id,
+            touched,
+            resource_deltas,
+            events,
+        )?,
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn advance_schedule(
+    state: &mut GameplayState,
+    actor: &GameplayActor,
+    command: &GameplayScheduleAdvanceV1,
+    command_index: usize,
+    batch_id: &str,
+    touched: &mut BTreeSet<Domain>,
+    resource_deltas: &mut Vec<ResourceDelta>,
+    events: &mut Vec<GameplayEvent>,
+) -> Result<(), Rejection> {
+    if state.tick != command.expected_tick {
+        return Err(Rejection::new(
+            RejectionCode::StaleRevision,
+            "gameplay schedule expected tick is stale",
+        ));
+    }
+    if command.to_tick <= command.expected_tick {
+        return Err(Rejection::new(
+            RejectionCode::InvalidCommand,
+            "gameplay schedule tick must advance strictly forward",
+        ));
+    }
+    if command.machine_budget == 0 || command.machine_budget > MAX_SCHEDULE_MACHINE_ADVANCES_V1 {
+        return Err(Rejection::new(
+            RejectionCode::Capacity,
+            "gameplay schedule machine budget is outside bounds",
+        ));
+    }
+
+    // This is the already-cloned authority state. Any later error rejects the
+    // whole batch, including the global clock mutation.
+    state.tick = command.to_tick;
+    state.combat.apply(&CombatCommand::Advance {
+        to_tick: command.to_tick,
+    })?;
+    touched.insert(Domain::Combat);
+    push_event(
+        events,
+        batch_id,
+        command_index,
+        &actor.actor_id,
+        "schedule-advanced",
+        None,
+    );
+
+    // Machine storage is a BTreeMap. Candidate order and the attempt budget are
+    // therefore canonical across platforms and independent of insertion order.
+    let candidates = state
+        .machines
+        .machines
+        .values()
+        .filter(|machine| machine.active && machine.last_tick < command.to_tick && machine.recipe_id.is_some())
+        .take(usize::from(command.machine_budget))
+        .map(|machine| (machine.machine_id.clone(), machine.revision))
+        .collect::<Vec<_>>();
+    for (attempt_index, (machine_id, expected_revision)) in candidates.into_iter().enumerate() {
+        if let Ok(deltas) = state.machines.apply(
+            &MachineCommand::Advance {
+                machine_id: machine_id.clone(),
+                expected_revision,
+                to_tick: command.to_tick,
+            },
+            command.to_tick,
+        ) {
+            resource_deltas.extend(deltas);
+            touched.insert(Domain::Machines);
+            events.push(GameplayEvent {
+                event_id: format!("{batch_id}:{command_index}:schedule-machine-advanced:{attempt_index}"),
+                kind: "schedule-machine-advanced".into(),
+                actor_id: actor.actor_id.clone(),
+                record_id: Some(machine_id),
+                payload: OpaquePayload {
+                    type_id: "blockwild.gameplay.event.v1".into(),
+                    schema: 1,
+                    bytes: Vec::new(),
+                },
+            });
+        }
     }
     Ok(())
 }
@@ -564,6 +658,18 @@ fn authorize_command(
     grant: &ActorGrant,
     command: &GameplayCommand,
 ) -> Result<(), Rejection> {
+    if matches!(command, GameplayCommand::AdvanceSchedule(_)) {
+        if actor.role == crate::ActorRole::System
+            && grant.role == crate::ActorRole::System
+            && grant.scopes.contains(&Scope::System)
+        {
+            return Ok(());
+        }
+        return Err(Rejection::new(
+            RejectionCode::Unauthorized,
+            "gameplay schedule advance requires the system actor",
+        ));
+    }
     if grant.scopes.contains(&Scope::System) {
         return Ok(());
     }
@@ -680,6 +786,7 @@ fn authorize_command(
                 ));
             }
         }
+        GameplayCommand::AdvanceSchedule(_) => unreachable!("schedule authorization returned above"),
     }
     Ok(())
 }

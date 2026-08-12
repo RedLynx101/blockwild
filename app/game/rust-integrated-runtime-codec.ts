@@ -1,10 +1,12 @@
 import {
   RUST_INTEGRATED_RUNTIME_MAX_DOMAIN_PAYLOAD_BYTES,
+  RUST_INTEGRATED_RUNTIME_MAX_ACTION_RECEIPTS,
   RUST_INTEGRATED_RUNTIME_MAX_EXTRACTION_BYTES,
   RUST_INTEGRATED_RUNTIME_MAX_INPUT_FRAMES,
   RUST_INTEGRATED_RUNTIME_MAX_OPERATIONS,
   RUST_INTEGRATED_RUNTIME_MAX_REQUEST_BYTES,
   RUST_INTEGRATED_RUNTIME_SCHEMA_V2,
+  RUST_INTEGRATED_RUNTIME_SCHEMA_V3,
   RUST_INTEGRATED_RUNTIME_WIRE_V1,
   RUST_RUNTIME_INPUT_BUTTON_MASK_V1,
   RUST_RUNTIME_INPUT_FLAG_MASK_V1,
@@ -16,6 +18,7 @@ import {
   type RustIntegratedRuntimeExtractionV1,
   type RustIntegratedRuntimeIdentityV1,
   type RustIntegratedRuntimeInputFrameV1,
+  type RustIntegratedRuntimeInputActionReceiptV1,
   type RustIntegratedRuntimeRequestV1,
   type RustIntegratedRuntimeResponseV1,
   type RustIntegratedRuntimeRevisionV1,
@@ -29,6 +32,7 @@ const HASH_PATTERN = /^[0-9a-f]{32}$/u;
 const MAX_LABEL_BYTES = 512;
 const MAX_CAPABILITIES = 64;
 const U64_MAX_SAFE = Number.MAX_SAFE_INTEGER;
+const U64_MAX = BigInt("0xffffffffffffffff");
 const U64_MASK = BigInt("0xffffffffffffffff");
 const FNV64_OFFSET = BigInt("14695981039346656037");
 const FNV64_PRIME = BigInt("1099511628211");
@@ -40,6 +44,7 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const requestOperations = Object.freeze({
   "runtime-create-v1": 1,
   "runtime-command-v1": 2,
+  "runtime-recover-command-v1": 8,
   "runtime-step-v1": 3,
   "runtime-extract-v1": 4,
   "runtime-restore-v1": 5,
@@ -189,11 +194,16 @@ class Writer {
     new DataView(bytes.buffer).setUint32(0, normalized, true);
     this.append(bytes);
   }
-  u64(value: number) {
-    const normalized = BigInt(integer(value, 0, U64_MAX_SAFE, "u64"));
+  rawU64(value: bigint) {
+    if (typeof value !== "bigint" || value < BigInt(0) || value > U64_MAX) {
+      throw new RustIntegratedRuntimeCodecError("invalid-u64", "raw u64 must be an unsigned 64-bit bigint");
+    }
     const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setBigUint64(0, normalized, true);
+    new DataView(bytes.buffer).setBigUint64(0, value, true);
     this.append(bytes);
+  }
+  u64(value: number) {
+    this.rawU64(BigInt(integer(value, 0, U64_MAX_SAFE, "u64")));
   }
   string(value: string, name = "string", maximumBytes = MAX_LABEL_BYTES) {
     const encoded = textEncoder.encode(label(value, name, maximumBytes));
@@ -235,9 +245,12 @@ class Reader {
   u16() { const bytes = this.take(2); return bytes[0] | bytes[1] << 8; }
   i16() { const value = this.u16(); return value & 0x8000 ? value - 0x1_0000 : value; }
   u32() { const bytes = this.take(4); return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true); }
-  u64() {
+  rawU64() {
     const bytes = this.take(8);
-    const value = new DataView(bytes.buffer, bytes.byteOffset, 8).getBigUint64(0, true);
+    return new DataView(bytes.buffer, bytes.byteOffset, 8).getBigUint64(0, true);
+  }
+  u64() {
+    const value = this.rawU64();
     if (value > BigInt(U64_MAX_SAFE)) throw new RustIntegratedRuntimeCodecError("unsafe-u64", "wire u64 exceeds JavaScript safe range");
     return Number(value);
   }
@@ -460,6 +473,75 @@ function readInput(reader: Reader) {
   return input;
 }
 
+const inputActionKinds = Object.freeze([
+  "primary-attack",
+  "secondary-use",
+  "interact",
+  "mount-toggle",
+  "creative-flight-toggle",
+  "drop",
+] as const);
+
+const inputActionOutcomes = Object.freeze([
+  "applied",
+  "no-target",
+  "ineligible",
+  "empty-slot",
+  "blocked",
+] as const);
+
+function writeInputActionReceipt(writer: Writer, value: RustIntegratedRuntimeInputActionReceiptV1) {
+  const kind = inputActionKinds.indexOf(value.kind);
+  const outcome = inputActionOutcomes.indexOf(value.outcome);
+  if (kind < 0 || outcome < 0) {
+    throw new RustIntegratedRuntimeCodecError("input-action-receipt", "input action receipt kind or outcome is unknown");
+  }
+  writer.u64(integer(value.sequence, 1, U64_MAX_SAFE, "action.sequence"));
+  writer.u64(integer(value.inputSequence, 1, U64_MAX_SAFE, "action.inputSequence"));
+  writer.u64(integer(value.tick, 0, U64_MAX_SAFE, "action.tick"));
+  writer.u8(kind);
+  writer.u8(outcome);
+  writer.u8(integer(value.selectedSlot, 0, 8, "action.selectedSlot"));
+  writer.u8(integer(value.authoritativeFlags, 0, RUST_RUNTIME_INPUT_FLAG_MASK_V1, "action.authoritativeFlags"));
+  writer.rawU64(value.targetEntityId);
+  writer.hash(value.effectHash, "action.effectHash");
+}
+
+function readInputActionReceipt(reader: Reader): RustIntegratedRuntimeInputActionReceiptV1 {
+  const sequence = reader.u64();
+  const inputSequence = reader.u64();
+  const tick = reader.u64();
+  const kindTag = reader.u8();
+  const outcomeTag = reader.u8();
+  const kind = inputActionKinds[kindTag];
+  const outcome = inputActionOutcomes[outcomeTag];
+  const selectedSlot = reader.u8();
+  const authoritativeFlags = reader.u8();
+  const targetEntityId = reader.rawU64();
+  const effectHash = reader.hash();
+  if (kind === undefined) {
+    throw new RustIntegratedRuntimeCodecError("input-action-kind", `input action receipt kind ${kindTag} is unknown`);
+  }
+  if (outcome === undefined) {
+    throw new RustIntegratedRuntimeCodecError("input-action-outcome", `input action receipt outcome ${outcomeTag} is unknown`);
+  }
+  if (sequence < 1 || inputSequence < 1
+    || selectedSlot > 8 || authoritativeFlags > RUST_RUNTIME_INPUT_FLAG_MASK_V1) {
+    throw new RustIntegratedRuntimeCodecError("input-action-receipt", "input action receipt is malformed");
+  }
+  return Object.freeze({
+    sequence,
+    inputSequence,
+    tick,
+    kind,
+    outcome,
+    selectedSlot,
+    authoritativeFlags,
+    targetEntityId,
+    effectHash,
+  });
+}
+
 function writeReceipt(writer: Writer, value: RustIntegratedRuntimeCommandReceiptV1) {
   writer.u8(value.status === "accepted" ? 0 : 1);
   writer.string(value.commandId, "receipt.commandId", 160);
@@ -556,7 +638,7 @@ export function rustIntegratedRuntimeExtractionChecksumV1(
   return rustIntegratedRuntimeWireChecksumV1(writer.finish(RUST_INTEGRATED_RUNTIME_MAX_EXTRACTION_BYTES + 20));
 }
 
-type Header = Readonly<{ operation: number; status: number; requestId: number; clientEpoch: number; workerEpoch: number; payload: Uint8Array }>;
+type Header = Readonly<{ schema: number; operation: number; status: number; requestId: number; clientEpoch: number; workerEpoch: number; payload: Uint8Array }>;
 
 function encodeEnvelope(
   magic: Uint8Array,
@@ -566,6 +648,7 @@ function encodeEnvelope(
   clientEpoch: number,
   workerEpoch: number,
   payload: Uint8Array,
+  schema: number = RUST_INTEGRATED_RUNTIME_SCHEMA_V2,
 ) {
   if (payload.byteLength + HEADER_BYTES > RUST_INTEGRATED_RUNTIME_MAX_REQUEST_BYTES) {
     throw new RustIntegratedRuntimeCodecError("wire-capacity", "integrated runtime envelope exceeds 8 MiB");
@@ -574,7 +657,10 @@ function encodeEnvelope(
   output.set(magic, 0);
   const view = new DataView(output.buffer);
   view.setUint16(4, RUST_INTEGRATED_RUNTIME_WIRE_V1, true);
-  view.setUint16(6, RUST_INTEGRATED_RUNTIME_SCHEMA_V2, true);
+  if (schema !== RUST_INTEGRATED_RUNTIME_SCHEMA_V2 && schema !== RUST_INTEGRATED_RUNTIME_SCHEMA_V3) {
+    throw new RustIntegratedRuntimeCodecError("runtime-schema", "integrated runtime schema is unsupported");
+  }
+  view.setUint16(6, schema, true);
   view.setUint8(8, integer(operation, 0, 0xff, "operation"));
   view.setUint8(9, integer(status, 0, 0xff, "status"));
   view.setUint16(10, 0, true);
@@ -597,7 +683,8 @@ function decodeEnvelope(value: Uint8Array | ArrayBuffer, magic: Uint8Array): Hea
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint16(4, true) !== RUST_INTEGRATED_RUNTIME_WIRE_V1) throw new RustIntegratedRuntimeCodecError("wire-version", "integrated runtime wire version is unsupported");
-  if (view.getUint16(6, true) !== RUST_INTEGRATED_RUNTIME_SCHEMA_V2) throw new RustIntegratedRuntimeCodecError("runtime-schema", "integrated runtime schema is unsupported");
+  const schema = view.getUint16(6, true);
+  if (schema !== RUST_INTEGRATED_RUNTIME_SCHEMA_V2 && schema !== RUST_INTEGRATED_RUNTIME_SCHEMA_V3) throw new RustIntegratedRuntimeCodecError("runtime-schema", "integrated runtime schema is unsupported");
   if (view.getUint16(10, true) !== 0) throw new RustIntegratedRuntimeCodecError("reserved", "integrated runtime reserved header bits must be zero");
   const payloadLength = view.getUint32(24, true);
   if (payloadLength !== bytes.byteLength - HEADER_BYTES) throw new RustIntegratedRuntimeCodecError("length", "integrated runtime envelope length does not match its payload");
@@ -605,7 +692,7 @@ function decodeEnvelope(value: Uint8Array | ArrayBuffer, magic: Uint8Array): Hea
   const expectedHash = bytesToHex(bytes.subarray(28, HEADER_BYTES));
   if (rustIntegratedRuntimeWireChecksumV1(payload) !== expectedHash) throw new RustIntegratedRuntimeCodecError("checksum", "integrated runtime envelope checksum failed");
   return Object.freeze({
-    operation: view.getUint8(8), status: view.getUint8(9), requestId: view.getUint32(12, true),
+    schema, operation: view.getUint8(8), status: view.getUint8(9), requestId: view.getUint32(12, true),
     clientEpoch: view.getUint32(16, true), workerEpoch: view.getUint32(20, true), payload,
   });
 }
@@ -614,7 +701,8 @@ export function encodeRustIntegratedRuntimeRequestV1(request: RustIntegratedRunt
   const writer = new Writer();
   switch (request.type) {
     case "runtime-create-v1": writeConfig(writer, request.config); break;
-    case "runtime-command-v1": writeCommand(writer, request.batch); break;
+    case "runtime-command-v1":
+    case "runtime-recover-command-v1": writeCommand(writer, request.batch); break;
     case "runtime-step-v1":
       writeIdentity(writer, request.expected);
       writer.u64(request.monotonicTimeUs);
@@ -650,6 +738,7 @@ export function decodeRustIntegratedRuntimeRequestV1(value: Uint8Array | ArrayBu
   switch (header.operation) {
     case 1: request = Object.freeze({ ...base, type: "runtime-create-v1", config: readConfig(reader) }); break;
     case 2: request = Object.freeze({ ...base, type: "runtime-command-v1", batch: readCommand(reader) }); break;
+    case 8: request = Object.freeze({ ...base, type: "runtime-recover-command-v1", batch: readCommand(reader) }); break;
     case 3: {
       const expected = readIdentity(reader);
       const monotonicTimeUs = reader.u64();
@@ -693,6 +782,11 @@ export function encodeRustIntegratedRuntimeResponseV1(response: RustIntegratedRu
       writeIdentity(writer, response.identity);
       writer.u16(response.fixedSteps); writer.u16(response.inputsApplied);
       writer.u16(response.commandsProcessed); writer.u16(response.commandsAccepted);
+      if (response.actionReceipts.length > RUST_INTEGRATED_RUNTIME_MAX_ACTION_RECEIPTS) {
+        throw new RustIntegratedRuntimeCodecError("input-action-capacity", "step action receipts exceed their bound");
+      }
+      writer.u16(response.actionReceipts.length);
+      for (const receipt of response.actionReceipts) writeInputActionReceipt(writer, receipt);
       writer.hash(response.replayHash, "step.replayHash");
       break;
     case "runtime-extraction-v1": writeExtraction(writer, response.extraction); break;
@@ -729,6 +823,7 @@ export function encodeRustIntegratedRuntimeResponseV1(response: RustIntegratedRu
     response.clientEpoch,
     response.workerEpoch,
     writer.finish(),
+    response.type === "runtime-step-result-v1" ? RUST_INTEGRATED_RUNTIME_SCHEMA_V3 : RUST_INTEGRATED_RUNTIME_SCHEMA_V2,
   );
 }
 
@@ -753,10 +848,33 @@ export function decodeRustIntegratedRuntimeResponseV1(value: Uint8Array | ArrayB
       break;
     }
     case 2: response = Object.freeze({ ...base, type: "runtime-command-receipt-v1", receipt: readReceipt(reader) }); break;
-    case 3: response = Object.freeze({
-      ...base, type: "runtime-step-result-v1", identity: readIdentity(reader), fixedSteps: reader.u16(), inputsApplied: reader.u16(),
-      commandsProcessed: reader.u16(), commandsAccepted: reader.u16(), replayHash: reader.hash(),
-    }); break;
+    case 3: {
+      const identity = readIdentity(reader);
+      const fixedSteps = reader.u16();
+      const inputsApplied = reader.u16();
+      const commandsProcessed = reader.u16();
+      const commandsAccepted = reader.u16();
+      const actionCount = header.schema >= RUST_INTEGRATED_RUNTIME_SCHEMA_V3 ? reader.u16() : 0;
+      if (actionCount > RUST_INTEGRATED_RUNTIME_MAX_ACTION_RECEIPTS) throw new RustIntegratedRuntimeCodecError("input-action-capacity", "step action receipts exceed their bound");
+      const actionReceipts = Object.freeze(Array.from({ length: actionCount }, () => readInputActionReceipt(reader)));
+      for (let index = 1; index < actionReceipts.length; index += 1) {
+        if (actionReceipts[index - 1].sequence >= actionReceipts[index].sequence) {
+          throw new RustIntegratedRuntimeCodecError("input-action-order", "step action receipt sequences must be strictly increasing");
+        }
+      }
+      response = Object.freeze({
+        ...base,
+        type: "runtime-step-result-v1",
+        identity,
+        fixedSteps,
+        inputsApplied,
+        commandsProcessed,
+        commandsAccepted,
+        actionReceipts,
+        replayHash: reader.hash(),
+      });
+      break;
+    }
     case 4: response = Object.freeze({ ...base, type: "runtime-extraction-v1", extraction: readExtraction(reader) }); break;
     case 5: {
       const runtimeHandle = reader.u32();
@@ -797,7 +915,9 @@ export function rustIntegratedRuntimeRequestTransferListV1(request: RustIntegrat
     if (!(bytes.buffer instanceof ArrayBuffer)) throw new RustIntegratedRuntimeCodecError("shared-buffer", "integrated runtime V1 requires transferable ArrayBuffers");
     buffers.add(bytes.buffer);
   };
-  if (request.type === "runtime-command-v1") for (const operation of request.batch.operations) add(operation.payload);
+  if (request.type === "runtime-command-v1" || request.type === "runtime-recover-command-v1") {
+    for (const operation of request.batch.operations) add(operation.payload);
+  }
   if (request.type === "runtime-restore-v1") add(request.checkpoint);
   return [...buffers];
 }

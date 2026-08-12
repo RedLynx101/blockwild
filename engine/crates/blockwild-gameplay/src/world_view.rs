@@ -1860,11 +1860,14 @@ fn dispatch_world_view_command(
 ) -> Result<(), Rejection> {
     match command {
         WorldViewCommandV1::AdvanceTick { expected_tick, to_tick } => {
-            if state.tick != *expected_tick || to_tick < expected_tick {
+            if state.tick != *expected_tick {
                 return Err(Rejection::new(
                     RejectionCode::StaleRevision,
-                    "world-view tick is stale or regresses",
+                    "world-view tick does not match the expected tick",
                 ));
+            }
+            if to_tick <= expected_tick {
+                return Err(invalid("world-view tick advance must move strictly forward"));
             }
             state.tick = *to_tick;
             touched.insert(WorldViewDomainV1::Clock);
@@ -2279,12 +2282,23 @@ fn authorize_world_view_command(
     grant: &WorldViewActorGrantV1,
     command: &WorldViewCommandV1,
 ) -> Result<(), Rejection> {
+    if matches!(command, WorldViewCommandV1::AdvanceTick { .. }) {
+        if actor.role == ActorRole::System
+            && grant.role == ActorRole::System
+            && grant.scopes.contains(&WorldViewScopeV1::System)
+        {
+            return Ok(());
+        }
+        return Err(Rejection::new(
+            RejectionCode::Unauthorized,
+            "world-view tick advance requires the system actor",
+        ));
+    }
     if grant.scopes.contains(&WorldViewScopeV1::System) {
         return Ok(());
     }
     let required = match command {
-        WorldViewCommandV1::AdvanceTick { .. }
-        | WorldViewCommandV1::SetEnvironment { .. }
+        WorldViewCommandV1::SetEnvironment { .. }
         | WorldViewCommandV1::SetAtmosphereGravity { .. }
         | WorldViewCommandV1::SetCelestialSky { .. } => WorldViewScopeV1::Environment,
         WorldViewCommandV1::UpsertMachineAnchor { .. } | WorldViewCommandV1::RemoveMachineAnchor { .. } => {
@@ -2309,6 +2323,9 @@ fn authorize_world_view_command(
                 return Ok(());
             }
             WorldViewScopeV1::PlayerBindingSelf
+        }
+        WorldViewCommandV1::AdvanceTick { .. } => {
+            unreachable!("world-view clock authorization returned above")
         }
     };
     if !grant.scopes.contains(&required) {

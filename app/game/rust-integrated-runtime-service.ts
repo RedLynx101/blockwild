@@ -87,7 +87,7 @@ export type RustIntegratedRuntimeServiceOptionsV1 = Readonly<{
 type IdempotencyEntry =
   | Readonly<{ commandHash: string; state: "pending"; promise: Promise<RustIntegratedRuntimeCommandReceiptV1> }>
   | Readonly<{ commandHash: string; state: "settled"; receipt: RustIntegratedRuntimeCommandReceiptV1 }>
-  | Readonly<{ commandHash: string; state: "indeterminate" }>;
+  | Readonly<{ commandHash: string; state: "indeterminate"; batch: RustIntegratedRuntimeCommandBatchV1 }>;
 
 type MetricKind = "command" | "step" | "extract";
 
@@ -236,7 +236,7 @@ export class RustIntegratedRuntimeServiceV1 {
       }
       if (replay.state === "pending") return replay.promise;
       if (replay.state === "settled") return Promise.resolve(replay.receipt);
-      return Promise.reject(new RustIntegratedRuntimeServiceError("indeterminate-command", "worker failed after dispatch; restore a synchronized checkpoint before retrying"));
+      return Promise.reject(new RustIntegratedRuntimeServiceError("indeterminate-command", "worker failed after dispatch; restore an attested synchronized checkpoint before retrying"));
     }
     const promise = this.enqueue(async () => {
       const started = this.now();
@@ -281,7 +281,11 @@ export class RustIntegratedRuntimeServiceV1 {
         if (!dispatched && error instanceof RustIntegratedRuntimeServiceError && error.code === "stale-command") {
           throw error;
         }
-        this.idempotency.set(key, Object.freeze({ commandHash: batch.commandHash, state: "indeterminate" }));
+        this.idempotency.set(key, Object.freeze({
+          commandHash: batch.commandHash,
+          state: "indeterminate",
+          batch,
+        }));
         this.retainIdempotencyKey(key);
         this.failClosed(error);
         throw error;
@@ -291,6 +295,58 @@ export class RustIntegratedRuntimeServiceV1 {
     });
     this.idempotency.set(key, Object.freeze({ commandHash: batch.commandHash, state: "pending", promise }));
     return promise;
+  }
+
+  private async reconcileIndeterminateCommand(batch: RustIntegratedRuntimeCommandBatchV1, key: string) {
+    const started = this.now();
+    try {
+        const terminal = this.requireIdentity();
+        const response = await this.send({
+          type: "runtime-recover-command-v1",
+          requestId: this.requestId(),
+          clientEpoch: this.clientEpoch,
+          batch,
+        }, true);
+        this.acceptWorkerEpoch(response);
+        if (response.type === "runtime-error-v1") {
+          if (response.code === "idempotency-conflict") {
+            throw new RustIntegratedRuntimeServiceError("idempotency-conflict", response.message);
+          }
+          if (response.code === "idempotency-recovery-miss" || response.code === "idempotency-recovery-stale") {
+            throw new RustIntegratedRuntimeServiceError("indeterminate-command", response.message);
+          }
+          throw new RustIntegratedRuntimeServiceError("invalid-response", `${response.code}: ${response.message}`);
+        }
+        if (response.type !== "runtime-command-receipt-v1") {
+          throw new RustIntegratedRuntimeServiceError("invalid-response", "runtime recovery command did not return an awaited receipt");
+        }
+        const receipt = response.receipt;
+        if (receipt.commandId !== batch.commandId || receipt.idempotencyKey !== batch.idempotencyKey || receipt.commandHash !== batch.commandHash) {
+          throw new RustIntegratedRuntimeServiceError("invalid-response", "recovered receipt does not identify the original command bytes");
+        }
+        const receiptTerminal = receipt.status === "accepted" ? receipt.after : receipt.current;
+        if (!rustIntegratedRuntimeIdentityEqualsV1(receiptTerminal, terminal)) {
+          throw new RustIntegratedRuntimeServiceError("invalid-response", "recovered receipt is not terminal at the restored authority identity");
+        }
+        this.idempotency.set(key, Object.freeze({ commandHash: batch.commandHash, state: "settled", receipt }));
+        this.retainIdempotencyKey(key);
+        if (receipt.status === "accepted") this.acceptedCommands += 1;
+        else this.rejectedCommands += 1;
+        return receipt;
+    } catch (error) {
+      const current = this.idempotency.get(key);
+      if (current?.state !== "settled") {
+        this.idempotency.set(key, Object.freeze({
+          commandHash: batch.commandHash,
+          state: "indeterminate",
+          batch,
+        }));
+        this.retainIdempotencyKey(key);
+      }
+      throw error;
+    } finally {
+      this.recordMetric("command", this.now() - started);
+    }
   }
 
   installContent(bundle: RustProductionContentBundle) {
@@ -714,6 +770,11 @@ export class RustIntegratedRuntimeServiceV1 {
       this.acceptWorkerEpoch(response);
       this.verifyAttestation(response);
       this.currentIdentity = response.identity;
+      const indeterminate = [...this.idempotency.entries()]
+        .filter((entry): entry is [string, Extract<IdempotencyEntry, { state: "indeterminate" }>] => entry[1].state === "indeterminate");
+      for (const [key, entry] of indeterminate) {
+        await this.reconcileIndeterminateCommand(entry.batch, key);
+      }
       this.state = "ready";
       return response.identity;
     } catch (error) {
@@ -835,7 +896,15 @@ export class RustIntegratedRuntimeServiceV1 {
     return value;
   }
 
-  private async send(request: RustIntegratedRuntimeRequestV1) {
+  private async send(
+    request: RustIntegratedRuntimeRequestV1,
+    allowRuntimeError?: false,
+  ): Promise<Exclude<RustIntegratedRuntimeResponseV1, { type: "runtime-error-v1" }>>;
+  private async send(
+    request: RustIntegratedRuntimeRequestV1,
+    allowRuntimeError: true,
+  ): Promise<RustIntegratedRuntimeResponseV1>;
+  private async send(request: RustIntegratedRuntimeRequestV1, allowRuntimeError = false) {
     const transport = this.transport;
     if (!transport) throw new RustIntegratedRuntimeServiceError("disposed", "integrated runtime transport is absent");
     this.requests += 1;
@@ -849,7 +918,7 @@ export class RustIntegratedRuntimeServiceV1 {
       this.staleResponses += 1;
       throw new RustIntegratedRuntimeServiceError("invalid-response", "integrated runtime response has a stale epoch or request id");
     }
-    if (response.type === "runtime-error-v1") {
+    if (response.type === "runtime-error-v1" && !allowRuntimeError) {
       throw new RustIntegratedRuntimeServiceError("worker-failed", `${response.code}: ${response.message}`);
     }
     return response;

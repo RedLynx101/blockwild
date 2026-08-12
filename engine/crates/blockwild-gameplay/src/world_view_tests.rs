@@ -310,6 +310,182 @@ fn stale_batch_rolls_back_every_world_view_domain() {
 }
 
 #[test]
+fn world_view_tick_advance_is_system_only_even_with_environment_scope() {
+    let gameplay = fixture_gameplay();
+    let mut authority = create_authority(&gameplay);
+    let actor = GameplayActor {
+        actor_id: "environment-operator".into(),
+        player_id: Some(PLAYER_ID),
+        entity_id: Some(PLAYER_ENTITY_ID),
+        role: ActorRole::Host,
+    };
+    authority
+        .grant_actor(
+            actor.actor_id.clone(),
+            WorldViewActorGrantV1 {
+                player_id: actor.player_id,
+                entity_id: actor.entity_id,
+                role: actor.role,
+                scopes: BTreeSet::from([WorldViewScopeV1::Environment]),
+            },
+        )
+        .unwrap();
+    let before = authority.state.clone();
+    let replay_before = authority.replay().clone();
+    let batch = WorldViewBatchV1::new(
+        "player-clock",
+        "player-clock-key",
+        actor,
+        authority.state.identity(),
+        vec![WorldViewCommandV1::AdvanceTick {
+            expected_tick: 0,
+            to_tick: 1,
+        }],
+    );
+
+    assert!(matches!(
+        authority.apply_batch(&batch, &gameplay),
+        WorldViewReceiptV1::Rejected {
+            rejection: Rejection {
+                code: RejectionCode::Unauthorized,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(authority.state, before);
+    assert_eq!(authority.replay(), &replay_before);
+}
+
+#[test]
+fn world_view_tick_rejects_equal_and_stale_batches_with_atomic_rollback() {
+    let gameplay = fixture_gameplay();
+    let mut authority = create_authority(&gameplay);
+    let before = authority.state.clone();
+    let replay_before = authority.replay().clone();
+    let equal_after_valid = WorldViewBatchV1::new(
+        "clock-rollback",
+        "clock-rollback-key",
+        system_actor(),
+        authority.state.identity(),
+        vec![
+            WorldViewCommandV1::AdvanceTick {
+                expected_tick: 0,
+                to_tick: 1,
+            },
+            WorldViewCommandV1::AdvanceTick {
+                expected_tick: 1,
+                to_tick: 1,
+            },
+        ],
+    );
+    assert!(matches!(
+        authority.apply_batch(&equal_after_valid, &gameplay),
+        WorldViewReceiptV1::Rejected {
+            rejection: Rejection {
+                code: RejectionCode::InvalidCommand,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(authority.state, before);
+    assert_eq!(authority.replay(), &replay_before);
+
+    let stale = WorldViewBatchV1::new(
+        "clock-stale",
+        "clock-stale-key",
+        system_actor(),
+        authority.state.identity(),
+        vec![WorldViewCommandV1::AdvanceTick {
+            expected_tick: 1,
+            to_tick: 2,
+        }],
+    );
+    assert!(matches!(
+        authority.apply_batch(&stale, &gameplay),
+        WorldViewReceiptV1::Rejected {
+            rejection: Rejection {
+                code: RejectionCode::StaleRevision,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(authority.state, before);
+    assert_eq!(authority.replay(), &replay_before);
+
+    let future = WorldViewBatchV1::new(
+        "clock-future",
+        "clock-future-key",
+        system_actor(),
+        authority.state.identity(),
+        vec![WorldViewCommandV1::AdvanceTick {
+            expected_tick: 0,
+            to_tick: 1,
+        }],
+    );
+    let receipt = accepted(authority.apply_batch(&future, &gameplay));
+    assert_eq!(authority.state.tick, 1);
+    assert_eq!(authority.state.revision.clock, before.revision.clock + 1);
+    assert_eq!(receipt.touched_domains, BTreeSet::from([WorldViewDomainV1::Clock]));
+}
+
+#[test]
+fn world_view_tick_retry_and_snapshot_restore_preserve_forward_clock_semantics() {
+    let gameplay = fixture_gameplay();
+    let mut authority = create_authority(&gameplay);
+    let advance = WorldViewBatchV1::new(
+        "clock-one",
+        "clock-one-key",
+        system_actor(),
+        authority.state.identity(),
+        vec![WorldViewCommandV1::AdvanceTick {
+            expected_tick: 0,
+            to_tick: 1,
+        }],
+    );
+    let first = accepted(authority.apply_batch(&advance, &gameplay));
+    let replay_len = authority.replay().len();
+    assert_eq!(accepted(authority.apply_batch(&advance, &gameplay)), first);
+    assert_eq!(authority.state.tick, 1);
+    assert_eq!(authority.replay().len(), replay_len);
+
+    let bytes = authority.encode_snapshot_v1(&gameplay, &[0x57, 0x56]).unwrap();
+    let decoded = decode_world_view_authority_snapshot_v1(&bytes, &gameplay).unwrap();
+    assert_eq!(decoded.authority.state, authority.state);
+    assert_eq!(decoded.authority.replay_hash(), authority.replay_hash());
+    assert_eq!(decoded.unknown_extension_bytes, vec![0x57, 0x56]);
+    assert_eq!(
+        decoded.authority.encode_snapshot_v1(&gameplay, &[0x57, 0x56]).unwrap(),
+        bytes
+    );
+
+    let mut restored = decoded.authority;
+    assert_eq!(accepted(restored.apply_batch(&advance, &gameplay)), first);
+    assert_eq!(restored.replay().len(), replay_len);
+    let advance_again = WorldViewBatchV1::new(
+        "clock-two",
+        "clock-two-key",
+        system_actor(),
+        restored.state.identity(),
+        vec![WorldViewCommandV1::AdvanceTick {
+            expected_tick: 1,
+            to_tick: 2,
+        }],
+    );
+    accepted(restored.apply_batch(&advance_again, &gameplay));
+    assert_eq!(restored.state.tick, 2);
+    assert_eq!(restored.state.revision.clock, 2);
+
+    let second_bytes = restored.encode_snapshot_v1(&gameplay, &[]).unwrap();
+    let restored_again = decode_world_view_authority_snapshot_v1(&second_bytes, &gameplay).unwrap();
+    assert_eq!(restored_again.authority.state.tick, 2);
+    assert_eq!(restored_again.authority.state, restored.state);
+    assert_eq!(restored_again.authority.replay_hash(), restored.replay_hash());
+}
+
+#[test]
 fn retry_is_idempotent_and_command_reuse_fails_closed() {
     let gameplay = fixture_gameplay();
     let mut authority = create_authority(&gameplay);

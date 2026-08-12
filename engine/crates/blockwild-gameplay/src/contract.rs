@@ -12,6 +12,11 @@ pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_ITEM_STACK: u32 = 0x7fff_ffff;
 pub const MAX_ID_LENGTH: usize = 160;
 pub const IDEMPOTENCY_WINDOW: usize = 4_096;
+/// Wire discriminant reserved for [`GameplayCommand::AdvanceSchedule`].
+/// Existing command tags 0..=4 remain unchanged.
+pub const GAMEPLAY_COMMAND_ADVANCE_SCHEDULE_TAG_V1: u16 = 5;
+/// Maximum canonical machine jobs a single schedule command may inspect.
+pub const MAX_SCHEDULE_MACHINE_ADVANCES_V1: u16 = 64;
 
 pub type Tick = u64;
 
@@ -187,12 +192,29 @@ impl OpaquePayload {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct GameplayScheduleAdvanceV1 {
+    pub expected_tick: Tick,
+    pub to_tick: Tick,
+    pub machine_budget: u16,
+}
+
+impl GameplayScheduleAdvanceV1 {
+    pub(crate) fn hash_into(&self, hasher: &mut CanonicalHasher) {
+        hasher.write_u64(self.expected_tick);
+        hasher.write_u64(self.to_tick);
+        hasher.write_u16(self.machine_budget);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum GameplayCommand {
     Inventory(InventoryCommand),
     Machine(MachineCommand),
     Combat(CombatCommand),
     Progression(ProgressionCommand),
     Cardforge(CardforgeCommand),
+    /// System-only global clock, combat, and bounded machine transaction.
+    AdvanceSchedule(GameplayScheduleAdvanceV1),
 }
 
 impl GameplayCommand {
@@ -216,6 +238,10 @@ impl GameplayCommand {
             }
             Self::Cardforge(command) => {
                 hasher.write_u16(4);
+                command.hash_into(hasher);
+            }
+            Self::AdvanceSchedule(command) => {
+                hasher.write_u16(GAMEPLAY_COMMAND_ADVANCE_SCHEDULE_TAG_V1);
                 command.hash_into(hasher);
             }
         }

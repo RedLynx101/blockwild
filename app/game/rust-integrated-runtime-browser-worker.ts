@@ -86,6 +86,7 @@ export class RustIntegratedRuntimeBrowserKernelV1 implements RustIntegratedRunti
         raw = exports.blockwild_runtime_create_v2(encoded);
         break;
       case "runtime-command-v1":
+      case "runtime-recover-command-v1":
         raw = exports.blockwild_runtime_command_v2(this.requireHandle(), encoded);
         break;
       case "runtime-step-v1":

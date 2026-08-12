@@ -2,12 +2,15 @@ use std::fmt;
 
 pub const RUNTIME_WIRE_V1: u16 = 1;
 pub const RUNTIME_SCHEMA_V2: u16 = 2;
+/// Schema 3 adds bounded rising-edge action receipts to fixed-step responses.
+pub const RUNTIME_SCHEMA_V3: u16 = 3;
 pub const RUNTIME_FIXED_STEP_US: u64 = 50_000;
 pub const MAX_WIRE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_DOMAIN_PAYLOAD_BYTES: usize = 1024 * 1024;
 pub const MAX_EXTRACTION_BYTES: usize = 6 * 1024 * 1024;
 pub const MAX_OPERATIONS: usize = 256;
 pub const MAX_INPUT_FRAMES: usize = 128;
+pub const MAX_ACTION_RECEIPTS: usize = MAX_INPUT_FRAMES * 6;
 pub const MAX_SAFE_U64: u64 = 9_007_199_254_740_991;
 
 // RuntimeInputFrameV1 is a public cross-language ABI. Buttons are a sampled
@@ -161,6 +164,76 @@ pub struct RuntimeInputFrameV1 {
     pub flags: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RuntimeInputActionKindV1 {
+    PrimaryAttack = 0,
+    SecondaryUse = 1,
+    Interact = 2,
+    MountToggle = 3,
+    CreativeFlightToggle = 4,
+    Drop = 5,
+}
+
+impl RuntimeInputActionKindV1 {
+    pub fn from_code(code: u8) -> Result<Self, WireError> {
+        match code {
+            0 => Ok(Self::PrimaryAttack),
+            1 => Ok(Self::SecondaryUse),
+            2 => Ok(Self::Interact),
+            3 => Ok(Self::MountToggle),
+            4 => Ok(Self::CreativeFlightToggle),
+            5 => Ok(Self::Drop),
+            _ => Err(WireError::new(
+                "input-action-kind",
+                "input action receipt kind is unknown",
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RuntimeInputActionOutcomeV1 {
+    Applied = 0,
+    NoTarget = 1,
+    Ineligible = 2,
+    EmptySlot = 3,
+    Blocked = 4,
+}
+
+impl RuntimeInputActionOutcomeV1 {
+    pub fn from_code(code: u8) -> Result<Self, WireError> {
+        match code {
+            0 => Ok(Self::Applied),
+            1 => Ok(Self::NoTarget),
+            2 => Ok(Self::Ineligible),
+            3 => Ok(Self::EmptySlot),
+            4 => Ok(Self::Blocked),
+            _ => Err(WireError::new(
+                "input-action-outcome",
+                "input action receipt outcome is unknown",
+            )),
+        }
+    }
+}
+
+/// One deterministic rising-edge result emitted by a fixed-step request.
+/// `target_entity_id` is the packed generational identity, with zero meaning
+/// that the action did not resolve an entity target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeInputActionReceiptV1 {
+    pub sequence: u64,
+    pub input_sequence: u64,
+    pub tick: u64,
+    pub kind: RuntimeInputActionKindV1,
+    pub outcome: RuntimeInputActionOutcomeV1,
+    pub selected_slot: u8,
+    pub authoritative_flags: u8,
+    pub target_entity_id: u64,
+    pub effect_hash: WireHash,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeDomainOperationV1 {
     pub domain: RuntimeDomainV1,
@@ -188,6 +261,14 @@ pub enum RuntimeRequestV1 {
         config: RuntimeConfigV1,
     },
     Command {
+        request_id: u32,
+        client_epoch: u32,
+        batch: RuntimeCommandBatchV1,
+    },
+    /// Lookup-only retry after an attested checkpoint restore. The command
+    /// bytes are identical to the original BWRQ command; a cache miss never
+    /// dispatches authority work.
+    RecoverCommand {
         request_id: u32,
         client_epoch: u32,
         batch: RuntimeCommandBatchV1,
@@ -231,6 +312,7 @@ impl RuntimeRequestV1 {
         match self {
             Self::Create { request_id, .. }
             | Self::Command { request_id, .. }
+            | Self::RecoverCommand { request_id, .. }
             | Self::Step { request_id, .. }
             | Self::Extract { request_id, .. }
             | Self::Restore { request_id, .. }
@@ -244,6 +326,7 @@ impl RuntimeRequestV1 {
         match self {
             Self::Create { client_epoch, .. }
             | Self::Command { client_epoch, .. }
+            | Self::RecoverCommand { client_epoch, .. }
             | Self::Step { client_epoch, .. }
             | Self::Extract { client_epoch, .. }
             | Self::Restore { client_epoch, .. }
@@ -314,6 +397,7 @@ pub enum RuntimeResponseV1 {
         inputs_applied: u16,
         commands_processed: u16,
         commands_accepted: u16,
+        action_receipts: Vec<RuntimeInputActionReceiptV1>,
         replay_hash: WireHash,
     },
     Extraction {

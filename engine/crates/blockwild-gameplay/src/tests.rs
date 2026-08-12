@@ -927,3 +927,266 @@ fn malformed_identifiers_and_wrong_world_are_rejected() {
     wrong.identity.world.location = "other".into();
     assert_eq!(rejection(authority.apply_batch(&wrong)).code, RejectionCode::WrongWorld);
 }
+
+fn schedule_system_actor() -> GameplayActor {
+    GameplayActor {
+        actor_id: "gameplay-scheduler".into(),
+        player_id: None,
+        entity_id: None,
+        role: ActorRole::System,
+    }
+}
+
+fn schedule_batch(
+    authority: &GameplayAuthority,
+    suffix: &str,
+    expected_tick: Tick,
+    to_tick: Tick,
+    machine_budget: u16,
+) -> GameplayBatch {
+    GameplayBatch::new(
+        format!("schedule-batch-{suffix}"),
+        format!("schedule-key-{suffix}"),
+        schedule_system_actor(),
+        authority.state.identity(),
+        vec![GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+            expected_tick,
+            to_tick,
+            machine_budget,
+        })],
+    )
+}
+
+fn schedule_authority() -> (GameplayAuthority, ResourceKey, ResourceKey) {
+    let fuel = ResourceKey {
+        kind: ResourceKind::Energy,
+        content_id: "schedule-test-energy".into(),
+        item_code: None,
+        metadata_hash: CanonicalHash::default(),
+    };
+    let heat = ResourceKey {
+        kind: ResourceKind::Heat,
+        content_id: "schedule-test-heat".into(),
+        item_code: None,
+        metadata_hash: CanonicalHash::default(),
+    };
+    let mut machines = MachineStateSet::default();
+    machines
+        .register_recipe(MachineRecipe {
+            recipe_id: "schedule-test-recipe".into(),
+            duration_ticks: 1,
+            inputs: BTreeMap::from([(fuel.clone(), 1)]),
+            outputs: BTreeMap::from([(heat.clone(), 2)]),
+        })
+        .unwrap();
+    for (machine_id, capacity) in [("a-blocked", 10), ("b-ready", 100), ("c-ready", 100)] {
+        machines
+            .insert_machine(MachineState {
+                machine_id: machine_id.into(),
+                owner_id: None,
+                kind: MachineKind::Custom,
+                revision: 0,
+                active: true,
+                recipe_id: Some("schedule-test-recipe".into()),
+                progress_ticks: 0,
+                last_tick: 0,
+                ports: BTreeMap::from([(
+                    "process".into(),
+                    MachinePort {
+                        port_id: "process".into(),
+                        mode: PortMode::Bidirectional,
+                        accepted: BTreeSet::from([ResourceKind::Energy, ResourceKind::Heat]),
+                        capacity,
+                        resources: BTreeMap::from([(fuel.clone(), 10)]),
+                    },
+                )]),
+                lease: None,
+                settings: None,
+            })
+            .unwrap();
+    }
+    let mut state = GameplayState::new(WorldKey::new("schedule-universe", "schedule-location"), 9);
+    state.machines = machines;
+    let mut authority = GameplayAuthority::new(state);
+    authority
+        .grant_actor("gameplay-scheduler", ActorGrant::system())
+        .unwrap();
+    (authority, fuel, heat)
+}
+
+#[test]
+fn schedule_advance_is_system_only_and_rejects_without_mutation() {
+    let (mut authority, _, _) = schedule_authority();
+    let player_id = PlayerId::new(7, 1);
+    let entity_id = EntityId::new(7, 1);
+    authority
+        .grant_actor("host-player", ActorGrant::host(player_id, entity_id))
+        .unwrap();
+    let before_hash = authority.state.state_hash();
+    let before_replay = authority.replay_hash();
+    let batch = GameplayBatch::new(
+        "host-schedule-batch",
+        "host-schedule-key",
+        GameplayActor {
+            actor_id: "host-player".into(),
+            player_id: Some(player_id),
+            entity_id: Some(entity_id),
+            role: ActorRole::Host,
+        },
+        authority.state.identity(),
+        vec![GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+            expected_tick: 0,
+            to_tick: 1,
+            machine_budget: 1,
+        })],
+    );
+
+    assert_eq!(
+        rejection(authority.apply_batch(&batch)).code,
+        RejectionCode::Unauthorized
+    );
+    assert_eq!(authority.state.state_hash(), before_hash);
+    assert_eq!(authority.replay_hash(), before_replay);
+    assert!(authority.replay().is_empty());
+}
+
+#[test]
+fn schedule_advance_validates_clock_and_budget_with_atomic_rollback() {
+    let (mut authority, _, _) = schedule_authority();
+    let before = authority.state.clone();
+    for (suffix, expected_tick, to_tick, budget, code) in [
+        ("stale", 1, 2, 1, RejectionCode::StaleRevision),
+        ("not-forward", 0, 0, 1, RejectionCode::InvalidCommand),
+        ("zero-budget", 0, 1, 0, RejectionCode::Capacity),
+        (
+            "oversize-budget",
+            0,
+            1,
+            MAX_SCHEDULE_MACHINE_ADVANCES_V1 + 1,
+            RejectionCode::Capacity,
+        ),
+    ] {
+        let invalid = schedule_batch(&authority, suffix, expected_tick, to_tick, budget);
+        assert_eq!(rejection(authority.apply_batch(&invalid)).code, code);
+        assert_eq!(authority.state, before);
+        assert!(authority.replay().is_empty());
+    }
+
+    let later_failure = GameplayBatch::new(
+        "schedule-batch-later-failure",
+        "schedule-key-later-failure",
+        schedule_system_actor(),
+        authority.state.identity(),
+        vec![
+            GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+                expected_tick: 0,
+                to_tick: 1,
+                machine_budget: 1,
+            }),
+            GameplayCommand::AdvanceSchedule(GameplayScheduleAdvanceV1 {
+                expected_tick: 0,
+                to_tick: 2,
+                machine_budget: 1,
+            }),
+        ],
+    );
+    assert_eq!(
+        rejection(authority.apply_batch(&later_failure)).code,
+        RejectionCode::StaleRevision
+    );
+    assert_eq!(authority.state, before);
+    assert!(authority.replay().is_empty());
+}
+
+#[test]
+fn schedule_advance_uses_canonical_attempt_budget_and_replay() {
+    let (mut authority, fuel, heat) = schedule_authority();
+    let first_batch = schedule_batch(&authority, "tick-1", 0, 1, 1);
+    let first = accepted(authority.apply_batch(&first_batch));
+
+    assert_eq!(authority.state.tick, 1);
+    assert_eq!(authority.state.combat.tick, 1);
+    assert_eq!(authority.state.revision.sequence, 1);
+    assert_eq!(authority.state.revision.combat, 1);
+    assert_eq!(authority.state.revision.machines, 0);
+    assert_eq!(authority.state.machines.machines["a-blocked"].last_tick, 0);
+    assert_eq!(authority.state.machines.machines["b-ready"].last_tick, 0);
+    assert_eq!(first.touched_domains, BTreeSet::from([Domain::Combat]));
+    assert_eq!(first.events.len(), 1);
+    assert_eq!(first.events[0].kind, "schedule-advanced");
+
+    let first_state_hash = authority.state.state_hash();
+    let first_replay_hash = authority.replay_hash();
+    assert_eq!(accepted(authority.apply_batch(&first_batch)), first);
+    assert_eq!(authority.state.state_hash(), first_state_hash);
+    assert_eq!(authority.replay_hash(), first_replay_hash);
+    assert_eq!(authority.replay().len(), 1);
+
+    let second_batch = schedule_batch(&authority, "tick-2", 1, 2, 3);
+    let second = accepted(authority.apply_batch(&second_batch));
+    let ready = &authority.state.machines.machines["b-ready"];
+    assert_eq!(authority.state.tick, 2);
+    assert_eq!(authority.state.combat.tick, 2);
+    assert_eq!(authority.state.revision.sequence, 2);
+    assert_eq!(authority.state.revision.combat, 2);
+    assert_eq!(authority.state.revision.machines, 1);
+    assert_eq!(authority.state.machines.machines["a-blocked"].last_tick, 0);
+    assert_eq!(ready.last_tick, 2);
+    assert_eq!(ready.revision, 1);
+    assert_eq!(ready.ports["process"].resources[&fuel], 8);
+    assert_eq!(ready.ports["process"].resources[&heat], 4);
+    assert_eq!(authority.state.machines.machines["c-ready"].last_tick, 2);
+    assert_eq!(
+        second.touched_domains,
+        BTreeSet::from([Domain::Machines, Domain::Combat])
+    );
+    assert_eq!(
+        second
+            .events
+            .iter()
+            .map(|event| event.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "schedule-advanced",
+            "schedule-machine-advanced",
+            "schedule-machine-advanced"
+        ]
+    );
+    assert_eq!(
+        second
+            .events
+            .iter()
+            .map(|event| event.event_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        second.events.len()
+    );
+    assert_eq!(authority.replay().len(), 2);
+}
+
+#[test]
+fn schedule_snapshot_roundtrip_preserves_retry_and_future_progress() {
+    let (mut authority, _, _) = schedule_authority();
+    let first_batch = schedule_batch(&authority, "snapshot-1", 0, 1, 2);
+    let first_receipt = accepted(authority.apply_batch(&first_batch));
+    let extensions = [0, 0x80, 0xff, 7, 9];
+    let encoded = authority.encode_snapshot(&extensions).unwrap();
+    let decoded = decode_gameplay_authority_snapshot(&encoded).unwrap();
+    assert_eq!(decoded.unknown_extension_bytes, extensions);
+    assert_eq!(decoded.authority.state, authority.state);
+    assert_eq!(decoded.authority.replay_hash(), authority.replay_hash());
+    assert_eq!(decoded.authority.encode_snapshot(&extensions).unwrap(), encoded);
+
+    let mut restored = decoded.authority;
+    let restored_hash = restored.state.state_hash();
+    let restored_replay = restored.replay_hash();
+    assert_eq!(accepted(restored.apply_batch(&first_batch)), first_receipt);
+    assert_eq!(restored.state.state_hash(), restored_hash);
+    assert_eq!(restored.replay_hash(), restored_replay);
+
+    let next_batch = schedule_batch(&restored, "snapshot-2", 1, 2, 2);
+    accepted(restored.apply_batch(&next_batch));
+    assert_eq!(restored.state.tick, 2);
+    assert_eq!(restored.state.combat.tick, 2);
+    assert_eq!(restored.replay().len(), 2);
+}
