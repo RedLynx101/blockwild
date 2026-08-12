@@ -1,10 +1,13 @@
-import * as THREE from "three";
 import { BiomeId } from "./world";
 import { MOB_DEFS, type CoreMobKind, type DragonKind, type MobKind, type TideglassAquaticKind } from "./mobs";
 import { UndergroundBiomeId } from "./underground";
 import { createBirdFlightRouteState, type BirdFlightRouteState, type BirdPerchCandidate } from "./creature-pathing";
 
 const TAU = Math.PI * 2;
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
 
 export function normalizeAngle(angle: number) {
   return Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -59,7 +62,7 @@ export function updateStableSteering(state: StableSteeringState, input: StableSt
   const maxStep = Math.max(0, input.turnRate) * dt;
   const heading = Math.abs(delta) <= deadZone
     ? targetHeading
-    : normalizeAngle(state.heading + THREE.MathUtils.clamp(delta, -maxStep, maxStep));
+    : normalizeAngle(state.heading + clamp(delta, -maxStep, maxStep));
   if (!Number.isFinite(heading) || !Number.isFinite(targetHeading)) return createStableSteering(0);
   return { heading, targetHeading, avoidanceHold, blockedFrames, avoidanceSequence };
 }
@@ -110,7 +113,7 @@ export function createBirdBehavior(kind: AirborneRouteKind, phase = 0): BirdBeha
 /** Pure state transition helper shared by every bird species. */
 export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimulus): BirdBehaviorState {
   const dt = Math.max(0, Math.min(stimulus.dt, 0.1));
-  const random = THREE.MathUtils.clamp(stimulus.random ?? 0.5, 0, 1);
+  const random = clamp(stimulus.random ?? 0.5, 0, 1);
   const rushed = stimulus.distanceToHuman < 7 && stimulus.humanSpeed > 2.1;
   const crowded = stimulus.distanceToHuman < 2.8;
   let mode = state.mode;
@@ -331,7 +334,7 @@ export function chooseLocalWalkableGround(
 }
 
 function weightedMob(entries: readonly WeightedMob[], roll: number) {
-  const normalized = THREE.MathUtils.clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
+  const normalized = clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
   const total = entries.reduce((sum, [, weight]) => sum + Math.max(0, weight), 0);
   let cursor = normalized * total;
   for (const [kind, weight] of entries) {
@@ -669,7 +672,7 @@ export function aquaticSpawnBandForMob(kind: MobKind): "floor" | "water-column" 
 /** Bounded group count; unlisted creatures remain solitary. */
 export function naturalGroupSizeForMob(kind: MobKind, roll = Math.random()) {
   const [minimum, maximum] = NATURAL_GROUP_RANGES[kind] ?? [1, 1];
-  const normalized = THREE.MathUtils.clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
+  const normalized = clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
   return minimum + Math.floor(normalized * (maximum - minimum + 1));
 }
 
@@ -989,7 +992,7 @@ export function stepAetherbellMorph(
   const targetMedium: AetherbellMedium = input.adult && !input.underwater ? "air" : "sea";
   const direction = targetMedium === "air" ? 1 : -1;
   const step = Math.max(0, Math.min(1, input.elapsedSeconds / LEVIATHAN_LIFECYCLE_CONTRACT.aetherbellMorphSeconds));
-  const airProgress = THREE.MathUtils.clamp(state.airProgress + direction * step, 0, 1);
+  const airProgress = clamp(state.airProgress + direction * step, 0, 1);
   const phase = airProgress <= 0 ? "sea" : airProgress >= 1 ? "air" : "morphing";
   const medium = phase === "morphing" ? state.medium : phase;
   return { schemaVersion: 1, medium, targetMedium, airProgress, phase };
