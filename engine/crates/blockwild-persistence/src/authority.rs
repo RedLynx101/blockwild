@@ -229,7 +229,25 @@ impl PersistenceAuthorityV1 {
     }
 
     pub fn prepare_commit(&mut self, created_at: u64) -> Result<PreparedAuthorityCommitV1, PersistenceError> {
+        self.prepare_commit_with_max_bytes(created_at, MAX_TRANSACTION_BYTES_V1)
+    }
+
+    /// Selects the next deterministic prefix of dirty records whose Put
+    /// payloads fit within `max_payload_bytes`. The dispatcher still validates
+    /// the complete encoded BWPR envelope; this bound lets hosts reserve room
+    /// for transaction, address, and checkpoint metadata before that step.
+    pub fn prepare_commit_with_max_bytes(
+        &mut self,
+        created_at: u64,
+        max_payload_bytes: usize,
+    ) -> Result<PreparedAuthorityCommitV1, PersistenceError> {
         self.require_live()?;
+        if max_payload_bytes == 0 || max_payload_bytes > MAX_TRANSACTION_BYTES_V1 {
+            return Err(PersistenceError::new(
+                "commit-payload-capacity",
+                "commit payload bound must be within the transaction byte budget",
+            ));
+        }
         if self.pending_transaction_id.is_some() {
             return Err(PersistenceError::new(
                 "commit-in-flight",
@@ -253,7 +271,13 @@ impl PersistenceAuthorityV1 {
             let mutation = match dirty {
                 DirtyRecordV1::Put(payload) => {
                     let next_bytes = byte_length.saturating_add(payload.len() as u64);
-                    if !mutations.is_empty() && next_bytes > MAX_TRANSACTION_BYTES_V1 as u64 {
+                    if next_bytes > max_payload_bytes as u64 {
+                        if mutations.is_empty() {
+                            return Err(PersistenceError::new(
+                                "commit-record-capacity",
+                                "one dirty record exceeds the bounded commit payload lane",
+                            ));
+                        }
                         break;
                     }
                     byte_length = next_bytes;
@@ -556,6 +580,33 @@ mod tests {
             authority.dirty_records().get(&address("e")),
             Some(&DirtyRecordV1::Put(vec![2]))
         );
+    }
+
+    #[test]
+    fn bounded_commit_selects_an_ordered_prefix_and_rejects_one_oversized_record() {
+        let mut authority = PersistenceAuthorityV1::empty("world", hash(1), hash(2)).unwrap();
+        authority.stage_put(address("a"), vec![1; 4]).unwrap();
+        authority.stage_put(address("b"), vec![2; 4]).unwrap();
+        authority.stage_put(address("c"), vec![3; 4]).unwrap();
+
+        let first = authority.prepare_commit_with_max_bytes(10, 8).unwrap();
+        assert_eq!(first.transaction.mutations.len(), 2);
+        assert_eq!(first.transaction.byte_length, 8);
+        authority.accept_durable_commit(&first, &durable(&first)).unwrap();
+
+        let second = authority.prepare_commit_with_max_bytes(11, 8).unwrap();
+        assert_eq!(second.transaction.mutations.len(), 1);
+        assert_eq!(second.transaction.byte_length, 4);
+        authority.accept_durable_commit(&second, &durable(&second)).unwrap();
+        assert!(authority.dirty_records().is_empty());
+
+        authority.stage_put(address("too-large"), vec![4; 9]).unwrap();
+        let before = authority.diagnostics();
+        assert_eq!(
+            authority.prepare_commit_with_max_bytes(12, 8).unwrap_err().code,
+            "commit-record-capacity"
+        );
+        assert_eq!(authority.diagnostics(), before);
     }
 
     #[test]

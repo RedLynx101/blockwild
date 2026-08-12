@@ -13,7 +13,8 @@ use blockwild_engine::{
     CONTENT_INSTALL_PAGE_TYPE_V1, CONTENT_INSTALL_RECEIPT_TYPE_V1, ENTITY_AUTHORITY_EXPORT_TYPE_V1,
     ENTITY_AUTHORITY_IMPORT_RECEIPT_TYPE_V1, ENTITY_AUTHORITY_IMPORT_TYPE_V2, ENTITY_AUTHORITY_SNAPSHOT_TYPE_V2,
     ENTITY_COMPATIBILITY_EXPORT_TYPE_V1, ENTITY_COMPATIBILITY_IMPORT_TYPE_V1, ENTITY_COMPATIBILITY_RECORD_TYPE_V1,
-    IntegratedRuntimeBatchV2, IntegratedRuntimeConfigV2, IntegratedRuntimeError, IntegratedRuntimeIdentityV2,
+    INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1, IntegratedRuntimeBatchV2, IntegratedRuntimeConfigV2,
+    IntegratedRuntimeError, IntegratedRuntimeIdentityV2, IntegratedRuntimeLegacyMigrationV1,
     IntegratedRuntimeReceiptV2, IntegratedRuntimeV2, decode_content_install_page_v1, decode_entity_authority_export_v1,
     decode_entity_authority_import_v2, decode_entity_command_batch_v1, decode_entity_compatibility_export_v1,
     decode_entity_compatibility_import_v1, decode_gameplay_actor_grant_v1, decode_gameplay_batch_v1,
@@ -21,7 +22,7 @@ use blockwild_engine::{
     decode_network_peer_grant_v1, decode_network_peer_release_v1, decode_network_reconnect_request_v1,
     decode_network_replication_record_v1, decode_runtime_persistence_dispatch_v1, decode_runtime_player_binding_v1,
     encode_content_install_receipt_v1, encode_entity_authority_import_receipt_v1, encode_entity_event_batch_v1,
-    encode_gameplay_receipt_v1, encode_runtime_persistence_dispatch_receipt_v1,
+    encode_gameplay_receipt_v1, encode_runtime_persistence_dispatch_receipt_v1, integrated_runtime_checkpoint_hash_v1,
 };
 use blockwild_network::{InterestSelectionStatsV1, encode_network_checkpoint_v1, encode_network_delta_v1};
 use blockwild_persistence::{PersistenceDispatchOutcomeV1, PersistenceDispatchStatusV1, PersistenceRetryDirectiveV1};
@@ -52,7 +53,7 @@ const ENTITY_EXTRACTION_SCHEMA_V3: u16 = 3;
 const ENTITY_EXTRACTION_HEADER_BYTES_V3: usize = 51;
 const MAX_ENTITY_EXTRACTION_RECORDS_V3: usize = 4_096;
 const MAX_ENTITY_EXTRACTION_BYTES_V3: usize = 4 * 1_048_576;
-const CAPABILITIES: [&str; 13] = [
+const CAPABILITIES: [&str; 12] = [
     "awaited-receipts-v1",
     "bounded-entity-extraction-v1",
     "bounded-extraction-v1-pending-live-domain-views",
@@ -64,7 +65,6 @@ const CAPABILITIES: [&str; 13] = [
     "fixed-step-input-v1-pending-live-cutover",
     "gameplay-command-v1",
     "integrated-runtime-v1",
-    "native-save-hydration-v1-pending-r6-r7-records",
     "network-authority-v1",
 ];
 
@@ -99,8 +99,8 @@ thread_local! {
     static INTEGRATED_RUNTIMES: RefCell<IntegratedRuntimeStoreV2> = RefCell::new(IntegratedRuntimeStoreV2::default());
 }
 
-/// Creates the sole integrated runtime for this Worker generation. Restore
-/// remains fail-closed until R8's checkpoint codec is attached to this facade.
+/// Creates a fresh integrated runtime or atomically restores one exact R8
+/// checkpoint before assigning a Worker-generation handle.
 #[wasm_bindgen]
 #[must_use]
 pub fn blockwild_runtime_create_v2(request_bytes: &[u8]) -> Vec<u8> {
@@ -115,6 +115,7 @@ pub fn blockwild_runtime_create_v2(request_bytes: &[u8]) -> Vec<u8> {
         } => match create_runtime(config) {
             Ok(runtime) => {
                 let identity = wire_identity(&runtime.identity());
+                let capabilities = capabilities(&runtime);
                 let handle = INTEGRATED_RUNTIMES.with(|store| store.borrow_mut().insert(runtime));
                 encode(RuntimeResponseV1::Ready {
                     request_id,
@@ -127,7 +128,7 @@ pub fn blockwild_runtime_create_v2(request_bytes: &[u8]) -> Vec<u8> {
                     // placeholder before the browser service verifies it.
                     artifact_hash: WASM_ARTIFACT_ATTESTATION_PLACEHOLDER.into(),
                     instance_id: format!("integrated-runtime:{WORKER_EPOCH}:{handle}"),
-                    capabilities: capabilities(),
+                    capabilities,
                 })
             }
             Err((code, message)) => encode_error(request_id, client_epoch, code, message, None),
@@ -135,14 +136,30 @@ pub fn blockwild_runtime_create_v2(request_bytes: &[u8]) -> Vec<u8> {
         RuntimeRequestV1::Restore {
             request_id,
             client_epoch,
-            ..
-        } => encode_error(
-            request_id,
-            client_epoch,
-            "restore-unavailable",
-            "integrated checkpoint restore is unavailable until the R8 checkpoint codec is attached",
-            None,
-        ),
+            expected_checkpoint_hash,
+            checkpoint,
+        } => {
+            let checkpoint_hash = canonical_hash(expected_checkpoint_hash);
+            match IntegratedRuntimeV2::restore_runtime_checkpoint(&checkpoint, checkpoint_hash) {
+                Ok(runtime) => {
+                    let identity = wire_identity(&runtime.identity());
+                    let capabilities = capabilities(&runtime);
+                    let handle = INTEGRATED_RUNTIMES.with(|store| store.borrow_mut().insert(runtime));
+                    encode(RuntimeResponseV1::Restored {
+                        request_id,
+                        client_epoch,
+                        worker_epoch: WORKER_EPOCH,
+                        runtime_handle: handle,
+                        identity,
+                        checkpoint_hash: wire_hash(checkpoint_hash),
+                        artifact_hash: WASM_ARTIFACT_ATTESTATION_PLACEHOLDER.into(),
+                        instance_id: format!("integrated-runtime:{WORKER_EPOCH}:{handle}"),
+                        capabilities,
+                    })
+                }
+                Err(error) => encode_error(request_id, client_epoch, error.code, error.message, None),
+            }
+        }
         request => encode_error(
             request.request_id(),
             request.client_epoch(),
@@ -431,38 +448,76 @@ pub fn blockwild_runtime_extract_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8
     })
 }
 
-/// Checkpoint export is an explicit hard gate; no synthetic checkpoint is
-/// returned before the R8 canonical save codec is attached.
+/// Exports one exact, bounded Worker-replacement checkpoint. Large durable
+/// browser saves remain on the detached chunked persistence lane.
 #[wasm_bindgen]
 #[must_use]
 pub fn blockwild_runtime_export_save_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8> {
     let Ok(request) = decode_request_v1(request_bytes) else {
         return Vec::new();
     };
-    let current = INTEGRATED_RUNTIMES.with(|store| {
-        store
-            .borrow()
-            .runtimes
-            .get(&handle)
-            .map(|runtime| wire_identity(&runtime.identity()))
-    });
-    let (request_id, client_epoch) = (request.request_id(), request.client_epoch());
-    if current.is_none() {
-        return encode_error(
-            request_id,
-            client_epoch,
-            "invalid-handle",
-            "unknown integrated runtime handle",
-            None,
-        );
-    }
-    encode_error(
+    let RuntimeRequestV1::Checkpoint {
         request_id,
         client_epoch,
-        "checkpoint-unavailable",
-        "integrated checkpoint export is unavailable until the R8 canonical save codec is attached",
-        current,
-    )
+        expected,
+    } = request
+    else {
+        return encode_error(
+            request.request_id(),
+            request.client_epoch(),
+            "wrong-operation",
+            "checkpoint export requires a checkpoint request",
+            None,
+        );
+    };
+    INTEGRATED_RUNTIMES.with(|store| {
+        let store = store.borrow();
+        let Some(runtime) = store.runtimes.get(&handle) else {
+            return encode_error(
+                request_id,
+                client_epoch,
+                "invalid-handle",
+                "unknown integrated runtime handle",
+                None,
+            );
+        };
+        let current = wire_identity(&runtime.identity());
+        if expected != current {
+            return encode_error(
+                request_id,
+                client_epoch,
+                "stale-runtime",
+                "checkpoint export references obsolete authority",
+                Some(current),
+            );
+        }
+        match runtime.export_runtime_checkpoint() {
+            Ok(checkpoint) => {
+                let checkpoint_hash = integrated_runtime_checkpoint_hash_v1(&checkpoint);
+                let response = RuntimeResponseV1::Checkpoint {
+                    request_id,
+                    client_epoch,
+                    worker_epoch: WORKER_EPOCH,
+                    identity: current,
+                    checkpoint,
+                    checkpoint_hash: wire_hash(checkpoint_hash),
+                };
+                encode_response_v1(&response).unwrap_or_else(|error| {
+                    encode_error(
+                        request_id,
+                        client_epoch,
+                        "checkpoint-control-capacity",
+                        format!(
+                            "exact checkpoint exceeds the 8 MiB control lane; use the durable bulk save lane: {}",
+                            error.message
+                        ),
+                        Some(wire_identity(&runtime.identity())),
+                    )
+                })
+            }
+            Err(error) => encode_error(request_id, client_epoch, error.code, error.message, Some(current)),
+        }
+    })
 }
 
 /// Lower-priority detached platform lane. Rust owns request identity,
@@ -673,6 +728,164 @@ pub fn blockwild_runtime_bulk_v2(handle: u32, control_bytes: &[u8], attachment_b
                             },
                             Err(error) => bulk_runtime_error(request_id, client_epoch, error, runtime),
                         },
+                    }
+                }
+            }
+        };
+        encode_bulk_control(handle, response, &mut store.bulk_attachments)
+    })
+}
+
+/// Creates the first canonical save set for a new native world without
+/// fabricating a legacy WorldSave source. The control payload reuses the
+/// bounded `FinalizeSave` identity/timestamp shape. Worlds that already own
+/// compatibility source bytes fail closed so this route cannot delete them.
+#[wasm_bindgen]
+#[must_use]
+pub fn blockwild_runtime_initialize_native_save_v2(handle: u32, control_bytes: &[u8]) -> Vec<u8> {
+    let Ok(request) = decode_bulk_request_v1(control_bytes, &[]) else {
+        return Vec::new();
+    };
+    let RuntimeBulkRequestV1::FinalizeSave {
+        request_id,
+        client_epoch,
+        expected,
+        stage_id,
+        created_at,
+    } = request
+    else {
+        return Vec::new();
+    };
+    INTEGRATED_RUNTIMES.with(|store| {
+        let mut store = store.borrow_mut();
+        let response = match store.runtimes.get_mut(&handle) {
+            None => RuntimeBulkResponseV1::Error {
+                request_id,
+                client_epoch,
+                worker_epoch: WORKER_EPOCH,
+                code: "invalid-handle".into(),
+                message: "unknown integrated runtime handle".into(),
+                current: None,
+            },
+            Some(runtime) => {
+                let current = RuntimeBulkStateV1::from(&wire_identity(&runtime.identity()));
+                if expected != current {
+                    RuntimeBulkResponseV1::Error {
+                        request_id,
+                        client_epoch,
+                        worker_epoch: WORKER_EPOCH,
+                        code: "stale-runtime".into(),
+                        message: "native save initialization references obsolete authority".into(),
+                        current: Some(current),
+                    }
+                } else {
+                    match runtime.finalize_native_save(&stage_id, created_at) {
+                        Ok(progress) => RuntimeBulkResponseV1::SaveProgress {
+                            request_id,
+                            client_epoch,
+                            worker_epoch: WORKER_EPOCH,
+                            current: RuntimeBulkStateV1::from(&wire_identity(&runtime.identity())),
+                            stage_id: progress.stage_id,
+                            state: RuntimeBulkSaveStageStateV1::Finalized,
+                            received_chunks: progress.received_chunks,
+                            chunk_count: progress.chunk_count,
+                            received_bytes: progress.received_bytes,
+                            set_hash: WireHash(progress.set_hash.0),
+                            manifest_hash: WireHash(progress.manifest_hash.0),
+                            dispatcher_request_id: progress.dispatcher_request_id.unwrap_or_default(),
+                            remaining_dirty_records: progress.remaining_dirty_records,
+                        },
+                        Err(error) => bulk_runtime_error(request_id, client_epoch, error, runtime),
+                    }
+                }
+            }
+        };
+        encode_bulk_control(handle, response, &mut store.bulk_attachments)
+    })
+}
+
+/// Migrates a provably world-only legacy source after that exact source has
+/// been streamed into `stage_id` through `StageSaveChunk`. The control is an
+/// ordinary `FinalizeSave` bulk request, while `world_projection_bytes` is one
+/// validated BWAS record. Non-zero legacy state flags fail closed and leave the
+/// source stage intact for a richer host-domain adapter.
+#[wasm_bindgen]
+#[must_use]
+pub fn blockwild_runtime_migrate_legacy_v2(
+    handle: u32,
+    control_bytes: &[u8],
+    legacy_non_world_state_flags: u32,
+    world_projection_bytes: &[u8],
+) -> Vec<u8> {
+    let Ok(request) = decode_bulk_request_v1(control_bytes, &[]) else {
+        return Vec::new();
+    };
+    let RuntimeBulkRequestV1::FinalizeSave {
+        request_id,
+        client_epoch,
+        expected,
+        stage_id,
+        created_at,
+    } = request
+    else {
+        return Vec::new();
+    };
+    INTEGRATED_RUNTIMES.with(|store| {
+        let mut store = store.borrow_mut();
+        let response = match store.runtimes.get_mut(&handle) {
+            None => RuntimeBulkResponseV1::Error {
+                request_id,
+                client_epoch,
+                worker_epoch: WORKER_EPOCH,
+                code: "invalid-handle".into(),
+                message: "unknown integrated runtime handle".into(),
+                current: None,
+            },
+            Some(runtime) => {
+                let current = RuntimeBulkStateV1::from(&wire_identity(&runtime.identity()));
+                if expected != current {
+                    RuntimeBulkResponseV1::Error {
+                        request_id,
+                        client_epoch,
+                        worker_epoch: WORKER_EPOCH,
+                        code: "stale-runtime".into(),
+                        message: "legacy migration references obsolete authority".into(),
+                        current: Some(current),
+                    }
+                } else if legacy_non_world_state_flags > u32::from(u16::MAX) {
+                    RuntimeBulkResponseV1::Error {
+                        request_id,
+                        client_epoch,
+                        worker_epoch: WORKER_EPOCH,
+                        code: "legacy-migration-flags".into(),
+                        message: "legacy migration state flags exceed the V1 mask".into(),
+                        current: Some(current),
+                    }
+                } else {
+                    match runtime.migrate_pristine_legacy_world(IntegratedRuntimeLegacyMigrationV1 {
+                        schema_version: INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1,
+                        migration_id: stage_id.clone(),
+                        source_stage_id: stage_id.clone(),
+                        created_at,
+                        legacy_non_world_state_flags: legacy_non_world_state_flags as u16,
+                        world_projection: world_projection_bytes.to_vec(),
+                    }) {
+                        Ok(progress) => RuntimeBulkResponseV1::SaveProgress {
+                            request_id,
+                            client_epoch,
+                            worker_epoch: WORKER_EPOCH,
+                            current: RuntimeBulkStateV1::from(&wire_identity(&runtime.identity())),
+                            stage_id: progress.stage_id,
+                            state: RuntimeBulkSaveStageStateV1::Finalized,
+                            received_chunks: progress.received_chunks,
+                            chunk_count: progress.chunk_count,
+                            received_bytes: progress.received_bytes,
+                            set_hash: WireHash(progress.set_hash.0),
+                            manifest_hash: WireHash(progress.manifest_hash.0),
+                            dispatcher_request_id: progress.dispatcher_request_id.unwrap_or_default(),
+                            remaining_dirty_records: progress.remaining_dirty_records,
+                        },
+                        Err(error) => bulk_runtime_error(request_id, client_epoch, error, runtime),
                     }
                 }
             }
@@ -1571,8 +1784,12 @@ fn write_extraction_research(output: &mut Vec<u8>, research: &BTreeMap<String, u
     }
 }
 
-fn capabilities() -> Vec<String> {
-    CAPABILITIES.iter().map(|value| (*value).to_owned()).collect()
+fn capabilities(runtime: &IntegratedRuntimeV2) -> Vec<String> {
+    let mut values = CAPABILITIES.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>();
+    if runtime.native_save_ready() {
+        values.push("native-save-hydration-v1".into());
+    }
+    values
 }
 
 fn domain_name(domain: blockwild_runtime_wire::RuntimeDomainV1) -> &'static str {
@@ -1700,13 +1917,16 @@ fn encode_bulk_control(
 
 #[cfg(test)]
 mod tests {
+    use blockwild_authority::{
+        BlockCatalogV1, WorldAddressV1, WorldAuthorityStoreR4V1, encode_compatibility_save_binary_v1,
+    };
     use blockwild_engine::{
         EntityAuthorityExportWireV1, EntityAuthorityImportWireV2, EntityCompatibilityExportWireV1,
-        EntityCompatibilityImportWireV1, RuntimePersistenceDispatchWireV1, RuntimePlayerBindingWireV1,
-        decode_entity_authority_import_receipt_v1, decode_entity_event_batch_v1, encode_entity_authority_export_v1,
-        encode_entity_authority_import_v2, encode_entity_command_batch_v1, encode_entity_compatibility_export_v1,
-        encode_entity_compatibility_import_v1, encode_runtime_persistence_dispatch_v1,
-        encode_runtime_player_binding_v1,
+        EntityCompatibilityImportWireV1, LEGACY_STATE_PLAYER_V1, RuntimePersistenceDispatchWireV1,
+        RuntimePlayerBindingWireV1, decode_entity_authority_import_receipt_v1, decode_entity_event_batch_v1,
+        encode_entity_authority_export_v1, encode_entity_authority_import_v2, encode_entity_command_batch_v1,
+        encode_entity_compatibility_export_v1, encode_entity_compatibility_import_v1,
+        encode_runtime_persistence_dispatch_v1, encode_runtime_player_binding_v1,
     };
     use blockwild_entity::{
         ActionState, ENTITY_COMMAND_SCHEMA, EntityClass, EntityCommand, EntityCommandBatch, EntityCompatibilityRecord,
@@ -1859,6 +2079,7 @@ mod tests {
         assert!(!has_capability("content-authority-v1"));
         assert!(has_capability("entity-authority-snapshot-v2"));
         assert!(has_capability("entity-compatibility-bridge-v1"));
+        assert!(has_capability("native-save-hydration-v1"));
         let extract = RuntimeRequestV1::Extract {
             request_id: 2,
             client_epoch: 1,
@@ -1889,6 +2110,228 @@ mod tests {
         ))
         .unwrap();
         assert!(matches!(missing, RuntimeResponseV1::Error { .. }));
+    }
+
+    #[test]
+    fn checkpoint_export_destroy_restore_is_exact_and_corruption_fails_closed() {
+        let created = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(11)).unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Ready {
+            runtime_handle,
+            identity,
+            ..
+        } = created
+        else {
+            panic!("expected ready response")
+        };
+        let exported = decode_response_v1(&blockwild_runtime_export_save_v2(
+            runtime_handle,
+            &encode_request_v1(&RuntimeRequestV1::Checkpoint {
+                request_id: 12,
+                client_epoch: 1,
+                expected: identity.clone(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Checkpoint {
+            identity: checkpoint_identity,
+            checkpoint,
+            checkpoint_hash,
+            ..
+        } = exported
+        else {
+            panic!("expected checkpoint response: {exported:?}")
+        };
+        assert_eq!(checkpoint_identity, identity);
+        let stopped = decode_response_v1(&blockwild_runtime_destroy_v2(
+            runtime_handle,
+            &encode_request_v1(&RuntimeRequestV1::Shutdown {
+                request_id: 13,
+                client_epoch: 1,
+                expected: Some(identity.clone()),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(stopped, RuntimeResponseV1::Shutdown { .. }));
+
+        let restored = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&RuntimeRequestV1::Restore {
+                request_id: 14,
+                client_epoch: 1,
+                expected_checkpoint_hash: checkpoint_hash,
+                checkpoint: checkpoint.clone(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Restored {
+            runtime_handle: restored_handle,
+            identity: restored_identity,
+            capabilities,
+            ..
+        } = restored
+        else {
+            panic!("expected restored response: {restored:?}")
+        };
+        assert_eq!(restored_identity, identity);
+        assert!(capabilities.iter().any(|value| value == "native-save-hydration-v1"));
+
+        let mut corrupt = checkpoint;
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x5a;
+        let rejected = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&RuntimeRequestV1::Restore {
+                request_id: 15,
+                client_epoch: 1,
+                expected_checkpoint_hash: checkpoint_hash,
+                checkpoint: corrupt,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Error { code, .. } = rejected else {
+            panic!("corrupt checkpoint must reject")
+        };
+        assert_eq!(code, "checkpoint-hash");
+        let cleanup = RuntimeRequestV1::Shutdown {
+            request_id: 16,
+            client_epoch: 1,
+            expected: Some(restored_identity),
+        };
+        assert!(matches!(
+            decode_response_v1(&blockwild_runtime_destroy_v2(
+                restored_handle,
+                &encode_request_v1(&cleanup).unwrap(),
+            ))
+            .unwrap(),
+            RuntimeResponseV1::Shutdown { .. }
+        ));
+    }
+
+    #[test]
+    fn wasm_new_world_initializes_a_native_only_save_without_legacy_bytes() {
+        let created = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(160)).unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Ready {
+            runtime_handle,
+            identity,
+            ..
+        } = created
+        else {
+            panic!("expected ready response")
+        };
+        let request = RuntimeBulkRequestV1::FinalizeSave {
+            request_id: 161,
+            client_epoch: 1,
+            expected: RuntimeBulkStateV1::from(&identity),
+            stage_id: "native-new-world".into(),
+            created_at: 101,
+        };
+        let wire = encode_bulk_request_v1(&request).unwrap();
+        let initialized = decode_bulk_response_v1(
+            &blockwild_runtime_initialize_native_save_v2(runtime_handle, &wire.control),
+            &[],
+        )
+        .unwrap();
+        let RuntimeBulkResponseV1::SaveProgress {
+            state,
+            received_chunks,
+            chunk_count,
+            received_bytes,
+            dispatcher_request_id,
+            ..
+        } = initialized
+        else {
+            panic!("expected native save progress: {initialized:?}")
+        };
+        assert_eq!(state, RuntimeBulkSaveStageStateV1::Finalized);
+        assert_eq!(received_chunks, 0);
+        assert_eq!(chunk_count, 0);
+        assert_eq!(received_bytes, 0);
+        assert_ne!(dispatcher_request_id, 0);
+    }
+
+    #[test]
+    fn wasm_legacy_migration_is_world_only_staged_and_fail_closed_for_rich_saves() {
+        let created = decode_response_v1(&blockwild_runtime_create_v2(
+            &encode_request_v1(&create_request(17)).unwrap(),
+        ))
+        .unwrap();
+        let RuntimeResponseV1::Ready {
+            runtime_handle,
+            identity,
+            ..
+        } = created
+        else {
+            panic!("expected ready response")
+        };
+        let source = br#"{"schema":6,"world":"legacy"}"#.to_vec();
+        let staged_request = RuntimeBulkRequestV1::StageSaveChunk {
+            request_id: 18,
+            client_epoch: 1,
+            expected: RuntimeBulkStateV1::from(&identity),
+            stage_id: "legacy-wasm".into(),
+            chunk_index: 0,
+            chunk_count: 1,
+            total_bytes: source.len() as u64,
+            payload: source,
+        };
+        let staged_wire = encode_bulk_request_v1(&staged_request).unwrap();
+        let staged = decode_bulk_response_v1(
+            &blockwild_runtime_bulk_v2(runtime_handle, &staged_wire.control, &staged_wire.attachment),
+            &[],
+        )
+        .unwrap();
+        let RuntimeBulkResponseV1::SaveProgress { current, .. } = staged else {
+            panic!("expected staged source: {staged:?}")
+        };
+        let finalize = RuntimeBulkRequestV1::FinalizeSave {
+            request_id: 19,
+            client_epoch: 1,
+            expected: current.clone(),
+            stage_id: "legacy-wasm".into(),
+            created_at: 100,
+        };
+        let finalize_wire = encode_bulk_request_v1(&finalize).unwrap();
+        let address = WorldAddressV1::new("1", "surface").unwrap();
+        let authority = WorldAuthorityStoreR4V1::new(address, BlockCatalogV1::default()).unwrap();
+        let projection = encode_compatibility_save_binary_v1(&authority.export_compatibility_save()).unwrap();
+
+        let blocked = decode_bulk_response_v1(
+            &blockwild_runtime_migrate_legacy_v2(
+                runtime_handle,
+                &finalize_wire.control,
+                u32::from(LEGACY_STATE_PLAYER_V1),
+                &projection,
+            ),
+            &[],
+        )
+        .unwrap();
+        assert!(matches!(
+            blocked,
+            RuntimeBulkResponseV1::Error { code, current: Some(blocked_current), .. }
+                if code == "legacy-migration-rich-save" && blocked_current == current
+        ));
+
+        let migrated = decode_bulk_response_v1(
+            &blockwild_runtime_migrate_legacy_v2(runtime_handle, &finalize_wire.control, 0, &projection),
+            &[],
+        )
+        .unwrap();
+        assert!(matches!(
+            migrated,
+            RuntimeBulkResponseV1::SaveProgress {
+                state: RuntimeBulkSaveStageStateV1::Finalized,
+                dispatcher_request_id: 1,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2130,12 +2573,12 @@ mod tests {
         else {
             panic!("expected ready")
         };
+        assert!(capabilities.iter().any(|value| value == "native-save-hydration-v1"));
         assert!(
-            capabilities
+            !capabilities
                 .iter()
                 .any(|value| value == "native-save-hydration-v1-pending-r6-r7-records")
         );
-        assert!(!capabilities.iter().any(|value| value == "native-save-hydration-v1"));
 
         let stage = |request_id, expected, payload: Vec<u8>| RuntimeBulkRequestV1::StageSaveChunk {
             request_id,

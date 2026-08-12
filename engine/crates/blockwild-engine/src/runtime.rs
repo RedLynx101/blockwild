@@ -15,7 +15,7 @@ use blockwild_authority::{
     WORLD_SECTION_CELL_COUNT_V1, WorldAddressV1 as AuthorityWorldAddressV1, WorldAuthorityStoreR4V1, WorldCellV1,
     WorldChunkAddressV1 as AuthorityChunkAddressV1, WorldLiquidKindV1, WorldMutationBatchR4V1,
     WorldMutationReceiptR4V1, WorldReadPageV1, WorldSectionAddressV1, decode_compatibility_save_binary_v1,
-    encode_compatibility_save_binary_v1,
+    decode_world_authority_snapshot_r4_v1, encode_world_authority_snapshot_r4_v1,
 };
 use blockwild_entity::{
     ENTITY_COMMAND_SCHEMA, EcologyJobQueue, EntityAuthority, EntityClass, EntityCommand, EntityCommandBatch,
@@ -26,7 +26,7 @@ use blockwild_entity::{
 use blockwild_gameplay::{
     CombatCommand, ContentArtifact, ContentDomain, ContentDomainDigest, GameplayAuthority, GameplayBatch,
     GameplayReceipt, GameplayState, MachineCommand, MetadataBlobStore, WorldKey, compile_content_bundle,
-    install_content_bundle,
+    decode_gameplay_authority_snapshot, install_content_bundle,
 };
 use blockwild_generation::{
     Block as GeneratedBlock, ChunkPayloadV2, GenerateChunkRequestV2, GenerationDiagnostics, GenerationOutcome,
@@ -39,13 +39,14 @@ use blockwild_network::{
     WorldAddressV1 as NetworkWorldAddressV1,
 };
 use blockwild_persistence::{
-    COMPATIBILITY_RECORD_PREFIX_V1, CanonicalWorldSaveSetV1, JournalCommitReceipt, JournalState,
+    COMPATIBILITY_RECORD_PREFIX_V1, CanonicalWorldSaveSetV1, Checkpoint, JournalCommitReceipt, JournalState,
     NormalizedStateRecordV1, PagedRecoveryAssemblerV1, PagedRecoveryCompleteV1, PersistenceAuthorityV1,
     PersistenceBrowserRequestV1, PersistenceDispatchOutcomeV1, PersistenceDispatchPacketV1,
     PersistenceDispatchStatusV1, PersistenceDispatcherLimitsV1, PersistenceDispatcherV1,
-    PersistencePlatformOperationV1, PreparedAuthorityCommitV1, RecordAddress, RecordKind, Transaction,
-    WORLD_SAVE_MANIFEST_RECORD_ID_V1, decode_paged_recovery_head_v1, decode_paged_recovery_page_v1,
-    decode_persistence_browser_request_v1, decode_world_save_manifest_v1,
+    PersistencePlatformOperationV1, PersistenceWireRecord, PreparedAuthorityCommitV1, RecordAddress, RecordDescriptor,
+    RecordKind, Transaction, WORLD_SAVE_MANIFEST_RECORD_ID_V1, decode_paged_recovery_head_v1,
+    decode_paged_recovery_page_v1, decode_persistence_browser_request_v1, decode_record, decode_world_save_manifest_v1,
+    encode_checkpoint,
 };
 use blockwild_runtime_wire::{
     MAX_INPUT_FRAMES, RUNTIME_BULK_MAX_ATTACHMENT_BYTES_V1, RUNTIME_BULK_MAX_SAVE_CHUNKS_V1,
@@ -83,18 +84,36 @@ pub const INTEGRATED_RUNTIME_MAX_MACHINES_PER_STEP: usize = 64;
 pub const INTEGRATED_RUNTIME_PERSISTENCE_MAX_PENDING: usize = 32;
 pub const INTEGRATED_RUNTIME_PERSISTENCE_MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 pub const INTEGRATED_RUNTIME_PERSISTENCE_MAX_PACKET_BYTES: usize = 8 * 1024 * 1024;
+pub const INTEGRATED_RUNTIME_PERSISTENCE_MAX_COMMIT_PAYLOAD_BYTES: usize = 6 * 1024 * 1024;
 pub const INTEGRATED_RUNTIME_PERSISTENCE_MAX_COMPLETED: usize = 256;
 pub const INTEGRATED_RUNTIME_PERSISTENCE_MAX_RETRIES: u8 = 3;
 pub const INTEGRATED_RUNTIME_MAX_SAVE_STAGES: usize = 1;
 pub const INTEGRATED_RUNTIME_MAX_RECOVERY_ASSEMBLERS: usize = 2;
 pub const INTEGRATED_RUNTIME_MAX_HYDRATED_EXPORTS: usize = 2;
-pub const INTEGRATED_RUNTIME_NATIVE_WORLD_DOMAIN_V1: u16 = 1;
 pub const INTEGRATED_RUNTIME_CONTENT_MAX_ENTRIES_V1: usize = blockwild_gameplay::MAX_CONTENT_ENTRIES;
 pub const INTEGRATED_RUNTIME_MAX_ENTITY_SCHEDULE_JOBS_V1: usize = 256;
 pub const INTEGRATED_RUNTIME_MAX_ECOLOGY_SCHEDULE_JOBS_V1: usize = 64;
 pub const INTEGRATED_RUNTIME_MAX_PATH_SCHEDULE_JOBS_V1: usize = 64;
 pub const INTEGRATED_RUNTIME_ECOLOGY_CADENCE_TICKS_V1: u64 = 20;
+pub const INTEGRATED_RUNTIME_NATIVE_DOMAIN_COUNT_V1: u16 = 5;
 const NATIVE_WORLD_RECORD_ID_V1: &str = "rust-world-r4-v1";
+const NATIVE_ENTITY_RECORD_ID_V2: &str = "rust-entity-r6-v2";
+const NATIVE_GAMEPLAY_RECORD_ID_V1: &str = "rust-gameplay-r7-v1";
+const NATIVE_RUNTIME_RECORD_ID_V1: &str = "rust-runtime-core-v2";
+const NATIVE_CONTENT_RECORD_ID_V1: &str = "rust-content-registry-v1";
+const NATIVE_RECORD_MAGIC_V1: &[u8; 4] = b"BWNR";
+const NATIVE_RECORD_SCHEMA_V1: u16 = 1;
+const NATIVE_RUNTIME_MAGIC_V1: &[u8; 4] = b"BWRC";
+const NATIVE_CONTENT_MAGIC_V1: &[u8; 4] = b"BWCT";
+const NATIVE_CHECKPOINT_MAGIC_V1: &[u8; 4] = b"BWCK";
+const NATIVE_CHECKPOINT_SCHEMA_V1: u16 = 1;
+const NATIVE_RECORD_MAX_BYTES_V1: usize = 64 * 1024 * 1024;
+// The synchronous Worker control ABI is capped at 8 MiB. Leave room for the
+// versioned response envelope and identity fields; larger durable saves use
+// the chunked persistence lane instead of allocating an unusable checkpoint.
+const NATIVE_CHECKPOINT_MAX_BYTES_V1: usize = 8 * 1024 * 1024 - 1024;
+const NATIVE_EXTENSION_MAX_BYTES_V1: usize = 64 * 1024;
+const NATIVE_CHECKPOINT_MAX_RECORDS_V1: usize = 8;
 const HYDRATION_TRANSFER_TOKEN_BASE_V1: u64 = 4_500_000_000_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -380,6 +399,29 @@ pub struct IntegratedRuntimeSaveProgressV1 {
     pub remaining_dirty_records: u32,
 }
 
+pub const INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1: u16 = 1;
+pub const LEGACY_STATE_ENTITIES_V1: u16 = 1 << 0;
+pub const LEGACY_STATE_PLAYER_V1: u16 = 1 << 1;
+pub const LEGACY_STATE_RUNTIME_CLOCKS_V1: u16 = 1 << 2;
+pub const LEGACY_STATE_GAMEPLAY_V1: u16 = 1 << 3;
+pub const LEGACY_STATE_MACHINES_V1: u16 = 1 << 4;
+pub const LEGACY_STATE_MAP_V1: u16 = 1 << 5;
+pub const LEGACY_STATE_NETWORK_V1: u16 = 1 << 6;
+pub const LEGACY_STATE_UNKNOWN_V1: u16 = 1 << 15;
+
+/// Deliberately narrow one-time bridge for legacy worlds that contain only an
+/// R4-compatible edited-world projection. Any declared richer state blocks
+/// migration so the caller can retain the legacy source under its TS owner.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IntegratedRuntimeLegacyMigrationV1 {
+    pub schema_version: u16,
+    pub migration_id: String,
+    pub source_stage_id: String,
+    pub created_at: u64,
+    pub legacy_non_world_state_flags: u16,
+    pub world_projection: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IntegratedRuntimeHydrationSummaryV1 {
     pub recovery_id: String,
@@ -424,6 +466,99 @@ pub struct IntegratedRuntimeContentAttestationV1 {
     pub page_hashes: Vec<CanonicalHash>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(u8)]
+enum IntegratedRuntimeNativeRecordKindV1 {
+    World = 1,
+    Entities = 2,
+    Gameplay = 3,
+    Runtime = 4,
+    Content = 5,
+}
+
+impl IntegratedRuntimeNativeRecordKindV1 {
+    const ALL: [Self; INTEGRATED_RUNTIME_NATIVE_DOMAIN_COUNT_V1 as usize] = [
+        Self::World,
+        Self::Entities,
+        Self::Gameplay,
+        Self::Runtime,
+        Self::Content,
+    ];
+
+    fn from_tag(tag: u8) -> Result<Self, IntegratedRuntimeError> {
+        match tag {
+            1 => Ok(Self::World),
+            2 => Ok(Self::Entities),
+            3 => Ok(Self::Gameplay),
+            4 => Ok(Self::Runtime),
+            5 => Ok(Self::Content),
+            _ => Err(IntegratedRuntimeError::new(
+                "native-record-kind",
+                "native save record kind is unknown",
+            )),
+        }
+    }
+
+    const fn address(self) -> (RecordKind, &'static str) {
+        match self {
+            Self::World => (RecordKind::ChunkEdits, NATIVE_WORLD_RECORD_ID_V1),
+            Self::Entities => (RecordKind::Entity, NATIVE_ENTITY_RECORD_ID_V2),
+            Self::Gameplay => (RecordKind::ActorDigest, NATIVE_GAMEPLAY_RECORD_ID_V1),
+            Self::Runtime => (RecordKind::Player, NATIVE_RUNTIME_RECORD_ID_V1),
+            Self::Content => (RecordKind::SettingsReference, NATIVE_CONTENT_RECORD_ID_V1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IntegratedRuntimeNativeEnvelopeV1 {
+    kind: IntegratedRuntimeNativeRecordKindV1,
+    universe_id: String,
+    location_id: String,
+    generator_hash: CanonicalHash,
+    content_hash: CanonicalHash,
+    bundle_hash: CanonicalHash,
+    body: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct IntegratedRuntimeContentSnapshotV1 {
+    attestation: Option<IntegratedRuntimeContentAttestationV1>,
+    artifacts: Vec<ContentArtifact>,
+    unknown_extension_bytes: Vec<u8>,
+}
+
+type RuntimeContentIndexV1 = BTreeMap<(ContentDomain, String), CanonicalHash>;
+
+#[derive(Clone, Debug)]
+struct IntegratedRuntimeCoreSnapshotV1 {
+    config: IntegratedRuntimeConfigV2,
+    expected_revision: IntegratedRuntimeRevisionV2,
+    tick: u64,
+    last_monotonic_time_us: u64,
+    accumulator_us: u64,
+    rng_state: u32,
+    network_revision: u64,
+    simulation_revision: u64,
+    gameplay_authority_revision: u64,
+    entity_command_sequence: u64,
+    player: Option<IntegratedRuntimePlayerStateV2>,
+    effect_events: VecDeque<IntegratedRuntimeEffectEventV2>,
+    next_effect_sequence: u64,
+    queued_inputs: VecDeque<RuntimeInputFrameV1>,
+    last_input_sequence: Option<u64>,
+    last_applied_input: Option<RuntimeInputFrameV1>,
+    replay: VecDeque<IntegratedRuntimeReplayEntryV2>,
+    compatibility_journal: JournalState,
+    unknown_extension_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct IntegratedRuntimeNativeBundleV1 {
+    bundle_hash: CanonicalHash,
+    envelopes: BTreeMap<IntegratedRuntimeNativeRecordKindV1, IntegratedRuntimeNativeEnvelopeV1>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct IntegratedRuntimeEntityScheduleDiagnosticsV1 {
     pub entity_jobs_completed: u64,
@@ -453,9 +588,13 @@ pub struct IntegratedRuntimeV2 {
     entities: EntityAuthority,
     gameplay: GameplayAuthority,
     gameplay_content_store: MetadataBlobStore,
-    gameplay_content_index: BTreeMap<(ContentDomain, String), CanonicalHash>,
+    gameplay_content_index: RuntimeContentIndexV1,
     content_stage: Option<IntegratedRuntimeContentStageV1>,
     content_attestation: Option<IntegratedRuntimeContentAttestationV1>,
+    native_world_extension_bytes: Vec<u8>,
+    native_runtime_extension_bytes: Vec<u8>,
+    native_content_extension_bytes: Vec<u8>,
+    native_gameplay_extension_bytes: Vec<u8>,
     persistence: JournalState,
     persistence_authority: PersistenceAuthorityV1,
     persistence_dispatcher: PersistenceDispatcherV1,
@@ -538,6 +677,10 @@ impl IntegratedRuntimeV2 {
             gameplay_content_index: BTreeMap::new(),
             content_stage: None,
             content_attestation: None,
+            native_world_extension_bytes: Vec::new(),
+            native_runtime_extension_bytes: Vec::new(),
+            native_content_extension_bytes: Vec::new(),
+            native_gameplay_extension_bytes: Vec::new(),
             persistence: JournalState::default(),
             persistence_authority,
             persistence_dispatcher,
@@ -768,6 +911,249 @@ impl IntegratedRuntimeV2 {
         self.gameplay_content_index.len()
     }
 
+    /// True only when the five native R4/R6/R7/runtime/content records can be
+    /// built from one immutable authority generation. A partially delivered
+    /// content installation is deliberately not checkpointable.
+    #[must_use]
+    pub fn native_save_ready(&self) -> bool {
+        self.native_save_prerequisites_ready() && self.build_native_state_records().is_ok()
+    }
+
+    /// Exports one bounded, self-verifying in-memory checkpoint for Worker
+    /// replacement. Durable browser saves continue to use the chunked BWPR
+    /// journal lane; this control-plane checkpoint is intentionally rejected
+    /// while platform or command work is in flight.
+    pub fn export_runtime_checkpoint(&self) -> Result<Vec<u8>, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        if !self.native_save_prerequisites_ready() {
+            return Err(IntegratedRuntimeError::new(
+                "native-save-incomplete",
+                "runtime cannot checkpoint while content installation is incomplete",
+            ));
+        }
+        if !self.queued.is_empty()
+            || !self.receipts.is_empty()
+            || !self.save_stages.is_empty()
+            || !self.prepared_persistence_commits.is_empty()
+            || !self.persistence_authority.dirty_records().is_empty()
+            || self.persistence_authority.diagnostics().commit_in_flight
+            || !self.persistence_dispatcher.is_idle()
+        {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-busy",
+                "runtime checkpoint requires drained commands and a durable, idle persistence boundary",
+            ));
+        }
+        let empty_network = NetworkBrowserAuthorityRuntimeV1::new(self.config.session_id.clone())
+            .map_err(|error| IntegratedRuntimeError::domain("checkpoint-network", error))?;
+        if self.network.authority_fingerprint() != empty_network.authority_fingerprint()
+            || !self.replication_record_hashes.is_empty()
+        {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-network-active",
+                "network grants and replication leases must drain before a single-player checkpoint",
+            ));
+        }
+
+        let bundle = self.build_native_bundle()?;
+        let dispatcher = self.persistence_dispatcher_checkpoint()?;
+        let expected_state_hash = self.state_hash();
+        let expected_replay_hash = self.replay_hash();
+        let mut writer = NativeWriterV1::default();
+        writer.raw(NATIVE_CHECKPOINT_MAGIC_V1);
+        writer.u16(NATIVE_CHECKPOINT_SCHEMA_V1);
+        writer.hash(bundle.bundle_hash);
+        writer.hash(expected_state_hash);
+        writer.hash(expected_replay_hash);
+        writer.u32(bundle.envelopes.len() as u32);
+        for kind in IntegratedRuntimeNativeRecordKindV1::ALL {
+            let envelope = bundle
+                .envelopes
+                .get(&kind)
+                .expect("complete native bundle contains every required record");
+            writer.u8(kind as u8);
+            writer.bytes(&encode_native_record_envelope_v1(envelope)?)?;
+        }
+        match self.persistence_authority.checkpoint() {
+            Some(checkpoint) => {
+                writer.bool(true);
+                writer.bytes(&encode_checkpoint(checkpoint))?;
+                writer.u32(self.persistence_authority.records().len() as u32);
+                for descriptor in &checkpoint.records {
+                    let record = self
+                        .persistence_authority
+                        .records()
+                        .get(&descriptor.address)
+                        .ok_or_else(|| {
+                            IntegratedRuntimeError::new(
+                                "checkpoint-incomplete",
+                                "durable checkpoint is missing a declared record",
+                            )
+                        })?;
+                    writer.address(&descriptor.address)?;
+                    writer.bytes(&record.payload)?;
+                }
+            }
+            None => {
+                if !self.persistence_authority.records().is_empty() {
+                    return Err(IntegratedRuntimeError::new(
+                        "checkpoint-incomplete",
+                        "durable records exist without a checkpoint head",
+                    ));
+                }
+                writer.bool(false);
+            }
+        }
+        writer.bytes(&dispatcher)?;
+        let body = writer.finish();
+        if body.len().saturating_add(20) > NATIVE_CHECKPOINT_MAX_BYTES_V1 {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-control-capacity",
+                "exact checkpoint exceeds the bounded Worker control lane; use the durable bulk save lane",
+            ));
+        }
+        let hash = runtime_checkpoint_hash_v1(&body);
+        let mut output = NativeWriterV1::default();
+        output.bytes(&body)?;
+        output.hash(hash);
+        Ok(output.finish())
+    }
+
+    /// Restores a control-plane checkpoint into temporary domain authorities
+    /// and returns it only after the complete integrated identity and replay
+    /// hashes agree. No caller-visible partial runtime can escape this method.
+    pub fn restore_runtime_checkpoint(
+        checkpoint_bytes: &[u8],
+        expected_checkpoint_hash: CanonicalHash,
+    ) -> Result<Self, IntegratedRuntimeError> {
+        if checkpoint_bytes.len() > NATIVE_CHECKPOINT_MAX_BYTES_V1 {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-control-capacity",
+                "runtime checkpoint exceeds the bounded Worker control lane",
+            ));
+        }
+        if runtime_checkpoint_hash_v1(checkpoint_bytes) != expected_checkpoint_hash {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-hash",
+                "runtime checkpoint bytes do not match the requested hash",
+            ));
+        }
+        let mut outer = NativeReaderV1::new(checkpoint_bytes);
+        let body = outer.bytes(NATIVE_RECORD_MAX_BYTES_V1)?;
+        let stored_outer_hash = outer.hash()?;
+        outer.finish()?;
+        if runtime_checkpoint_hash_v1(&body) != stored_outer_hash {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-corrupt",
+                "runtime checkpoint outer checksum does not match",
+            ));
+        }
+        let mut reader = NativeReaderV1::new(&body);
+        reader.magic(NATIVE_CHECKPOINT_MAGIC_V1)?;
+        if reader.u16()? != NATIVE_CHECKPOINT_SCHEMA_V1 {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-schema",
+                "runtime checkpoint schema is unsupported",
+            ));
+        }
+        let bundle_hash = reader.hash()?;
+        let expected_state_hash = reader.hash()?;
+        let expected_replay_hash = reader.hash()?;
+        let record_count = reader.count(NATIVE_CHECKPOINT_MAX_RECORDS_V1, "checkpoint records")?;
+        if record_count != IntegratedRuntimeNativeRecordKindV1::ALL.len() {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-incomplete",
+                "runtime checkpoint does not contain exactly five native records",
+            ));
+        }
+        let mut envelopes = BTreeMap::new();
+        for _ in 0..record_count {
+            let declared_kind = IntegratedRuntimeNativeRecordKindV1::from_tag(reader.u8()?)?;
+            let envelope = decode_native_record_envelope_v1(&reader.bytes(NATIVE_RECORD_MAX_BYTES_V1)?)?;
+            if declared_kind != envelope.kind || envelopes.insert(declared_kind, envelope).is_some() {
+                return Err(IntegratedRuntimeError::new(
+                    "checkpoint-duplicate",
+                    "runtime checkpoint contains a duplicate or mistagged native record",
+                ));
+            }
+        }
+        let durable = if reader.bool()? {
+            let checkpoint_wire = reader.bytes(NATIVE_RECORD_MAX_BYTES_V1)?;
+            let PersistenceWireRecord::Checkpoint(checkpoint) = decode_record(&checkpoint_wire)
+                .map_err(|error| IntegratedRuntimeError::domain("checkpoint-persistence", error))?
+            else {
+                return Err(IntegratedRuntimeError::new(
+                    "checkpoint-persistence",
+                    "runtime checkpoint durable head has the wrong record kind",
+                ));
+            };
+            let count = reader.count(NATIVE_CHECKPOINT_MAX_RECORDS_V1 * 1024, "durable records")?;
+            let mut payloads = BTreeMap::new();
+            for _ in 0..count {
+                let address = reader.address()?;
+                let payload = reader.bytes(NATIVE_RECORD_MAX_BYTES_V1)?;
+                if payloads.insert(address, payload).is_some() {
+                    return Err(IntegratedRuntimeError::new(
+                        "checkpoint-duplicate",
+                        "runtime checkpoint repeats a durable record address",
+                    ));
+                }
+            }
+            Some((checkpoint, payloads))
+        } else {
+            None
+        };
+        let dispatcher = reader.bytes(NATIVE_RECORD_MAX_BYTES_V1)?;
+        reader.finish()?;
+        let bundle = IntegratedRuntimeNativeBundleV1 { bundle_hash, envelopes };
+        let core = decode_and_validate_native_bundle_v1(&bundle)?;
+        let checkpoint_core = core.clone();
+        let mut candidate = Self::new(core.config.clone())?;
+        candidate.install_native_bundle(&bundle, Some(core))?;
+        candidate.persistence_authority = match durable {
+            Some((checkpoint, payloads)) => PersistenceAuthorityV1::recover(checkpoint, payloads)
+                .map_err(|error| IntegratedRuntimeError::domain("checkpoint-persistence", error))?,
+            None => PersistenceAuthorityV1::empty(
+                format!("{}@{}", candidate.config.universe_id, candidate.config.location_id),
+                candidate.config.generator_hash,
+                candidate.config.content_hash,
+            )
+            .map_err(|error| IntegratedRuntimeError::domain("checkpoint-persistence", error))?,
+        };
+        candidate.persistence_dispatcher = PersistenceDispatcherV1::restore_state(&dispatcher)
+            .map_err(|error| IntegratedRuntimeError::domain("checkpoint-dispatcher", error))?;
+        candidate.invalidate_state_hash();
+        let actual_state_hash = candidate.state_hash();
+        let actual_replay_hash = candidate.replay_hash();
+        if actual_state_hash != expected_state_hash || actual_replay_hash != expected_replay_hash {
+            return Err(IntegratedRuntimeError::new(
+                "checkpoint-state-drift",
+                format!(
+                    "restored runtime authority or replay hash differs: state {} expected {}, replay {} expected {}, revision {:?} expected {:?}, player_equal={}, world={}, entities={}, gameplay={}, journal={}, authority={}, dispatcher={}, effects={}, next_effect={}, inputs={}, last_sequence={:?}, last_applied={:?}",
+                    actual_state_hash.to_hex(),
+                    expected_state_hash.to_hex(),
+                    actual_replay_hash.to_hex(),
+                    expected_replay_hash.to_hex(),
+                    candidate.revision(),
+                    checkpoint_core.expected_revision,
+                    candidate.player == checkpoint_core.player,
+                    candidate.world.canonical_state_hash().to_hex(),
+                    candidate.entities.canonical_hash().to_hex(),
+                    candidate.gameplay.state.state_hash().to_hex(),
+                    candidate.persistence.state_hash().to_hex(),
+                    candidate.persistence_authority.state_hash().to_hex(),
+                    candidate.persistence_dispatcher.state_hash().to_hex(),
+                    candidate.effect_events.len(),
+                    candidate.next_effect_sequence,
+                    candidate.queued_inputs.len(),
+                    candidate.last_input_sequence,
+                    candidate.last_applied_input
+                ),
+            ));
+        }
+        Ok(candidate)
+    }
+
     pub fn install_content_page(
         &mut self,
         page: ContentInstallPageWireV1,
@@ -990,6 +1376,229 @@ impl IntegratedRuntimeV2 {
         &self.persistence_authority
     }
 
+    fn build_native_bundle(&self) -> Result<IntegratedRuntimeNativeBundleV1, IntegratedRuntimeError> {
+        if !self.native_save_prerequisites_ready() {
+            return Err(IntegratedRuntimeError::new(
+                "native-save-incomplete",
+                "native save records cannot be built from partial content state",
+            ));
+        }
+        self.build_native_bundle_unchecked()
+    }
+
+    fn native_save_prerequisites_ready(&self) -> bool {
+        !self.stopped && self.content_stage.is_none()
+    }
+
+    fn build_native_bundle_unchecked(&self) -> Result<IntegratedRuntimeNativeBundleV1, IntegratedRuntimeError> {
+        let mut bodies = BTreeMap::new();
+        bodies.insert(
+            IntegratedRuntimeNativeRecordKindV1::World,
+            encode_world_authority_snapshot_r4_v1(&self.world, &self.native_world_extension_bytes)
+                .map_err(|error| IntegratedRuntimeError::domain("native-world", error))?,
+        );
+        bodies.insert(
+            IntegratedRuntimeNativeRecordKindV1::Entities,
+            encode_entity_authority_snapshot(&self.entities)
+                .map_err(|error| IntegratedRuntimeError::new("native-entities", error.to_string()))?,
+        );
+        bodies.insert(
+            IntegratedRuntimeNativeRecordKindV1::Gameplay,
+            self.gameplay
+                .encode_snapshot(&self.native_gameplay_extension_bytes)
+                .map_err(|error| IntegratedRuntimeError::new("native-gameplay", error.to_string()))?,
+        );
+        bodies.insert(
+            IntegratedRuntimeNativeRecordKindV1::Runtime,
+            encode_runtime_core_snapshot_v1(self)?,
+        );
+        bodies.insert(
+            IntegratedRuntimeNativeRecordKindV1::Content,
+            encode_runtime_content_snapshot_v1(self)?,
+        );
+        let bundle_hash = native_bundle_hash_v1(
+            &self.config.universe_id,
+            &self.config.location_id,
+            self.config.generator_hash,
+            self.config.content_hash,
+            &bodies,
+        );
+        let envelopes = bodies
+            .into_iter()
+            .map(|(kind, body)| {
+                (
+                    kind,
+                    IntegratedRuntimeNativeEnvelopeV1 {
+                        kind,
+                        universe_id: self.config.universe_id.clone(),
+                        location_id: self.config.location_id.clone(),
+                        generator_hash: self.config.generator_hash,
+                        content_hash: self.config.content_hash,
+                        bundle_hash,
+                        body,
+                    },
+                )
+            })
+            .collect();
+        Ok(IntegratedRuntimeNativeBundleV1 { bundle_hash, envelopes })
+    }
+
+    fn build_native_state_records(&self) -> Result<Vec<NormalizedStateRecordV1>, IntegratedRuntimeError> {
+        let bundle = self.build_native_bundle()?;
+        let mut records = Vec::with_capacity(bundle.envelopes.len() + 16);
+        let mut owned_addresses = BTreeSet::new();
+        for kind in IntegratedRuntimeNativeRecordKindV1::ALL {
+            let (record_kind, record_id) = kind.address();
+            let address = RecordAddress::new(
+                &self.config.universe_id,
+                &self.config.location_id,
+                record_kind,
+                record_id,
+            )
+            .map_err(|error| IntegratedRuntimeError::domain("native-record-address", error))?;
+            owned_addresses.insert(address.clone());
+            records.push(NormalizedStateRecordV1 {
+                address,
+                payload: encode_native_record_envelope_v1(
+                    bundle
+                        .envelopes
+                        .get(&kind)
+                        .expect("complete native bundle contains every record"),
+                )?,
+            });
+        }
+        for (address, record) in self.persistence_authority.records() {
+            let reserved_manifest =
+                address.kind == RecordKind::LocationManifest && address.record_id == WORLD_SAVE_MANIFEST_RECORD_ID_V1;
+            let reserved_compatibility = address.kind == RecordKind::SettingsReference
+                && address.record_id.starts_with(COMPATIBILITY_RECORD_PREFIX_V1);
+            if !reserved_manifest && !reserved_compatibility && !owned_addresses.contains(address) {
+                records.push(NormalizedStateRecordV1 {
+                    address: address.clone(),
+                    payload: record.payload.clone(),
+                });
+            }
+        }
+        Ok(records)
+    }
+
+    fn install_native_bundle(
+        &mut self,
+        bundle: &IntegratedRuntimeNativeBundleV1,
+        decoded_core: Option<IntegratedRuntimeCoreSnapshotV1>,
+    ) -> Result<(), IntegratedRuntimeError> {
+        let core = match decoded_core {
+            Some(core) => core,
+            None => decode_and_validate_native_bundle_v1(bundle)?,
+        };
+        if core.config != self.config {
+            return Err(IntegratedRuntimeError::new(
+                "recovery-config",
+                "native runtime record does not match the target runtime configuration",
+            ));
+        }
+        let world_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::World)?;
+        let entity_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::Entities)?;
+        let gameplay_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::Gameplay)?;
+        let content_record = native_bundle_body_v1(bundle, IntegratedRuntimeNativeRecordKindV1::Content)?;
+
+        let decoded_world = decode_world_authority_snapshot_r4_v1(world_record)
+            .map_err(|error| IntegratedRuntimeError::domain("recovery-native-world", error))?;
+        let expected_world = AuthorityWorldAddressV1::new(&self.config.universe_id, &self.config.location_id)
+            .map_err(|error| IntegratedRuntimeError::domain("recovery-native-world", error))?;
+        if decoded_world.authority.active_address() != &expected_world
+            || decoded_world.authority.block_catalog() != &self.config.block_catalog
+        {
+            return Err(IntegratedRuntimeError::new(
+                "recovery-world-identity",
+                "native R4 authority belongs to a different world address or block catalog",
+            ));
+        }
+        let entities = decode_entity_authority_snapshot(entity_record)
+            .map_err(|error| IntegratedRuntimeError::new("recovery-native-entities", error.to_string()))?;
+        let decoded_gameplay = decode_gameplay_authority_snapshot(gameplay_record)
+            .map_err(|error| IntegratedRuntimeError::new("recovery-native-gameplay", error.to_string()))?;
+        if decoded_gameplay.authority.state.world != WorldKey::new(&self.config.universe_id, &self.config.location_id) {
+            return Err(IntegratedRuntimeError::new(
+                "recovery-gameplay-world",
+                "gameplay authority belongs to a different world address",
+            ));
+        }
+        let content = decode_runtime_content_snapshot_v1(content_record)?;
+        let (content_store, content_index) = install_runtime_content_snapshot_v1(&self.config, &content)?;
+
+        let mut candidate = self.clone();
+        candidate.world = decoded_world.authority;
+        candidate.native_world_extension_bytes = decoded_world.unknown_extension_bytes;
+        candidate.entities = entities;
+        candidate.gameplay = decoded_gameplay.authority;
+        candidate.native_gameplay_extension_bytes = decoded_gameplay.unknown_extension_bytes;
+        candidate.gameplay_content_store = content_store;
+        candidate.gameplay_content_index = content_index;
+        candidate.content_stage = None;
+        candidate.content_attestation = content.attestation;
+        candidate.native_content_extension_bytes = content.unknown_extension_bytes;
+        candidate.tick = core.tick;
+        candidate.last_monotonic_time_us = core.last_monotonic_time_us;
+        candidate.accumulator_us = core.accumulator_us;
+        candidate.rng_state = core.rng_state;
+        candidate.network_revision = core.network_revision;
+        candidate.simulation_revision = core.simulation_revision;
+        candidate.gameplay_authority_revision = core.gameplay_authority_revision;
+        candidate.entity_command_sequence = core.entity_command_sequence;
+        candidate.player = core.player;
+        candidate.effect_events = core.effect_events;
+        candidate.next_effect_sequence = core.next_effect_sequence;
+        candidate.queued_inputs = core.queued_inputs;
+        candidate.last_input_sequence = core.last_input_sequence;
+        candidate.last_applied_input = core.last_applied_input;
+        candidate.replay = core.replay;
+        candidate.replay_digest = IntegratedReplayDigestV2::default();
+        for entry in &candidate.replay {
+            candidate.replay_digest.add(hash_runtime_replay_entry(entry));
+        }
+        candidate.persistence = core.compatibility_journal;
+        candidate.native_runtime_extension_bytes = core.unknown_extension_bytes;
+        candidate.queued.clear();
+        candidate.receipts.clear();
+        candidate.idempotency.clear();
+        candidate.idempotency_order.clear();
+        candidate.replication = InterestIndexV1::default();
+        candidate.replication_record_hashes.clear();
+        candidate.network = NetworkBrowserAuthorityRuntimeV1::new(candidate.config.session_id.clone())
+            .map_err(|error| IntegratedRuntimeError::domain("recovery-network", error))?;
+        candidate.rebuild_entity_schedules()?;
+        if candidate
+            .player
+            .as_ref()
+            .is_some_and(|player| !candidate.entities.contains(player.entity_id))
+        {
+            return Err(IntegratedRuntimeError::new(
+                "recovery-player-entity",
+                "bound player record references an entity absent from the R6 snapshot",
+            ));
+        }
+        let revision = candidate.revision();
+        if revision.epoch != core.expected_revision.epoch
+            || revision.world != core.expected_revision.world
+            || revision.entities != core.expected_revision.entities
+            || revision.gameplay != core.expected_revision.gameplay
+            || revision.network != core.expected_revision.network
+            || revision.simulation != core.expected_revision.simulation
+        {
+            return Err(IntegratedRuntimeError::new(
+                "recovery-revision-drift",
+                format!(
+                    "native records do not reproduce their shared authority revisions: expected {:?}, actual {:?}",
+                    core.expected_revision, revision
+                ),
+            ));
+        }
+        candidate.invalidate_state_hash();
+        *self = candidate;
+        Ok(())
+    }
+
     /// Accepts one ordered compatibility-save chunk. Exact duplicate retries
     /// are idempotent; conflicting duplicates and reordered chunks fail before
     /// any stage state changes.
@@ -1094,17 +1703,7 @@ impl IntegratedRuntimeV2 {
                 "save stage cannot finalize until every declared chunk is present",
             ));
         }
-        let world_record = NormalizedStateRecordV1 {
-            address: RecordAddress::new(
-                &self.config.universe_id,
-                &self.config.location_id,
-                RecordKind::ChunkEdits,
-                NATIVE_WORLD_RECORD_ID_V1,
-            )
-            .map_err(|error| IntegratedRuntimeError::domain("persistence-save", error))?,
-            payload: encode_compatibility_save_binary_v1(&self.world.export_compatibility_save())
-                .map_err(|error| IntegratedRuntimeError::domain("persistence-save", error))?,
-        };
+        let native_records = self.build_native_state_records()?;
         let save = CanonicalWorldSaveSetV1::build(
             self.persistence_authority.world_id(),
             &self.config.universe_id,
@@ -1112,7 +1711,7 @@ impl IntegratedRuntimeV2 {
             self.config.generator_hash,
             self.config.content_hash,
             stage.chunks.values().cloned(),
-            [world_record],
+            native_records,
         )
         .map_err(|error| IntegratedRuntimeError::domain("persistence-save", error))?;
 
@@ -1129,6 +1728,223 @@ impl IntegratedRuntimeV2 {
             .map_err(|_| IntegratedRuntimeError::new("save-stage-capacity", "dirty record count exceeds u32"))?;
         let progress = IntegratedRuntimeSaveProgressV1 {
             stage_id: stage.stage_id,
+            received_chunks: stage.chunk_count,
+            chunk_count: stage.chunk_count,
+            received_bytes: stage.total_bytes,
+            set_hash: save.set_hash,
+            manifest_hash: save.manifest.manifest_hash,
+            dispatcher_request_id,
+            remaining_dirty_records,
+        };
+        *self = candidate;
+        Ok(progress)
+    }
+
+    /// Creates or advances a native-only save set for a world that has never
+    /// had a legacy compatibility owner. Once a save contains compatibility
+    /// source bytes this entrypoint fails closed so a later native save cannot
+    /// silently delete the migration backup.
+    pub fn finalize_native_save(
+        &mut self,
+        save_id: &str,
+        created_at: u64,
+    ) -> Result<IntegratedRuntimeSaveProgressV1, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        validate_label(save_id, "save_id")?;
+        if !self.save_stages.is_empty() {
+            return Err(IntegratedRuntimeError::new(
+                "native-save-stage-active",
+                "native-only save cannot bypass an active compatibility source stage",
+            ));
+        }
+        let manifest = self
+            .persistence_authority
+            .records()
+            .iter()
+            .find(|(address, _)| {
+                address.kind == RecordKind::LocationManifest && address.record_id == WORLD_SAVE_MANIFEST_RECORD_ID_V1
+            })
+            .map(|(_, record)| {
+                decode_world_save_manifest_v1(&record.payload)
+                    .map_err(|error| IntegratedRuntimeError::domain("native-save-manifest", error))
+            })
+            .transpose()?;
+        if manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.compatibility_chunks != 0 || manifest.compatibility_byte_length != 0)
+        {
+            return Err(IntegratedRuntimeError::new(
+                "native-save-compatibility-owner",
+                "save contains a legacy compatibility source that must remain preserved",
+            ));
+        }
+        if manifest.is_none() && !self.persistence_authority.records().is_empty() {
+            return Err(IntegratedRuntimeError::new(
+                "native-save-manifest",
+                "durable records exist without a canonical save manifest",
+            ));
+        }
+
+        let native_records = self.build_native_state_records()?;
+        let save = CanonicalWorldSaveSetV1::build(
+            self.persistence_authority.world_id(),
+            &self.config.universe_id,
+            &self.config.location_id,
+            self.config.generator_hash,
+            self.config.content_hash,
+            std::iter::empty::<Vec<u8>>(),
+            native_records,
+        )
+        .map_err(|error| IntegratedRuntimeError::domain("native-save", error))?;
+        let mut candidate = self.clone();
+        candidate
+            .persistence_authority
+            .stage_complete_save_set(&save)
+            .map_err(|error| IntegratedRuntimeError::domain("native-save", error))?;
+        candidate.latest_commit_created_at = candidate.latest_commit_created_at.max(created_at);
+        let dispatcher_request_id = candidate.prepare_next_authority_commit()?;
+        candidate.invalidate_state_hash();
+        let remaining_dirty_records = u32::try_from(candidate.persistence_authority.dirty_records().len())
+            .map_err(|_| IntegratedRuntimeError::new("native-save-capacity", "dirty record count exceeds u32"))?;
+        let progress = IntegratedRuntimeSaveProgressV1 {
+            stage_id: save_id.to_owned(),
+            received_chunks: 0,
+            chunk_count: 0,
+            received_bytes: 0,
+            set_hash: save.set_hash,
+            manifest_hash: save.manifest.manifest_hash,
+            dispatcher_request_id,
+            remaining_dirty_records,
+        };
+        *self = candidate;
+        Ok(progress)
+    }
+
+    /// One-time fail-closed migration for a provably world-only legacy save.
+    ///
+    /// The exact legacy source must already be staged through the bounded save
+    /// chunk lane. `world_projection` is a validated BWAS projection used only
+    /// to initialize R4; it does not replace the source backup. Rich saves must
+    /// remain under the legacy owner until explicit R6/R7/runtime adapters can
+    /// supply their non-world authority.
+    pub fn migrate_pristine_legacy_world(
+        &mut self,
+        migration: IntegratedRuntimeLegacyMigrationV1,
+    ) -> Result<IntegratedRuntimeSaveProgressV1, IntegratedRuntimeError> {
+        self.ensure_running()?;
+        if migration.schema_version != INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1 {
+            return Err(IntegratedRuntimeError::new(
+                "legacy-migration-schema",
+                "legacy migration projection schema is unsupported",
+            ));
+        }
+        validate_label(&migration.migration_id, "migration_id")?;
+        validate_label(&migration.source_stage_id, "source_stage_id")?;
+        if migration.legacy_non_world_state_flags != 0 {
+            return Err(IntegratedRuntimeError::new(
+                "legacy-migration-rich-save",
+                format!(
+                    "legacy save retains unsupported native domains: {}",
+                    legacy_state_flag_names(migration.legacy_non_world_state_flags).join(", ")
+                ),
+            ));
+        }
+        let stage = self
+            .save_stages
+            .get(&migration.source_stage_id)
+            .cloned()
+            .ok_or_else(|| {
+                IntegratedRuntimeError::new(
+                    "legacy-migration-source",
+                    "exact legacy source backup is not fully staged",
+                )
+            })?;
+        if self.save_stages.len() != 1
+            || stage.chunks.len() != stage.chunk_count as usize
+            || stage.chunks.values().map(Vec::len).sum::<usize>() as u64 != stage.total_bytes
+        {
+            return Err(IntegratedRuntimeError::new(
+                "legacy-migration-source",
+                "legacy migration requires one complete, bounded source-backup stage",
+            ));
+        }
+        let empty_gameplay = GameplayAuthority::new(GameplayState::new(
+            WorldKey::new(&self.config.universe_id, &self.config.location_id),
+            1,
+        ));
+        let empty_network = NetworkBrowserAuthorityRuntimeV1::new(self.config.session_id.clone())
+            .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-network", error))?;
+        if !self.entities.is_empty()
+            || self.player.is_some()
+            || self.tick != 0
+            || self.accumulator_us != 0
+            || self.simulation_revision != 0
+            || self.gameplay_authority_revision != 0
+            || self.entity_command_sequence != 0
+            || self.gameplay.state.state_hash() != empty_gameplay.state.state_hash()
+            || !self.effect_events.is_empty()
+            || !self.queued_inputs.is_empty()
+            || self.last_input_sequence.is_some()
+            || self.last_applied_input.is_some()
+            || !self.replay.is_empty()
+            || !self.persistence_authority.records().is_empty()
+            || self.persistence_authority.checkpoint().is_some()
+            || !self.persistence_authority.dirty_records().is_empty()
+            || !self.persistence_dispatcher.is_idle()
+            || !self.prepared_persistence_commits.is_empty()
+            || self.network.authority_fingerprint() != empty_network.authority_fingerprint()
+            || !self.replication_record_hashes.is_empty()
+            || self.world.revision().mutation != 0
+            || !self.world.edit_journal().is_empty()
+        {
+            return Err(IntegratedRuntimeError::new(
+                "legacy-migration-not-pristine",
+                "target runtime already owns non-default state and cannot safely infer a legacy migration",
+            ));
+        }
+
+        let projection = decode_compatibility_save_binary_v1(&migration.world_projection)
+            .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-world", error))?;
+        let expected_address = AuthorityWorldAddressV1::new(&self.config.universe_id, &self.config.location_id)
+            .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-world", error))?;
+        if projection.address != expected_address {
+            return Err(IntegratedRuntimeError::new(
+                "legacy-migration-world",
+                "legacy world projection belongs to another universe or location",
+            ));
+        }
+        let mut migrated_world = WorldAuthorityStoreR4V1::new(expected_address, self.config.block_catalog.clone())
+            .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-world", error))?;
+        migrated_world
+            .import_compatibility_save(&projection, true)
+            .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-world", error))?;
+
+        let mut candidate = self.clone();
+        candidate.world = migrated_world;
+        candidate.native_world_extension_bytes.clear();
+        candidate.save_stages.remove(&migration.source_stage_id);
+        let native_records = candidate.build_native_state_records()?;
+        let save = CanonicalWorldSaveSetV1::build(
+            candidate.persistence_authority.world_id(),
+            &candidate.config.universe_id,
+            &candidate.config.location_id,
+            candidate.config.generator_hash,
+            candidate.config.content_hash,
+            stage.chunks.values().cloned(),
+            native_records,
+        )
+        .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-save", error))?;
+        candidate
+            .persistence_authority
+            .stage_complete_save_set(&save)
+            .map_err(|error| IntegratedRuntimeError::domain("legacy-migration-save", error))?;
+        candidate.latest_commit_created_at = candidate.latest_commit_created_at.max(migration.created_at);
+        let dispatcher_request_id = candidate.prepare_next_authority_commit()?;
+        candidate.invalidate_state_hash();
+        let remaining_dirty_records = u32::try_from(candidate.persistence_authority.dirty_records().len())
+            .map_err(|_| IntegratedRuntimeError::new("legacy-migration-capacity", "dirty record count exceeds u32"))?;
+        let progress = IntegratedRuntimeSaveProgressV1 {
+            stage_id: migration.migration_id,
             received_chunks: stage.chunk_count,
             chunk_count: stage.chunk_count,
             received_bytes: stage.total_bytes,
@@ -1226,24 +2042,46 @@ impl IntegratedRuntimeV2 {
                 "compatibility recovery stream failed its manifest proof",
             ));
         }
-        let world_payload = complete
-            .payloads
-            .iter()
-            .find(|(address, _)| {
-                address.kind == RecordKind::ChunkEdits && address.record_id == NATIVE_WORLD_RECORD_ID_V1
-            })
-            .map(|(_, payload)| payload)
-            .ok_or_else(|| {
-                IntegratedRuntimeError::new("recovery-native-world", "required R4 world record is missing")
-            })?;
-        let world_save = decode_compatibility_save_binary_v1(world_payload)
-            .map_err(|error| IntegratedRuntimeError::domain("recovery-native-world", error))?;
+        let mut envelopes = BTreeMap::new();
+        for (address, payload) in &complete.payloads {
+            if !payload.starts_with(NATIVE_RECORD_MAGIC_V1) {
+                continue;
+            }
+            let envelope = decode_native_record_envelope_v1(payload)?;
+            let (expected_record_kind, expected_record_id) = envelope.kind.address();
+            if address.kind != expected_record_kind || address.record_id != expected_record_id {
+                return Err(IntegratedRuntimeError::new(
+                    "recovery-native-duplicate",
+                    "native save contains a duplicate or address-mistagged authority record",
+                ));
+            }
+            let envelope_kind = envelope.kind;
+            if envelopes.insert(envelope_kind, envelope).is_some() {
+                return Err(IntegratedRuntimeError::new(
+                    "recovery-native-duplicate",
+                    "native save contains a duplicate authority record",
+                ));
+            }
+        }
+        for expected_kind in IntegratedRuntimeNativeRecordKindV1::ALL {
+            if !envelopes.contains_key(&expected_kind) {
+                let (_, record_id) = expected_kind.address();
+                return Err(IntegratedRuntimeError::new(
+                    "recovery-native-missing",
+                    format!("required native record {record_id} is missing"),
+                ));
+            }
+        }
+        let bundle_hash = envelopes
+            .values()
+            .next()
+            .map(|envelope| envelope.bundle_hash)
+            .ok_or_else(|| IntegratedRuntimeError::new("recovery-native-missing", "native record set is empty"))?;
+        let bundle = IntegratedRuntimeNativeBundleV1 { bundle_hash, envelopes };
+        let core = decode_and_validate_native_bundle_v1(&bundle)?;
 
         let mut candidate = self.clone();
-        candidate
-            .world
-            .import_compatibility_save(&world_save, false)
-            .map_err(|error| IntegratedRuntimeError::domain("recovery-native-world", error))?;
+        candidate.install_native_bundle(&bundle, Some(core))?;
         candidate.persistence_authority =
             PersistenceAuthorityV1::recover(complete.checkpoint.clone(), complete.payloads.clone())
                 .map_err(|error| IntegratedRuntimeError::domain("recovery-authority", error))?;
@@ -1266,7 +2104,7 @@ impl IntegratedRuntimeV2 {
         candidate.invalidate_state_hash();
         let summary = IntegratedRuntimeHydrationSummaryV1 {
             recovery_id: recovery_id.to_owned(),
-            native_domains: INTEGRATED_RUNTIME_NATIVE_WORLD_DOMAIN_V1,
+            native_domains: INTEGRATED_RUNTIME_NATIVE_DOMAIN_COUNT_V1,
             chunk_count: manifest.compatibility_chunks,
             total_bytes,
             compatibility_hash,
@@ -1554,7 +2392,10 @@ impl IntegratedRuntimeV2 {
         }
         let prepared = self
             .persistence_authority
-            .prepare_commit(self.latest_commit_created_at)
+            .prepare_commit_with_max_bytes(
+                self.latest_commit_created_at,
+                INTEGRATED_RUNTIME_PERSISTENCE_MAX_COMMIT_PAYLOAD_BYTES,
+            )
             .map_err(|error| IntegratedRuntimeError::domain("persistence-authority", error))?;
         let request_id = match self
             .persistence_dispatcher
@@ -3400,6 +4241,36 @@ fn canonical_hash_lanes(hash: CanonicalHash) -> (u64, u64) {
     )
 }
 
+fn legacy_state_flag_names(flags: u16) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    for (flag, name) in [
+        (LEGACY_STATE_ENTITIES_V1, "entities"),
+        (LEGACY_STATE_PLAYER_V1, "player"),
+        (LEGACY_STATE_RUNTIME_CLOCKS_V1, "runtime clocks"),
+        (LEGACY_STATE_GAMEPLAY_V1, "gameplay"),
+        (LEGACY_STATE_MACHINES_V1, "machines"),
+        (LEGACY_STATE_MAP_V1, "map"),
+        (LEGACY_STATE_NETWORK_V1, "network"),
+        (LEGACY_STATE_UNKNOWN_V1, "unknown legacy fields"),
+    ] {
+        if flags & flag != 0 {
+            names.push(name);
+        }
+    }
+    let known = LEGACY_STATE_ENTITIES_V1
+        | LEGACY_STATE_PLAYER_V1
+        | LEGACY_STATE_RUNTIME_CLOCKS_V1
+        | LEGACY_STATE_GAMEPLAY_V1
+        | LEGACY_STATE_MACHINES_V1
+        | LEGACY_STATE_MAP_V1
+        | LEGACY_STATE_NETWORK_V1
+        | LEGACY_STATE_UNKNOWN_V1;
+    if flags & !known != 0 {
+        names.push("unrecognized state flags");
+    }
+    names
+}
+
 fn validate_label(value: &str, label: &str) -> Result<(), IntegratedRuntimeError> {
     let length = value.encode_utf16().count();
     if length == 0 || length > 180 || value.chars().any(char::is_control) {
@@ -3457,6 +4328,1224 @@ impl From<ContractError> for IntegratedRuntimeError {
     fn from(error: ContractError) -> Self {
         Self::domain("simulation", error)
     }
+}
+
+#[derive(Default)]
+struct NativeWriterV1 {
+    bytes: Vec<u8>,
+}
+
+impl NativeWriterV1 {
+    fn raw(&mut self, value: &[u8]) {
+        self.bytes.extend_from_slice(value);
+    }
+
+    fn u8(&mut self, value: u8) {
+        self.bytes.push(value);
+    }
+
+    fn bool(&mut self, value: bool) {
+        self.u8(u8::from(value));
+    }
+
+    fn u16(&mut self, value: u16) {
+        self.raw(&value.to_le_bytes());
+    }
+
+    fn i16(&mut self, value: i16) {
+        self.raw(&value.to_le_bytes());
+    }
+
+    fn u32(&mut self, value: u32) {
+        self.raw(&value.to_le_bytes());
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.raw(&value.to_le_bytes());
+    }
+
+    fn f64(&mut self, value: f64) {
+        self.u64(value.to_bits());
+    }
+
+    fn hash(&mut self, value: CanonicalHash) {
+        self.raw(value.as_bytes());
+    }
+
+    fn string(&mut self, value: &str) -> Result<(), IntegratedRuntimeError> {
+        if value.len() > 16 * 1024 {
+            return Err(IntegratedRuntimeError::new(
+                "native-string-capacity",
+                "native save string exceeds 16 KiB",
+            ));
+        }
+        self.u32(u32::try_from(value.len()).map_err(|_| {
+            IntegratedRuntimeError::new("native-string-capacity", "native save string length exceeds u32")
+        })?);
+        self.raw(value.as_bytes());
+        Ok(())
+    }
+
+    fn bytes(&mut self, value: &[u8]) -> Result<(), IntegratedRuntimeError> {
+        if value.len() > NATIVE_RECORD_MAX_BYTES_V1 {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-capacity",
+                "native save field exceeds 64 MiB",
+            ));
+        }
+        self.u32(u32::try_from(value.len()).map_err(|_| {
+            IntegratedRuntimeError::new("native-record-capacity", "native save field length exceeds u32")
+        })?);
+        self.raw(value);
+        Ok(())
+    }
+
+    fn address(&mut self, value: &RecordAddress) -> Result<(), IntegratedRuntimeError> {
+        self.string(&value.universe_id)?;
+        self.string(&value.location_id)?;
+        self.u8(value.kind as u8);
+        self.string(&value.record_id)
+    }
+
+    fn finish(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+struct NativeReaderV1<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> NativeReaderV1<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, length: usize) -> Result<&'a [u8], IntegratedRuntimeError> {
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or_else(|| IntegratedRuntimeError::new("native-record-overflow", "native save offset overflow"))?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| IntegratedRuntimeError::new("native-record-truncated", "native save record is truncated"))?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn magic(&mut self, expected: &[u8]) -> Result<(), IntegratedRuntimeError> {
+        if self.take(expected.len())? != expected {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-magic",
+                "native save record magic does not match",
+            ));
+        }
+        Ok(())
+    }
+
+    fn u8(&mut self) -> Result<u8, IntegratedRuntimeError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn bool(&mut self) -> Result<bool, IntegratedRuntimeError> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(IntegratedRuntimeError::new(
+                "native-record-flag",
+                "native save boolean flag is invalid",
+            )),
+        }
+    }
+
+    fn u16(&mut self) -> Result<u16, IntegratedRuntimeError> {
+        Ok(u16::from_le_bytes(self.take(2)?.try_into().expect("fixed slice")))
+    }
+
+    fn i16(&mut self) -> Result<i16, IntegratedRuntimeError> {
+        Ok(i16::from_le_bytes(self.take(2)?.try_into().expect("fixed slice")))
+    }
+
+    fn u32(&mut self) -> Result<u32, IntegratedRuntimeError> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("fixed slice")))
+    }
+
+    fn u64(&mut self) -> Result<u64, IntegratedRuntimeError> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("fixed slice")))
+    }
+
+    fn f64(&mut self) -> Result<f64, IntegratedRuntimeError> {
+        let value = f64::from_bits(self.u64()?);
+        if !value.is_finite() {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-number",
+                "native save contains a non-finite number",
+            ));
+        }
+        Ok(value)
+    }
+
+    fn hash(&mut self) -> Result<CanonicalHash, IntegratedRuntimeError> {
+        Ok(CanonicalHash(self.take(16)?.try_into().expect("fixed slice")))
+    }
+
+    fn string(&mut self) -> Result<String, IntegratedRuntimeError> {
+        let length = self.u32()? as usize;
+        if length > 16 * 1024 {
+            return Err(IntegratedRuntimeError::new(
+                "native-string-capacity",
+                "native save string exceeds 16 KiB",
+            ));
+        }
+        String::from_utf8(self.take(length)?.to_vec())
+            .map_err(|_| IntegratedRuntimeError::new("native-record-utf8", "native save string is not valid UTF-8"))
+    }
+
+    fn bytes(&mut self, maximum: usize) -> Result<Vec<u8>, IntegratedRuntimeError> {
+        let length = self.u32()? as usize;
+        if length > maximum {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-capacity",
+                "native save byte field exceeds its bound",
+            ));
+        }
+        Ok(self.take(length)?.to_vec())
+    }
+
+    fn count(&mut self, maximum: usize, label: &str) -> Result<usize, IntegratedRuntimeError> {
+        let value = self.u32()? as usize;
+        if value > maximum {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-capacity",
+                format!("native save {label} count exceeds its bound"),
+            ));
+        }
+        Ok(value)
+    }
+
+    fn address(&mut self) -> Result<RecordAddress, IntegratedRuntimeError> {
+        let universe_id = self.string()?;
+        let location_id = self.string()?;
+        let kind = RecordKind::from_tag(self.u8()?)
+            .map_err(|error| IntegratedRuntimeError::domain("native-record-address", error))?;
+        let record_id = self.string()?;
+        RecordAddress::new(universe_id, location_id, kind, record_id)
+            .map_err(|error| IntegratedRuntimeError::domain("native-record-address", error))
+    }
+
+    fn finish(&self) -> Result<(), IntegratedRuntimeError> {
+        if self.offset != self.bytes.len() {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-trailing",
+                "native save record contains trailing bytes",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn runtime_checkpoint_hash_v1(bytes: &[u8]) -> CanonicalHash {
+    let mut hasher = CanonicalHasher::new("blockwild-integrated-runtime-checkpoint-v1");
+    hasher.write_bytes(bytes);
+    hasher.finish()
+}
+
+fn native_persistence_payload_hash_v1(bytes: &[u8]) -> CanonicalHash {
+    let mut hasher = CanonicalHasher::new("blockwild-persistence-record-v1");
+    hasher.write_bytes(bytes);
+    hasher.finish()
+}
+
+pub fn integrated_runtime_checkpoint_hash_v1(bytes: &[u8]) -> CanonicalHash {
+    runtime_checkpoint_hash_v1(bytes)
+}
+
+fn native_bundle_hash_v1(
+    universe_id: &str,
+    location_id: &str,
+    generator_hash: CanonicalHash,
+    content_hash: CanonicalHash,
+    bodies: &BTreeMap<IntegratedRuntimeNativeRecordKindV1, Vec<u8>>,
+) -> CanonicalHash {
+    let mut hasher = CanonicalHasher::new("blockwild-integrated-native-save-bundle-v1");
+    hasher.write_str(universe_id);
+    hasher.write_str(location_id);
+    hasher.write_bytes(generator_hash.as_bytes());
+    hasher.write_bytes(content_hash.as_bytes());
+    hasher.write_u32(bodies.len() as u32);
+    for (kind, body) in bodies {
+        hasher.write_u16(*kind as u16);
+        hasher.write_bytes(body);
+    }
+    hasher.finish()
+}
+
+fn encode_native_record_envelope_v1(
+    value: &IntegratedRuntimeNativeEnvelopeV1,
+) -> Result<Vec<u8>, IntegratedRuntimeError> {
+    if value.body.len() > NATIVE_RECORD_MAX_BYTES_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-record-capacity",
+            "native authority record exceeds 64 MiB",
+        ));
+    }
+    let mut writer = NativeWriterV1::default();
+    writer.raw(NATIVE_RECORD_MAGIC_V1);
+    writer.u16(NATIVE_RECORD_SCHEMA_V1);
+    writer.u8(value.kind as u8);
+    writer.string(&value.universe_id)?;
+    writer.string(&value.location_id)?;
+    writer.hash(value.generator_hash);
+    writer.hash(value.content_hash);
+    writer.hash(value.bundle_hash);
+    writer.hash(native_persistence_payload_hash_v1(&value.body));
+    writer.bytes(&value.body)?;
+    let encoded = writer.finish();
+    if encoded.len() > NATIVE_RECORD_MAX_BYTES_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-record-capacity",
+            "native authority envelope exceeds the 64 MiB persistence record lane",
+        ));
+    }
+    Ok(encoded)
+}
+
+fn decode_native_record_envelope_v1(bytes: &[u8]) -> Result<IntegratedRuntimeNativeEnvelopeV1, IntegratedRuntimeError> {
+    if bytes.len() > NATIVE_RECORD_MAX_BYTES_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-record-capacity",
+            "native authority record exceeds 64 MiB",
+        ));
+    }
+    let mut reader = NativeReaderV1::new(bytes);
+    reader.magic(NATIVE_RECORD_MAGIC_V1)?;
+    if reader.u16()? != NATIVE_RECORD_SCHEMA_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-record-schema",
+            "native authority record schema is unsupported",
+        ));
+    }
+    let kind = IntegratedRuntimeNativeRecordKindV1::from_tag(reader.u8()?)?;
+    let universe_id = reader.string()?;
+    let location_id = reader.string()?;
+    let generator_hash = reader.hash()?;
+    let content_hash = reader.hash()?;
+    let bundle_hash = reader.hash()?;
+    let expected_body_hash = reader.hash()?;
+    let body = reader.bytes(NATIVE_RECORD_MAX_BYTES_V1)?;
+    reader.finish()?;
+    if native_persistence_payload_hash_v1(&body) != expected_body_hash {
+        return Err(IntegratedRuntimeError::new(
+            "native-record-corrupt",
+            "native authority record payload hash does not match",
+        ));
+    }
+    Ok(IntegratedRuntimeNativeEnvelopeV1 {
+        kind,
+        universe_id,
+        location_id,
+        generator_hash,
+        content_hash,
+        bundle_hash,
+        body,
+    })
+}
+
+fn native_bundle_body_v1(
+    bundle: &IntegratedRuntimeNativeBundleV1,
+    kind: IntegratedRuntimeNativeRecordKindV1,
+) -> Result<&[u8], IntegratedRuntimeError> {
+    bundle
+        .envelopes
+        .get(&kind)
+        .map(|envelope| envelope.body.as_slice())
+        .ok_or_else(|| {
+            IntegratedRuntimeError::new(
+                "recovery-native-missing",
+                "native authority bundle is missing a required record",
+            )
+        })
+}
+
+fn decode_and_validate_native_bundle_v1(
+    bundle: &IntegratedRuntimeNativeBundleV1,
+) -> Result<IntegratedRuntimeCoreSnapshotV1, IntegratedRuntimeError> {
+    if bundle.envelopes.len() != IntegratedRuntimeNativeRecordKindV1::ALL.len() {
+        return Err(IntegratedRuntimeError::new(
+            "recovery-native-missing",
+            "native authority bundle does not contain exactly five required records",
+        ));
+    }
+    let first =
+        bundle.envelopes.values().next().ok_or_else(|| {
+            IntegratedRuntimeError::new("recovery-native-missing", "native authority bundle is empty")
+        })?;
+    let mut bodies = BTreeMap::new();
+    for kind in IntegratedRuntimeNativeRecordKindV1::ALL {
+        let envelope = bundle.envelopes.get(&kind).ok_or_else(|| {
+            IntegratedRuntimeError::new("recovery-native-missing", "native authority record is missing")
+        })?;
+        if envelope.kind != kind
+            || envelope.universe_id != first.universe_id
+            || envelope.location_id != first.location_id
+            || envelope.generator_hash != first.generator_hash
+            || envelope.content_hash != first.content_hash
+            || envelope.bundle_hash != bundle.bundle_hash
+        {
+            return Err(IntegratedRuntimeError::new(
+                "recovery-native-identity",
+                "native authority records do not share one world/content/generator identity",
+            ));
+        }
+        bodies.insert(kind, envelope.body.clone());
+    }
+    if native_bundle_hash_v1(
+        &first.universe_id,
+        &first.location_id,
+        first.generator_hash,
+        first.content_hash,
+        &bodies,
+    ) != bundle.bundle_hash
+    {
+        return Err(IntegratedRuntimeError::new(
+            "recovery-native-corrupt",
+            "native authority bundle root hash does not match its records",
+        ));
+    }
+    let core = decode_runtime_core_snapshot_v1(native_bundle_body_v1(
+        bundle,
+        IntegratedRuntimeNativeRecordKindV1::Runtime,
+    )?)?;
+    if core.config.universe_id != first.universe_id
+        || core.config.location_id != first.location_id
+        || core.config.generator_hash != first.generator_hash
+        || core.config.content_hash != first.content_hash
+    {
+        return Err(IntegratedRuntimeError::new(
+            "recovery-native-config",
+            "runtime core configuration does not match the native record envelope",
+        ));
+    }
+    Ok(core)
+}
+
+fn write_runtime_config_v1(
+    writer: &mut NativeWriterV1,
+    config: &IntegratedRuntimeConfigV2,
+) -> Result<(), IntegratedRuntimeError> {
+    writer.string(&config.world_seed)?;
+    writer.string(&config.universe_id)?;
+    writer.string(&config.location_id)?;
+    writer.string(&config.session_id)?;
+    writer.hash(config.content_hash);
+    writer.hash(config.generator_hash);
+    writer.u16(config.block_catalog.water_block_id);
+    writer.u32(config.block_catalog.directional_blocks.len() as u32);
+    for value in &config.block_catalog.directional_blocks {
+        writer.u16(*value);
+    }
+    writer.u32(config.block_catalog.waterlogged_blocks.len() as u32);
+    for value in &config.block_catalog.waterlogged_blocks {
+        writer.u16(*value);
+    }
+    Ok(())
+}
+
+fn read_runtime_config_v1(
+    reader: &mut NativeReaderV1<'_>,
+) -> Result<IntegratedRuntimeConfigV2, IntegratedRuntimeError> {
+    let world_seed = reader.string()?;
+    let universe_id = reader.string()?;
+    let location_id = reader.string()?;
+    let session_id = reader.string()?;
+    let content_hash = reader.hash()?;
+    let generator_hash = reader.hash()?;
+    let water_block_id = reader.u16()?;
+    let directional_count = reader.count(u16::MAX as usize + 1, "directional blocks")?;
+    let mut directional_blocks = BTreeSet::new();
+    for _ in 0..directional_count {
+        if !directional_blocks.insert(reader.u16()?) {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-duplicate",
+                "runtime block catalog repeats a directional block",
+            ));
+        }
+    }
+    let waterlogged_count = reader.count(u16::MAX as usize + 1, "waterlogged blocks")?;
+    let mut waterlogged_blocks = BTreeSet::new();
+    for _ in 0..waterlogged_count {
+        if !waterlogged_blocks.insert(reader.u16()?) {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-duplicate",
+                "runtime block catalog repeats a waterlogged block",
+            ));
+        }
+    }
+    let config = IntegratedRuntimeConfigV2 {
+        world_seed,
+        universe_id,
+        location_id,
+        session_id,
+        content_hash,
+        generator_hash,
+        block_catalog: BlockCatalogV1 {
+            directional_blocks,
+            waterlogged_blocks,
+            water_block_id,
+        },
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+fn write_runtime_revision_v1(writer: &mut NativeWriterV1, revision: IntegratedRuntimeRevisionV2) {
+    for value in [
+        revision.epoch,
+        revision.world,
+        revision.entities,
+        revision.gameplay,
+        revision.persistence,
+        revision.network,
+        revision.simulation,
+    ] {
+        writer.u64(value);
+    }
+}
+
+fn read_runtime_revision_v1(
+    reader: &mut NativeReaderV1<'_>,
+) -> Result<IntegratedRuntimeRevisionV2, IntegratedRuntimeError> {
+    Ok(IntegratedRuntimeRevisionV2 {
+        epoch: reader.u64()?,
+        world: reader.u64()?,
+        entities: reader.u64()?,
+        gameplay: reader.u64()?,
+        persistence: reader.u64()?,
+        network: reader.u64()?,
+        simulation: reader.u64()?,
+    })
+}
+
+fn write_runtime_input_v1(writer: &mut NativeWriterV1, value: RuntimeInputFrameV1) {
+    writer.u64(value.sequence);
+    writer.u64(value.target_tick);
+    writer.i16(value.move_x);
+    writer.i16(value.move_z);
+    writer.i16(value.look_yaw);
+    writer.i16(value.look_pitch);
+    writer.u32(value.buttons);
+    writer.u8(value.selected_slot);
+    writer.u8(value.flags);
+}
+
+fn read_runtime_input_v1(reader: &mut NativeReaderV1<'_>) -> Result<RuntimeInputFrameV1, IntegratedRuntimeError> {
+    let value = RuntimeInputFrameV1 {
+        sequence: reader.u64()?,
+        target_tick: reader.u64()?,
+        move_x: reader.i16()?,
+        move_z: reader.i16()?,
+        look_yaw: reader.i16()?,
+        look_pitch: reader.i16()?,
+        buttons: reader.u32()?,
+        selected_slot: reader.u8()?,
+        flags: reader.u8()?,
+    };
+    if value.buttons & !RUNTIME_INPUT_BUTTON_MASK_V1 != 0 || value.flags & !RUNTIME_INPUT_FLAG_MASK_V1 != 0 {
+        return Err(IntegratedRuntimeError::new(
+            "native-input-flags",
+            "runtime checkpoint contains unsupported input flags",
+        ));
+    }
+    Ok(value)
+}
+
+fn write_runtime_player_v1(
+    writer: &mut NativeWriterV1,
+    player: &IntegratedRuntimePlayerStateV2,
+) -> Result<(), IntegratedRuntimeError> {
+    let binding = &player.binding;
+    writer.string(&binding.external_entity_id)?;
+    for value in [
+        binding.radius,
+        binding.standing_height,
+        binding.crouching_height,
+        binding.mass,
+        binding.walk_speed,
+        binding.sprint_speed,
+        binding.creative_flight_speed,
+        binding.maximum_oxygen_seconds,
+    ] {
+        writer.f64(value);
+    }
+    writer.u64(player.entity_id.packed());
+    let body = &player.body;
+    writer.string(&body.handle)?;
+    for value in [
+        body.position.x,
+        body.position.y,
+        body.position.z,
+        body.velocity.x,
+        body.velocity.y,
+        body.velocity.z,
+        body.radius,
+        body.height,
+        body.mass,
+        body.fall_distance,
+        body.oxygen_seconds,
+        body.drowning_accumulator,
+        body.swim_entry_momentum_speed,
+        body.swim_surface_breach_seconds,
+        body.swim_stroke_cooldown_seconds,
+    ] {
+        writer.f64(value);
+    }
+    writer.bool(body.grounded);
+    writer.bool(body.crouching);
+    writer.bool(body.swim_surface_breach_ready);
+    writer.bool(body.swim_surface_bob_active);
+    writer.u16(player.contact_flags);
+    writer.u8(player.selected_slot);
+    writer.i16(player.look_pitch);
+    writer.u32(player.buttons);
+    writer.u8(player.flags);
+    writer.u64(player.last_input_sequence);
+    Ok(())
+}
+
+fn read_runtime_player_v1(
+    reader: &mut NativeReaderV1<'_>,
+) -> Result<IntegratedRuntimePlayerStateV2, IntegratedRuntimeError> {
+    let binding = RuntimePlayerBindingWireV1 {
+        external_entity_id: reader.string()?,
+        radius: reader.f64()?,
+        standing_height: reader.f64()?,
+        crouching_height: reader.f64()?,
+        mass: reader.f64()?,
+        walk_speed: reader.f64()?,
+        sprint_speed: reader.f64()?,
+        creative_flight_speed: reader.f64()?,
+        maximum_oxygen_seconds: reader.f64()?,
+    };
+    binding
+        .validate()
+        .map_err(|error| IntegratedRuntimeError::new("native-player-binding", error.message))?;
+    let packed_id = reader.u64()?;
+    let body = PhysicsBodyV1 {
+        handle: reader.string()?,
+        position: SimulationVec3::new(reader.f64()?, reader.f64()?, reader.f64()?),
+        velocity: SimulationVec3::new(reader.f64()?, reader.f64()?, reader.f64()?),
+        radius: reader.f64()?,
+        height: reader.f64()?,
+        mass: reader.f64()?,
+        fall_distance: reader.f64()?,
+        oxygen_seconds: reader.f64()?,
+        drowning_accumulator: reader.f64()?,
+        swim_entry_momentum_speed: reader.f64()?,
+        swim_surface_breach_seconds: reader.f64()?,
+        swim_stroke_cooldown_seconds: reader.f64()?,
+        grounded: reader.bool()?,
+        crouching: reader.bool()?,
+        swim_surface_breach_ready: reader.bool()?,
+        swim_surface_bob_active: reader.bool()?,
+    };
+    if body.handle != binding.external_entity_id
+        || body.radius <= 0.0
+        || body.height <= 0.0
+        || body.mass <= 0.0
+        || body.fall_distance < 0.0
+        || body.oxygen_seconds < 0.0
+        || body.drowning_accumulator < 0.0
+    {
+        return Err(IntegratedRuntimeError::new(
+            "native-player-state",
+            "runtime checkpoint contains an invalid player body",
+        ));
+    }
+    let contact_flags = reader.u16()?;
+    let selected_slot = reader.u8()?;
+    let look_pitch = reader.i16()?;
+    let buttons = reader.u32()?;
+    let flags = reader.u8()?;
+    if buttons & !RUNTIME_INPUT_BUTTON_MASK_V1 != 0 || flags & !RUNTIME_INPUT_FLAG_MASK_V1 != 0 {
+        return Err(IntegratedRuntimeError::new(
+            "native-player-flags",
+            "runtime checkpoint contains unsupported player flags",
+        ));
+    }
+    Ok(IntegratedRuntimePlayerStateV2 {
+        binding,
+        entity_id: EntityId::new(packed_id as u32, (packed_id >> 32) as u32),
+        body,
+        contact_flags,
+        selected_slot,
+        look_pitch,
+        buttons,
+        flags,
+        last_input_sequence: reader.u64()?,
+    })
+}
+
+fn write_compatibility_journal_v1(
+    writer: &mut NativeWriterV1,
+    journal: &JournalState,
+) -> Result<(), IntegratedRuntimeError> {
+    writer.u64(journal.sequence());
+    writer.u32(journal.records().len() as u32);
+    for (address, record) in journal.records() {
+        writer.address(address)?;
+        writer.u64(record.revision);
+        writer.bytes(&record.payload)?;
+    }
+    Ok(())
+}
+
+fn read_compatibility_journal_v1(
+    reader: &mut NativeReaderV1<'_>,
+    config: &IntegratedRuntimeConfigV2,
+) -> Result<JournalState, IntegratedRuntimeError> {
+    let sequence = reader.u64()?;
+    let count = reader.count(1_000_000, "compatibility journal records")?;
+    let mut descriptors = Vec::with_capacity(count);
+    let mut payloads = BTreeMap::new();
+    for _ in 0..count {
+        let address = reader.address()?;
+        let revision = reader.u64()?;
+        if revision == 0 {
+            return Err(IntegratedRuntimeError::new(
+                "native-journal-revision",
+                "compatibility journal record revision must be non-zero",
+            ));
+        }
+        let payload = reader.bytes(NATIVE_RECORD_MAX_BYTES_V1)?;
+        let descriptor = RecordDescriptor {
+            address: address.clone(),
+            revision,
+            byte_length: payload.len() as u32,
+            payload_hash: native_persistence_payload_hash_v1(&payload),
+        };
+        if payloads.insert(address, payload).is_some() {
+            return Err(IntegratedRuntimeError::new(
+                "native-record-duplicate",
+                "compatibility journal repeats a record address",
+            ));
+        }
+        descriptors.push(descriptor);
+    }
+    let checkpoint = Checkpoint::new(
+        format!("runtime-journal-{sequence}"),
+        None,
+        format!("{}@{}", config.universe_id, config.location_id),
+        sequence,
+        config.generator_hash,
+        config.content_hash,
+        0,
+        descriptors,
+    )
+    .map_err(|error| IntegratedRuntimeError::domain("native-journal", error))?;
+    JournalState::from_checkpoint(&checkpoint, &payloads)
+        .map_err(|error| IntegratedRuntimeError::domain("native-journal", error))
+}
+
+fn encode_runtime_core_snapshot_v1(runtime: &IntegratedRuntimeV2) -> Result<Vec<u8>, IntegratedRuntimeError> {
+    if runtime.native_runtime_extension_bytes.len() > NATIVE_EXTENSION_MAX_BYTES_V1
+        || runtime.effect_events.len() > INTEGRATED_RUNTIME_MAX_EFFECT_EVENTS
+        || runtime.queued_inputs.len() > MAX_INPUT_FRAMES
+        || runtime.replay.len() > INTEGRATED_RUNTIME_MAX_REPLAY_ENTRIES
+    {
+        return Err(IntegratedRuntimeError::new(
+            "native-runtime-capacity",
+            "runtime core state exceeds its checkpoint bounds",
+        ));
+    }
+    let mut writer = NativeWriterV1::default();
+    writer.raw(NATIVE_RUNTIME_MAGIC_V1);
+    writer.u16(NATIVE_RECORD_SCHEMA_V1);
+    write_runtime_config_v1(&mut writer, &runtime.config)?;
+    write_runtime_revision_v1(&mut writer, runtime.revision());
+    writer.u64(runtime.tick);
+    writer.u64(runtime.last_monotonic_time_us);
+    writer.u64(runtime.accumulator_us);
+    writer.u32(runtime.rng_state);
+    writer.u64(runtime.network_revision);
+    writer.u64(runtime.simulation_revision);
+    writer.u64(runtime.gameplay_authority_revision);
+    writer.u64(runtime.entity_command_sequence);
+    writer.bool(runtime.player.is_some());
+    if let Some(player) = &runtime.player {
+        write_runtime_player_v1(&mut writer, player)?;
+    }
+    writer.u32(runtime.effect_events.len() as u32);
+    for event in &runtime.effect_events {
+        writer.u64(event.sequence);
+        writer.u64(event.tick);
+        writer.string(&event.entity_external_id)?;
+        writer.u8(event.kind as u8);
+        writer.f64(event.amount);
+    }
+    writer.u64(runtime.next_effect_sequence);
+    writer.u32(runtime.queued_inputs.len() as u32);
+    for input in &runtime.queued_inputs {
+        write_runtime_input_v1(&mut writer, *input);
+    }
+    writer.bool(runtime.last_input_sequence.is_some());
+    if let Some(sequence) = runtime.last_input_sequence {
+        writer.u64(sequence);
+    }
+    writer.bool(runtime.last_applied_input.is_some());
+    if let Some(input) = runtime.last_applied_input {
+        write_runtime_input_v1(&mut writer, input);
+    }
+    writer.u32(runtime.replay.len() as u32);
+    for entry in &runtime.replay {
+        writer.u64(entry.sequence);
+        writer.string(&entry.batch_id)?;
+        writer.hash(entry.before_hash);
+        writer.hash(entry.after_hash);
+        writer.hash(entry.receipt_hash);
+    }
+    write_compatibility_journal_v1(&mut writer, &runtime.persistence)?;
+    writer.bytes(&runtime.native_runtime_extension_bytes)?;
+    Ok(writer.finish())
+}
+
+fn decode_runtime_core_snapshot_v1(bytes: &[u8]) -> Result<IntegratedRuntimeCoreSnapshotV1, IntegratedRuntimeError> {
+    let mut reader = NativeReaderV1::new(bytes);
+    reader.magic(NATIVE_RUNTIME_MAGIC_V1)?;
+    if reader.u16()? != NATIVE_RECORD_SCHEMA_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-runtime-schema",
+            "runtime core snapshot schema is unsupported",
+        ));
+    }
+    let config = read_runtime_config_v1(&mut reader)?;
+    let expected_revision = read_runtime_revision_v1(&mut reader)?;
+    let tick = reader.u64()?;
+    let last_monotonic_time_us = reader.u64()?;
+    let accumulator_us = reader.u64()?;
+    if accumulator_us >= INTEGRATED_RUNTIME_FIXED_STEP_US {
+        return Err(IntegratedRuntimeError::new(
+            "native-runtime-clock",
+            "runtime accumulator exceeds one fixed step",
+        ));
+    }
+    let rng_state = reader.u32()?;
+    let network_revision = reader.u64()?;
+    let simulation_revision = reader.u64()?;
+    let gameplay_authority_revision = reader.u64()?;
+    let entity_command_sequence = reader.u64()?;
+    let player = if reader.bool()? {
+        Some(read_runtime_player_v1(&mut reader)?)
+    } else {
+        None
+    };
+    let effect_count = reader.count(INTEGRATED_RUNTIME_MAX_EFFECT_EVENTS, "effect events")?;
+    let mut effect_events = VecDeque::with_capacity(effect_count);
+    let mut previous_effect_sequence = 0_u64;
+    for _ in 0..effect_count {
+        let sequence = reader.u64()?;
+        if sequence == 0 || sequence <= previous_effect_sequence {
+            return Err(IntegratedRuntimeError::new(
+                "native-effect-order",
+                "runtime effect sequences are not strictly increasing",
+            ));
+        }
+        previous_effect_sequence = sequence;
+        let event_tick = reader.u64()?;
+        let entity_external_id = reader.string()?;
+        let kind = match reader.u8()? {
+            0 => IntegratedRuntimeEffectKindV2::Jump,
+            1 => IntegratedRuntimeEffectKindV2::Land,
+            2 => IntegratedRuntimeEffectKindV2::FallDamage,
+            3 => IntegratedRuntimeEffectKindV2::DrownDamage,
+            4 => IntegratedRuntimeEffectKindV2::LiquidEnter,
+            5 => IntegratedRuntimeEffectKindV2::LiquidExit,
+            6 => IntegratedRuntimeEffectKindV2::ShoreExit,
+            _ => {
+                return Err(IntegratedRuntimeError::new(
+                    "native-effect-kind",
+                    "runtime effect kind is unknown",
+                ));
+            }
+        };
+        effect_events.push_back(IntegratedRuntimeEffectEventV2 {
+            sequence,
+            tick: event_tick,
+            entity_external_id,
+            kind,
+            amount: reader.f64()?,
+        });
+    }
+    let next_effect_sequence = reader.u64()?;
+    if next_effect_sequence == 0 || next_effect_sequence <= previous_effect_sequence {
+        return Err(IntegratedRuntimeError::new(
+            "native-effect-order",
+            "runtime next effect sequence does not follow retained events",
+        ));
+    }
+    let input_count = reader.count(MAX_INPUT_FRAMES, "queued inputs")?;
+    let mut queued_inputs = VecDeque::with_capacity(input_count);
+    let mut previous_input_sequence = 0_u64;
+    for _ in 0..input_count {
+        let input = read_runtime_input_v1(&mut reader)?;
+        if input.sequence == 0 || input.sequence <= previous_input_sequence {
+            return Err(IntegratedRuntimeError::new(
+                "native-input-order",
+                "runtime queued input sequences are not strictly increasing",
+            ));
+        }
+        previous_input_sequence = input.sequence;
+        queued_inputs.push_back(input);
+    }
+    let last_input_sequence = if reader.bool()? { Some(reader.u64()?) } else { None };
+    let last_applied_input = if reader.bool()? {
+        Some(read_runtime_input_v1(&mut reader)?)
+    } else {
+        None
+    };
+    if last_input_sequence.is_some_and(|sequence| sequence < previous_input_sequence) {
+        return Err(IntegratedRuntimeError::new(
+            "native-input-order",
+            "runtime last input sequence precedes a queued input",
+        ));
+    }
+    let replay_count = reader.count(INTEGRATED_RUNTIME_MAX_REPLAY_ENTRIES, "replay entries")?;
+    let mut replay = VecDeque::with_capacity(replay_count);
+    let mut previous_replay_sequence = 0_u64;
+    for _ in 0..replay_count {
+        let sequence = reader.u64()?;
+        if sequence == 0 || sequence <= previous_replay_sequence {
+            return Err(IntegratedRuntimeError::new(
+                "native-replay-order",
+                "runtime replay sequences are not strictly increasing",
+            ));
+        }
+        previous_replay_sequence = sequence;
+        replay.push_back(IntegratedRuntimeReplayEntryV2 {
+            sequence,
+            batch_id: reader.string()?,
+            before_hash: reader.hash()?,
+            after_hash: reader.hash()?,
+            receipt_hash: reader.hash()?,
+        });
+    }
+    let compatibility_journal = read_compatibility_journal_v1(&mut reader, &config)?;
+    let unknown_extension_bytes = reader.bytes(NATIVE_EXTENSION_MAX_BYTES_V1)?;
+    reader.finish()?;
+    Ok(IntegratedRuntimeCoreSnapshotV1 {
+        config,
+        expected_revision,
+        tick,
+        last_monotonic_time_us,
+        accumulator_us,
+        rng_state,
+        network_revision,
+        simulation_revision,
+        gameplay_authority_revision,
+        entity_command_sequence,
+        player,
+        effect_events,
+        next_effect_sequence,
+        queued_inputs,
+        last_input_sequence,
+        last_applied_input,
+        replay,
+        compatibility_journal,
+        unknown_extension_bytes,
+    })
+}
+
+fn content_domain_tag_v1(domain: ContentDomain) -> u8 {
+    match domain {
+        ContentDomain::Item => 0,
+        ContentDomain::CraftingRecipe => 1,
+        ContentDomain::MachineRecipe => 2,
+        ContentDomain::MachineProfile => 3,
+        ContentDomain::AbilitySpell => 4,
+        ContentDomain::CreatureProfile => 5,
+        ContentDomain::CreatureTypeChart => 6,
+        ContentDomain::QuestGuild => 7,
+        ContentDomain::Economy => 8,
+        ContentDomain::CardforgeCard => 9,
+        ContentDomain::CardforgePack => 10,
+    }
+}
+
+fn content_domain_from_tag_v1(tag: u8) -> Result<ContentDomain, IntegratedRuntimeError> {
+    match tag {
+        0 => Ok(ContentDomain::Item),
+        1 => Ok(ContentDomain::CraftingRecipe),
+        2 => Ok(ContentDomain::MachineRecipe),
+        3 => Ok(ContentDomain::MachineProfile),
+        4 => Ok(ContentDomain::AbilitySpell),
+        5 => Ok(ContentDomain::CreatureProfile),
+        6 => Ok(ContentDomain::CreatureTypeChart),
+        7 => Ok(ContentDomain::QuestGuild),
+        8 => Ok(ContentDomain::Economy),
+        9 => Ok(ContentDomain::CardforgeCard),
+        10 => Ok(ContentDomain::CardforgePack),
+        _ => Err(IntegratedRuntimeError::new(
+            "native-content-domain",
+            "native content record contains an unknown domain",
+        )),
+    }
+}
+
+fn write_content_domains_v1(writer: &mut NativeWriterV1, domains: &BTreeMap<ContentDomain, ContentDomainDigest>) {
+    writer.u32(domains.len() as u32);
+    for (domain, digest) in domains {
+        writer.u8(content_domain_tag_v1(*domain));
+        writer.u32(digest.count);
+        writer.hash(digest.hash);
+    }
+}
+
+fn read_content_domains_v1(
+    reader: &mut NativeReaderV1<'_>,
+) -> Result<BTreeMap<ContentDomain, ContentDomainDigest>, IntegratedRuntimeError> {
+    let count = reader.count(32, "content domains")?;
+    let mut domains = BTreeMap::new();
+    for _ in 0..count {
+        let domain = content_domain_from_tag_v1(reader.u8()?)?;
+        let digest = ContentDomainDigest {
+            count: reader.u32()?,
+            hash: reader.hash()?,
+        };
+        if domains.insert(domain, digest).is_some() {
+            return Err(IntegratedRuntimeError::new(
+                "native-content-domain",
+                "native content domain is duplicated",
+            ));
+        }
+    }
+    Ok(domains)
+}
+
+fn write_content_artifact_v1(
+    writer: &mut NativeWriterV1,
+    artifact: &ContentArtifact,
+) -> Result<(), IntegratedRuntimeError> {
+    writer.u8(content_domain_tag_v1(artifact.domain));
+    writer.string(&artifact.id)?;
+    writer.string(&artifact.schema_id)?;
+    writer.u16(artifact.schema_version);
+    writer.u32(artifact.content_version);
+    writer.u32(artifact.aliases.len() as u32);
+    for alias in &artifact.aliases {
+        writer.string(alias)?;
+    }
+    writer.bytes(&artifact.canonical_bytes)?;
+    writer.bytes(&artifact.unknown_extension_bytes)?;
+    Ok(())
+}
+
+fn read_content_artifact_v1(reader: &mut NativeReaderV1<'_>) -> Result<ContentArtifact, IntegratedRuntimeError> {
+    let domain = content_domain_from_tag_v1(reader.u8()?)?;
+    let id = reader.string()?;
+    let schema_id = reader.string()?;
+    let schema_version = reader.u16()?;
+    let content_version = reader.u32()?;
+    let alias_count = reader.count(16, "content aliases")?;
+    let mut aliases = Vec::with_capacity(alias_count);
+    let mut seen = BTreeSet::new();
+    for _ in 0..alias_count {
+        let alias = reader.string()?;
+        if !seen.insert(alias.clone()) {
+            return Err(IntegratedRuntimeError::new(
+                "native-content-alias",
+                "native content artifact repeats an alias",
+            ));
+        }
+        aliases.push(alias);
+    }
+    Ok(ContentArtifact {
+        domain,
+        id,
+        schema_id,
+        schema_version,
+        content_version,
+        aliases,
+        canonical_bytes: reader.bytes(256 * 1024)?,
+        unknown_extension_bytes: reader.bytes(64 * 1024)?,
+    })
+}
+
+fn encode_runtime_content_snapshot_v1(runtime: &IntegratedRuntimeV2) -> Result<Vec<u8>, IntegratedRuntimeError> {
+    if runtime.native_content_extension_bytes.len() > NATIVE_EXTENSION_MAX_BYTES_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-capacity",
+            "native content extension exceeds 64 KiB",
+        ));
+    }
+    let mut artifacts = Vec::with_capacity(runtime.gameplay_content_index.len());
+    for ((domain, id), hash) in &runtime.gameplay_content_index {
+        let blob = runtime.gameplay_content_store.get(*hash).ok_or_else(|| {
+            IntegratedRuntimeError::new(
+                "native-content-registry",
+                "content index references a missing metadata blob",
+            )
+        })?;
+        artifacts.push(ContentArtifact {
+            domain: *domain,
+            id: id.clone(),
+            schema_id: blob.schema_id.clone(),
+            schema_version: blob.schema_version,
+            content_version: blob.content_version,
+            aliases: blob.aliases.clone(),
+            canonical_bytes: blob.bytes.clone(),
+            unknown_extension_bytes: blob.unknown_extension_bytes.clone(),
+        });
+    }
+    if runtime.content_attestation.is_none() && (!artifacts.is_empty() || !runtime.gameplay_content_store.is_empty()) {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-incomplete",
+            "metadata registry exists without an installed content attestation",
+        ));
+    }
+    let mut writer = NativeWriterV1::default();
+    writer.raw(NATIVE_CONTENT_MAGIC_V1);
+    writer.u16(NATIVE_RECORD_SCHEMA_V1);
+    writer.bool(runtime.content_attestation.is_some());
+    if let Some(attestation) = &runtime.content_attestation {
+        writer.string(&attestation.install_id)?;
+        writer.string(&attestation.source_revision)?;
+        writer.hash(attestation.manifest_hash);
+        write_content_domains_v1(&mut writer, &attestation.domains);
+        writer.u32(attestation.installed_entries);
+        writer.u64(attestation.installed_bytes);
+        writer.u32(attestation.page_hashes.len() as u32);
+        for hash in &attestation.page_hashes {
+            writer.hash(*hash);
+        }
+    }
+    writer.u32(artifacts.len() as u32);
+    for artifact in &artifacts {
+        write_content_artifact_v1(&mut writer, artifact)?;
+    }
+    writer.bytes(&runtime.native_content_extension_bytes)?;
+    Ok(writer.finish())
+}
+
+fn decode_runtime_content_snapshot_v1(
+    bytes: &[u8],
+) -> Result<IntegratedRuntimeContentSnapshotV1, IntegratedRuntimeError> {
+    let mut reader = NativeReaderV1::new(bytes);
+    reader.magic(NATIVE_CONTENT_MAGIC_V1)?;
+    if reader.u16()? != NATIVE_RECORD_SCHEMA_V1 {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-schema",
+            "native content snapshot schema is unsupported",
+        ));
+    }
+    let attestation = if reader.bool()? {
+        let install_id = reader.string()?;
+        let source_revision = reader.string()?;
+        let manifest_hash = reader.hash()?;
+        let domains = read_content_domains_v1(&mut reader)?;
+        let installed_entries = reader.u32()?;
+        let installed_bytes = reader.u64()?;
+        let page_count = reader.count(128, "content pages")?;
+        if page_count == 0 {
+            return Err(IntegratedRuntimeError::new(
+                "native-content-pages",
+                "installed content attestation has no source pages",
+            ));
+        }
+        let mut page_hashes = Vec::with_capacity(page_count);
+        for _ in 0..page_count {
+            page_hashes.push(reader.hash()?);
+        }
+        Some(IntegratedRuntimeContentAttestationV1 {
+            install_id,
+            source_revision,
+            manifest_hash,
+            domains,
+            installed_entries,
+            installed_bytes,
+            page_hashes,
+        })
+    } else {
+        None
+    };
+    let artifact_count = reader.count(INTEGRATED_RUNTIME_CONTENT_MAX_ENTRIES_V1, "content artifacts")?;
+    let mut artifacts = Vec::with_capacity(artifact_count);
+    let mut previous: Option<(ContentDomain, String)> = None;
+    for _ in 0..artifact_count {
+        let artifact = read_content_artifact_v1(&mut reader)?;
+        let key = (artifact.domain, artifact.id.clone());
+        if previous.as_ref().is_some_and(|previous| previous >= &key) {
+            return Err(IntegratedRuntimeError::new(
+                "native-content-order",
+                "native content artifacts are not uniquely sorted",
+            ));
+        }
+        previous = Some(key);
+        artifacts.push(artifact);
+    }
+    let unknown_extension_bytes = reader.bytes(NATIVE_EXTENSION_MAX_BYTES_V1)?;
+    reader.finish()?;
+    if attestation.is_none() && !artifacts.is_empty() {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-incomplete",
+            "native content artifacts exist without an attestation",
+        ));
+    }
+    Ok(IntegratedRuntimeContentSnapshotV1 {
+        attestation,
+        artifacts,
+        unknown_extension_bytes,
+    })
+}
+
+fn install_runtime_content_snapshot_v1(
+    config: &IntegratedRuntimeConfigV2,
+    content: &IntegratedRuntimeContentSnapshotV1,
+) -> Result<(MetadataBlobStore, RuntimeContentIndexV1), IntegratedRuntimeError> {
+    let Some(attestation) = &content.attestation else {
+        if !content.artifacts.is_empty() {
+            return Err(IntegratedRuntimeError::new(
+                "native-content-incomplete",
+                "unattested native content cannot be installed",
+            ));
+        }
+        return Ok((MetadataBlobStore::default(), BTreeMap::new()));
+    };
+    if attestation.manifest_hash != config.content_hash {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-fingerprint",
+            "installed content manifest does not match the runtime content hash",
+        ));
+    }
+    let compiled = compile_content_bundle(attestation.source_revision.clone(), content.artifacts.clone())
+        .map_err(|blockers| content_blocker_error(&blockers))?;
+    if compiled.manifest.manifest_hash != attestation.manifest_hash
+        || compiled.manifest.domains != attestation.domains
+        || compiled.manifest.entries.len() != attestation.installed_entries as usize
+    {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-attestation",
+            "native content bytes do not reproduce their manifest attestation",
+        ));
+    }
+    let mut store = MetadataBlobStore::default();
+    let report = install_content_bundle(&compiled, &mut store).map_err(|blockers| content_blocker_error(&blockers))?;
+    if report.manifest_hash != attestation.manifest_hash
+        || report.installed_entries != attestation.installed_entries
+        || report.installed_bytes != attestation.installed_bytes
+    {
+        return Err(IntegratedRuntimeError::new(
+            "native-content-attestation",
+            "restored metadata store differs from its content attestation",
+        ));
+    }
+    let index = compiled
+        .manifest
+        .entries
+        .into_iter()
+        .map(|entry| ((entry.domain, entry.id), entry.blob_hash))
+        .collect::<BTreeMap<_, _>>();
+    Ok((store, index))
 }
 
 #[cfg(test)]
@@ -3571,6 +5660,20 @@ mod tests {
             .complete_persistence_platform(packet.transfer_token, &response)
             .expect("accept durable authority receipt");
         assert_eq!(outcome.status, PersistenceDispatchStatusV1::Accepted);
+    }
+
+    fn accept_all_authority_commits(runtime: &mut IntegratedRuntimeV2) {
+        for _ in 0..64 {
+            let diagnostics = runtime.persistence_authority().diagnostics();
+            if diagnostics.dirty_records == 0
+                && !diagnostics.commit_in_flight
+                && runtime.persistence_dispatcher().is_idle()
+            {
+                return;
+            }
+            accept_next_authority_commit(runtime);
+        }
+        panic!("authority commit fixture did not reach a durable idle boundary");
     }
 
     fn recovered_authority_save(runtime: &IntegratedRuntimeV2) -> PagedRecoveryCompleteV1 {
@@ -3746,25 +5849,35 @@ mod tests {
             },
         )
         .unwrap();
-        let outcome = runtime
+        let in_flight_hash = runtime.persistence_dispatcher().state_hash();
+        let in_flight_checkpoint = runtime.persistence_dispatcher_checkpoint().unwrap();
+        runtime.shutdown();
+        let mut restored = runtime_with_section();
+        restored
+            .restore_persistence_dispatcher_checkpoint(&in_flight_checkpoint)
+            .unwrap();
+        assert_eq!(restored.persistence_dispatcher().state_hash(), in_flight_hash);
+        let outcome = restored
             .complete_persistence_platform(packet.transfer_token, &response)
             .unwrap();
         assert_eq!(
             outcome.status,
             blockwild_persistence::PersistenceDispatchStatusV1::Accepted
         );
-        assert!(runtime.persistence_dispatcher().is_idle());
-        let checkpoint = runtime.persistence_dispatcher_checkpoint().unwrap();
-        let mut restored = runtime_with_section();
-        restored.restore_persistence_dispatcher_checkpoint(&checkpoint).unwrap();
+        assert!(restored.persistence_dispatcher().is_idle());
+        let checkpoint = restored.persistence_dispatcher_checkpoint().unwrap();
+        let mut second_restore = runtime_with_section();
+        second_restore
+            .restore_persistence_dispatcher_checkpoint(&checkpoint)
+            .unwrap();
         assert_eq!(
+            second_restore.persistence_dispatcher().state_hash(),
             restored.persistence_dispatcher().state_hash(),
-            runtime.persistence_dispatcher().state_hash(),
         );
-        restored
+        second_restore
             .dispatch_persistence(RuntimePersistenceDispatchWireV1::Close)
             .unwrap();
-        assert!(restored.persistence_dispatcher().is_closed());
+        assert!(second_restore.persistence_dispatcher().is_closed());
     }
 
     #[test]
@@ -3842,6 +5955,78 @@ mod tests {
     }
 
     #[test]
+    fn runtime_checkpoint_round_trip_restores_exact_authority_replay_and_extensions() {
+        let mut source = runtime_with_bound_player();
+        source.native_world_extension_bytes = vec![0xff, 1, 0x80, 0];
+        source.native_runtime_extension_bytes = vec![0, 0x80, 0xff, 7];
+        source.native_content_extension_bytes = vec![0xff, 0x80, 0];
+        source.native_gameplay_extension_bytes = vec![0x80, 0, 0xff];
+        let expected_identity = source.identity();
+        let expected_replay = source.replay_hash();
+        let checkpoint = source.export_runtime_checkpoint().unwrap();
+        let checkpoint_hash = integrated_runtime_checkpoint_hash_v1(&checkpoint);
+
+        source.shutdown();
+        let restored = IntegratedRuntimeV2::restore_runtime_checkpoint(&checkpoint, checkpoint_hash).unwrap();
+        assert_eq!(restored.identity(), expected_identity);
+        assert_eq!(restored.replay_hash(), expected_replay);
+        assert_eq!(restored.native_world_extension_bytes, vec![0xff, 1, 0x80, 0]);
+        assert_eq!(restored.native_runtime_extension_bytes, vec![0, 0x80, 0xff, 7]);
+        assert_eq!(restored.native_content_extension_bytes, vec![0xff, 0x80, 0]);
+        assert_eq!(restored.native_gameplay_extension_bytes, vec![0x80, 0, 0xff]);
+        assert_eq!(restored.player(), source.player());
+
+        let before = restored.identity();
+        let mut corrupt = checkpoint.clone();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x5a;
+        assert_eq!(
+            IntegratedRuntimeV2::restore_runtime_checkpoint(&corrupt, checkpoint_hash)
+                .err()
+                .expect("corrupt checkpoint rejects")
+                .code,
+            "checkpoint-hash"
+        );
+        assert_eq!(restored.identity(), before);
+    }
+
+    #[test]
+    fn durable_native_save_checkpoint_destroy_and_fresh_restore_are_exact() {
+        let mut source = runtime_with_bound_player();
+        let legacy_bytes = b"legacy-world-source-backup\x00\x80\xff";
+        source
+            .stage_compatibility_save_chunk("durable", 0, 1, legacy_bytes.len() as u64, legacy_bytes)
+            .unwrap();
+        source.finalize_compatibility_save("durable", 70).unwrap();
+        accept_all_authority_commits(&mut source);
+
+        let expected_identity = source.identity();
+        let expected_replay = source.replay_hash();
+        let expected_authority = source.persistence_authority().state_hash();
+        let expected_head = source
+            .persistence_authority()
+            .checkpoint()
+            .expect("durable native checkpoint")
+            .checkpoint_hash;
+        let checkpoint = source.export_runtime_checkpoint().unwrap();
+        let checkpoint_hash = integrated_runtime_checkpoint_hash_v1(&checkpoint);
+        source.shutdown();
+
+        let restored = IntegratedRuntimeV2::restore_runtime_checkpoint(&checkpoint, checkpoint_hash).unwrap();
+        assert_eq!(restored.identity(), expected_identity);
+        assert_eq!(restored.replay_hash(), expected_replay);
+        assert_eq!(restored.persistence_authority().state_hash(), expected_authority);
+        assert_eq!(
+            restored
+                .persistence_authority()
+                .checkpoint()
+                .expect("restored durable head")
+                .checkpoint_hash,
+            expected_head,
+        );
+    }
+
+    #[test]
     fn recovery_hydration_is_atomic_and_compatibility_bytes_are_export_only() {
         let mut source = runtime_with_section();
         let position = CellPositionV1 { x: 1, y: 1, z: 1 };
@@ -3868,6 +6053,18 @@ mod tests {
         accept_next_authority_commit(&mut source);
         let recovered = recovered_authority_save(&source);
 
+        let recovered_legacy = recovered
+            .payloads
+            .iter()
+            .filter(|(address, _)| {
+                address.kind == RecordKind::SettingsReference
+                    && address.record_id.starts_with(COMPATIBILITY_RECORD_PREFIX_V1)
+            })
+            .map(|(_, payload)| payload.as_slice())
+            .collect::<Vec<_>>()
+            .concat();
+        assert_eq!(recovered_legacy, compatibility, "legacy source bytes remain exact");
+
         let mut target = runtime_with_section();
         assert_eq!(loaded_block_id(&target, position), 0);
         let mut mismatched = recovered.clone();
@@ -3881,9 +6078,75 @@ mod tests {
         assert_eq!(target.identity(), before_mismatch);
         assert_eq!(loaded_block_id(&target, position), 0);
 
+        let mut wrong_content = recovered.clone();
+        let content_address = wrong_content
+            .payloads
+            .keys()
+            .find(|address| {
+                address.kind == RecordKind::SettingsReference && address.record_id == NATIVE_CONTENT_RECORD_ID_V1
+            })
+            .cloned()
+            .expect("content native record");
+        let mut wrong_content_envelope = decode_native_record_envelope_v1(
+            wrong_content
+                .payloads
+                .get(&content_address)
+                .expect("content native record"),
+        )
+        .unwrap();
+        wrong_content_envelope.content_hash = CanonicalHash([0x55; 16]);
+        wrong_content.payloads.insert(
+            content_address,
+            encode_native_record_envelope_v1(&wrong_content_envelope).unwrap(),
+        );
+        target
+            .recovered_save_sets
+            .insert("wrong-content-native".into(), wrong_content);
+        assert_eq!(
+            target.hydrate_recovery("wrong-content-native").unwrap_err().code,
+            "recovery-native-identity"
+        );
+        assert_eq!(target.identity(), before_mismatch);
+
+        let mut missing = recovered.clone();
+        let missing_address = missing
+            .payloads
+            .keys()
+            .find(|address| address.kind == RecordKind::Entity && address.record_id == NATIVE_ENTITY_RECORD_ID_V2)
+            .cloned()
+            .expect("entity native record");
+        missing.payloads.remove(&missing_address);
+        target.recovered_save_sets.insert("missing-native".into(), missing);
+        assert_eq!(
+            target.hydrate_recovery("missing-native").unwrap_err().code,
+            "recovery-native-missing"
+        );
+        assert_eq!(target.identity(), before_mismatch);
+
+        let mut duplicate = recovered.clone();
+        let duplicate_payload = duplicate
+            .payloads
+            .get(&missing_address)
+            .expect("entity native record")
+            .clone();
+        let duplicate_address = RecordAddress::new(
+            target.config.universe_id.clone(),
+            target.config.location_id.clone(),
+            RecordKind::SettingsReference,
+            "duplicate-native-envelope",
+        )
+        .unwrap();
+        duplicate.payloads.insert(duplicate_address, duplicate_payload);
+        target.recovered_save_sets.insert("duplicate-native".into(), duplicate);
+        assert_eq!(
+            target.hydrate_recovery("duplicate-native").unwrap_err().code,
+            "recovery-native-duplicate"
+        );
+        assert_eq!(target.identity(), before_mismatch);
+
         target.recovered_save_sets.insert("ready".into(), recovered);
         let summary = target.hydrate_recovery("ready").unwrap();
-        assert_eq!(summary.native_domains, INTEGRATED_RUNTIME_NATIVE_WORLD_DOMAIN_V1);
+        assert_eq!(summary.native_domains, INTEGRATED_RUNTIME_NATIVE_DOMAIN_COUNT_V1);
         assert_eq!(
             target.world().edit_journal().get(&position).map(|cell| cell.block_id),
             Some(1)
@@ -3894,6 +6157,189 @@ mod tests {
         assert_eq!(
             target.read_hydrated_compatibility_chunk("missing", 0).unwrap_err().code,
             "hydration-export",
+        );
+    }
+
+    #[test]
+    fn new_world_native_save_initializes_without_a_legacy_source_and_cannot_drop_one_later() {
+        let mut native = runtime_with_section();
+        let expected_world = native.world().canonical_state_hash();
+        let progress = native.finalize_native_save("new-world", 88).unwrap();
+        assert_eq!(progress.chunk_count, 0);
+        assert_eq!(progress.received_bytes, 0);
+        accept_all_authority_commits(&mut native);
+        let recovered = recovered_authority_save(&native);
+        let manifest_payload = recovered
+            .payloads
+            .iter()
+            .find(|(address, _)| {
+                address.kind == RecordKind::LocationManifest && address.record_id == WORLD_SAVE_MANIFEST_RECORD_ID_V1
+            })
+            .map(|(_, payload)| payload)
+            .expect("native save manifest");
+        let manifest = decode_world_save_manifest_v1(manifest_payload).unwrap();
+        assert_eq!(manifest.compatibility_chunks, 0);
+        assert_eq!(manifest.compatibility_byte_length, 0);
+
+        let mut restored = runtime_with_section();
+        restored.recovered_save_sets.insert("native".into(), recovered);
+        let summary = restored.hydrate_recovery("native").unwrap();
+        assert_eq!(summary.chunk_count, 0);
+        assert_eq!(restored.world().canonical_state_hash(), expected_world);
+        restored.finalize_native_save("second-native-save", 89).unwrap();
+
+        let mut legacy_owned = runtime_with_section();
+        legacy_owned
+            .stage_compatibility_save_chunk("legacy", 0, 1, 3, b"old")
+            .unwrap();
+        legacy_owned.finalize_compatibility_save("legacy", 90).unwrap();
+        accept_all_authority_commits(&mut legacy_owned);
+        let before = legacy_owned.identity();
+        assert_eq!(
+            legacy_owned
+                .finalize_native_save("must-not-drop-source", 91)
+                .unwrap_err()
+                .code,
+            "native-save-compatibility-owner"
+        );
+        assert_eq!(legacy_owned.identity(), before);
+    }
+
+    #[test]
+    fn pristine_world_only_legacy_migration_builds_all_native_records_and_preserves_source() {
+        let mut legacy_projection_source = runtime_with_section();
+        let position = CellPositionV1 { x: 2, y: 1, z: 2 };
+        let identity = legacy_projection_source.world().identity();
+        let mut edit = IntegratedRuntimeBatchV2::empty("legacy-edit", legacy_projection_source.identity());
+        edit.world.push(WorldMutationBatchR4V1 {
+            schema_version: blockwild_authority::WORLD_AUTHORITY_SCHEMA_V1,
+            batch_id: "legacy-edit".into(),
+            authority_id: "legacy".into(),
+            address: identity.address,
+            expected_revision: identity.revision,
+            commands: vec![blockwild_authority::WorldMutationCommandR4V1::SetBlock {
+                position,
+                block_id: 1,
+                facing: None,
+            }],
+        });
+        assert!(legacy_projection_source.commit(edit).accepted());
+        let projection = blockwild_authority::encode_compatibility_save_binary_v1(
+            &legacy_projection_source.world().export_compatibility_save(),
+        )
+        .unwrap();
+        let source_backup = br#"{"schema":6,"blocks":{"2,1,2":1},"legacy":"exact"}"#;
+
+        let mut target = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2::default()).unwrap();
+        target
+            .stage_compatibility_save_chunk("legacy-source", 0, 1, source_backup.len() as u64, source_backup)
+            .unwrap();
+        let before_blocker = target.identity();
+        let blocked = target
+            .migrate_pristine_legacy_world(IntegratedRuntimeLegacyMigrationV1 {
+                schema_version: INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1,
+                migration_id: "legacy-migration".into(),
+                source_stage_id: "legacy-source".into(),
+                created_at: 90,
+                legacy_non_world_state_flags: LEGACY_STATE_PLAYER_V1 | LEGACY_STATE_MACHINES_V1,
+                world_projection: projection.clone(),
+            })
+            .unwrap_err();
+        assert_eq!(blocked.code, "legacy-migration-rich-save");
+        assert!(blocked.message.contains("player"));
+        assert!(blocked.message.contains("machines"));
+        assert_eq!(target.identity(), before_blocker);
+
+        let progress = target
+            .migrate_pristine_legacy_world(IntegratedRuntimeLegacyMigrationV1 {
+                schema_version: INTEGRATED_RUNTIME_LEGACY_MIGRATION_SCHEMA_V1,
+                migration_id: "legacy-migration".into(),
+                source_stage_id: "legacy-source".into(),
+                created_at: 90,
+                legacy_non_world_state_flags: 0,
+                world_projection: projection,
+            })
+            .unwrap();
+        assert!(progress.dispatcher_request_id.is_some());
+        let migrated_world_hash = target.world().canonical_state_hash();
+        assert_eq!(
+            target.world().edit_journal().get(&position).map(|cell| cell.block_id),
+            Some(1)
+        );
+        accept_all_authority_commits(&mut target);
+        let recovered = recovered_authority_save(&target);
+        for kind in IntegratedRuntimeNativeRecordKindV1::ALL {
+            let (record_kind, record_id) = kind.address();
+            assert!(
+                recovered
+                    .payloads
+                    .keys()
+                    .any(|address| address.kind == record_kind && address.record_id == record_id)
+            );
+        }
+        let preserved_source = recovered
+            .payloads
+            .iter()
+            .filter(|(address, _)| {
+                address.kind == RecordKind::SettingsReference
+                    && address.record_id.starts_with(COMPATIBILITY_RECORD_PREFIX_V1)
+            })
+            .map(|(_, payload)| payload.as_slice())
+            .collect::<Vec<_>>()
+            .concat();
+        assert_eq!(preserved_source, source_backup);
+
+        let mut restored = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2::default()).unwrap();
+        restored.recovered_save_sets.insert("migrated".into(), recovered);
+        restored.hydrate_recovery("migrated").unwrap();
+        assert_eq!(restored.world().canonical_state_hash(), migrated_world_hash);
+        assert_eq!(
+            restored.world().edit_journal().get(&position).map(|cell| cell.block_id),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn large_compatibility_stream_stages_in_order_and_commits_without_copy_loss() {
+        let mut runtime = runtime_with_section();
+        let first = vec![0x80; RUNTIME_BULK_SAVE_CHUNK_BYTES_V1];
+        let second = vec![0x5a; RUNTIME_BULK_SAVE_CHUNK_BYTES_V1];
+        let third = vec![0xff; 17];
+        let total = first.len() + second.len() + third.len();
+        runtime
+            .stage_compatibility_save_chunk("large", 0, 3, total as u64, &first)
+            .unwrap();
+        runtime
+            .stage_compatibility_save_chunk("large", 1, 3, total as u64, &second)
+            .unwrap();
+        let progress = runtime
+            .stage_compatibility_save_chunk("large", 2, 3, total as u64, &third)
+            .unwrap();
+        assert_eq!(progress.received_bytes, total as u64);
+        runtime.finalize_compatibility_save("large", 71).unwrap();
+        accept_all_authority_commits(&mut runtime);
+        let recovered = recovered_authority_save(&runtime);
+        let restored_stream = recovered
+            .payloads
+            .iter()
+            .filter(|(address, _)| {
+                address.kind == RecordKind::SettingsReference
+                    && address.record_id.starts_with(COMPATIBILITY_RECORD_PREFIX_V1)
+            })
+            .map(|(_, payload)| payload.as_slice())
+            .collect::<Vec<_>>()
+            .concat();
+        assert_eq!(restored_stream.len(), total);
+        assert_eq!(&restored_stream[..first.len()], first.as_slice());
+        assert_eq!(
+            &restored_stream[first.len()..first.len() + second.len()],
+            second.as_slice()
+        );
+        assert_eq!(&restored_stream[first.len() + second.len()..], third.as_slice());
+        assert_eq!(
+            runtime.export_runtime_checkpoint().unwrap_err().code,
+            "checkpoint-control-capacity",
+            "large saves remain durable but cannot overflow the synchronous Worker control lane",
         );
     }
 
@@ -4144,6 +6590,7 @@ mod tests {
         let staged = runtime.install_content_page(first.clone(), first_hash).unwrap();
         assert_eq!(staged.status, ContentInstallReceiptStatusV1::Staged);
         assert_eq!(staged.accepted_pages, 1);
+        assert!(!runtime.native_save_ready());
         assert_ne!(runtime.state_hash(), before);
         assert_eq!(runtime.install_content_page(first.clone(), first_hash).unwrap(), staged);
 
@@ -4165,6 +6612,7 @@ mod tests {
         assert_eq!(installed.status, ContentInstallReceiptStatusV1::Installed);
         assert_eq!(installed.installed_entries, 2);
         assert!(runtime.content_ready());
+        assert!(runtime.native_save_ready());
         assert_eq!(runtime.gameplay_content_registry_len(), 2);
         assert_eq!(
             runtime
@@ -4176,6 +6624,26 @@ mod tests {
             [0x80, 0xff]
         );
         assert_eq!(runtime.install_content_page(second, second_hash).unwrap(), installed);
+
+        let expected_identity = runtime.identity();
+        let checkpoint = runtime.export_runtime_checkpoint().unwrap();
+        let restored = IntegratedRuntimeV2::restore_runtime_checkpoint(
+            &checkpoint,
+            integrated_runtime_checkpoint_hash_v1(&checkpoint),
+        )
+        .unwrap();
+        assert_eq!(restored.identity(), expected_identity);
+        assert!(restored.content_ready());
+        assert_eq!(restored.gameplay_content_registry_len(), 2);
+        assert_eq!(
+            restored
+                .gameplay_content_store()
+                .get_by_alias("cardforge-pack:\u{6c34}-wilds")
+                .unwrap()
+                .exact_bytes()
+                .1,
+            [0x80, 0xff]
+        );
 
         let mut reordered_runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2 {
             content_hash: bundle.manifest.manifest_hash,

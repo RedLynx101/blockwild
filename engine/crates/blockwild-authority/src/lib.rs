@@ -11,6 +11,7 @@ mod contract;
 mod read_page;
 mod replay;
 mod residency;
+mod snapshot;
 mod store;
 
 pub use cache::*;
@@ -19,6 +20,7 @@ pub use contract::*;
 pub use read_page::*;
 pub use replay::*;
 pub use residency::*;
+pub use snapshot::*;
 pub use store::*;
 
 #[cfg(test)]

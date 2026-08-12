@@ -180,23 +180,23 @@ pub struct ImmediateWorldEditEventR4V1 {
 }
 
 #[derive(Clone, Debug)]
-struct SectionRecord {
-    cells: Vec<WorldCellV1>,
-    content_hash: CanonicalHash,
-    revision: WorldSectionRevisionV1,
-    source_revision: u64,
-    source_hash: String,
-    dirty: BTreeSet<DirtySubsystemV1>,
+pub(crate) struct SectionRecord {
+    pub(crate) cells: Vec<WorldCellV1>,
+    pub(crate) content_hash: CanonicalHash,
+    pub(crate) revision: WorldSectionRevisionV1,
+    pub(crate) source_revision: u64,
+    pub(crate) source_hash: String,
+    pub(crate) dirty: BTreeSet<DirtySubsystemV1>,
 }
 
 #[derive(Clone, Debug)]
-struct ChunkAuxiliaryRecord {
-    data: ChunkAuxiliaryDataV1,
-    content_hash: CanonicalHash,
+pub(crate) struct ChunkAuxiliaryRecord {
+    pub(crate) data: ChunkAuxiliaryDataV1,
+    pub(crate) content_hash: CanonicalHash,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct JournalDigestV1 {
+pub(crate) struct JournalDigestV1 {
     sum_low: u64,
     sum_high: u64,
     xor_low: u64,
@@ -229,17 +229,17 @@ impl JournalDigestV1 {
 }
 
 #[derive(Clone, Debug)]
-struct LocationShard {
-    address: WorldAddressV1,
-    revision: WorldAuthorityRevisionV1,
-    sections: BTreeMap<WorldSectionAddressV1, SectionRecord>,
-    revisions: BTreeMap<WorldSectionAddressV1, WorldSectionRevisionV1>,
-    chunk_auxiliary: BTreeMap<crate::WorldChunkAddressV1, ChunkAuxiliaryRecord>,
-    edit_journal: BTreeMap<CellPositionV1, WorldCellV1>,
-    edit_journal_digest: JournalDigestV1,
-    residency: SectionResidencySchedulerV1,
-    events: VecDeque<ImmediateWorldEditEventR4V1>,
-    next_event_sequence: u64,
+pub(crate) struct LocationShard {
+    pub(crate) address: WorldAddressV1,
+    pub(crate) revision: WorldAuthorityRevisionV1,
+    pub(crate) sections: BTreeMap<WorldSectionAddressV1, SectionRecord>,
+    pub(crate) revisions: BTreeMap<WorldSectionAddressV1, WorldSectionRevisionV1>,
+    pub(crate) chunk_auxiliary: BTreeMap<crate::WorldChunkAddressV1, ChunkAuxiliaryRecord>,
+    pub(crate) edit_journal: BTreeMap<CellPositionV1, WorldCellV1>,
+    pub(crate) edit_journal_digest: JournalDigestV1,
+    pub(crate) residency: SectionResidencySchedulerV1,
+    pub(crate) events: VecDeque<ImmediateWorldEditEventR4V1>,
+    pub(crate) next_event_sequence: u64,
 }
 
 impl LocationShard {
@@ -279,10 +279,10 @@ impl LocationShard {
 
 #[derive(Clone, Debug)]
 pub struct WorldAuthorityStoreR4V1 {
-    catalog: BlockCatalogV1,
-    locations: BTreeMap<WorldAddressV1, LocationShard>,
-    active: WorldAddressV1,
-    next_epoch: u64,
+    pub(crate) catalog: BlockCatalogV1,
+    pub(crate) locations: BTreeMap<WorldAddressV1, LocationShard>,
+    pub(crate) active: WorldAddressV1,
+    pub(crate) next_epoch: u64,
 }
 
 impl WorldAuthorityStoreR4V1 {
@@ -312,6 +312,11 @@ impl WorldAuthorityStoreR4V1 {
     #[must_use]
     pub fn active_address(&self) -> &WorldAddressV1 {
         &self.active
+    }
+
+    #[must_use]
+    pub fn block_catalog(&self) -> &BlockCatalogV1 {
+        &self.catalog
     }
 
     #[must_use]
@@ -885,7 +890,7 @@ fn write_cell_hash(hasher: &mut CanonicalHasher, cell: WorldCellV1) {
     hasher.write_u16(u16::from(cell.liquid.flags()));
 }
 
-fn hash_section_cells(cells: &[WorldCellV1]) -> CanonicalHash {
+pub(crate) fn hash_section_cells(cells: &[WorldCellV1]) -> CanonicalHash {
     let mut hasher = CanonicalHasher::new("blockwild-world-section-cells-v1");
     hasher.write_u32(cells.len() as u32);
     for cell in cells {
@@ -903,7 +908,7 @@ fn hash_edit_journal_entry(position: CellPositionV1, cell: WorldCellV1) -> Canon
     hasher.finish()
 }
 
-fn digest_edit_journal(journal: &BTreeMap<CellPositionV1, WorldCellV1>) -> JournalDigestV1 {
+pub(crate) fn digest_edit_journal(journal: &BTreeMap<CellPositionV1, WorldCellV1>) -> JournalDigestV1 {
     let mut digest = JournalDigestV1::default();
     for (position, cell) in journal {
         digest.add(hash_edit_journal_entry(*position, *cell));
@@ -919,7 +924,7 @@ fn hash_lanes(hash: CanonicalHash) -> (u64, u64) {
     )
 }
 
-fn hash_chunk_auxiliary(data: &ChunkAuxiliaryDataV1) -> CanonicalHash {
+pub(crate) fn hash_chunk_auxiliary(data: &ChunkAuxiliaryDataV1) -> CanonicalHash {
     let mut hasher = CanonicalHasher::new("blockwild-world-chunk-auxiliary-v1");
     hasher.write_u64(data.source_revision);
     hasher.write_str(&data.source_hash);

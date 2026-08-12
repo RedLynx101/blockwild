@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use blockwild_types::{CanonicalHash, CanonicalHasher};
 
-use crate::{AuthorityError, AuthorityResult, WorldAuthorityRevisionV1, WorldSectionAddressV1, validate_hash};
+use crate::{
+    AuthorityError, AuthorityResult, JS_MAX_SAFE_INTEGER_V1, WORLD_SECTION_COUNT_V1, WorldAuthorityRevisionV1,
+    WorldSectionAddressV1, validate_hash,
+};
 
 pub const WORLD_RESIDENCY_MAX_QUEUED_V1: usize = 65_536;
 pub const WORLD_RESIDENCY_MAX_ACTIVE_V1: usize = 256;
@@ -130,6 +133,16 @@ pub struct SectionResidencySchedulerV1 {
     queued: BTreeMap<u64, ResidencyRequestV1>,
     active: BTreeMap<u64, ResidencyJobTokenV1>,
     cancelled: BTreeSet<u64>,
+}
+
+/// Exact, renderer-independent state required to replace a residency
+/// scheduler without changing the world's canonical authority hash.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SectionResidencySnapshotV1 {
+    pub epoch: u64,
+    pub queued: Vec<ResidencyRequestV1>,
+    pub active: Vec<ResidencyJobTokenV1>,
+    pub cancelled: Vec<u64>,
 }
 
 impl SectionResidencySchedulerV1 {
@@ -260,6 +273,78 @@ impl SectionResidencySchedulerV1 {
     }
 
     #[must_use]
+    pub fn exact_snapshot(&self) -> SectionResidencySnapshotV1 {
+        SectionResidencySnapshotV1 {
+            epoch: self.epoch,
+            queued: self.queued.values().cloned().collect(),
+            active: self.active.values().cloned().collect(),
+            cancelled: self.cancelled.iter().copied().collect(),
+        }
+    }
+
+    /// Reconstructs all deterministic queue ordering from the authoritative
+    /// request records. Validation occurs before any scheduler is returned.
+    pub fn from_exact_snapshot(snapshot: SectionResidencySnapshotV1) -> AuthorityResult<Self> {
+        if snapshot.epoch == 0 || snapshot.epoch > JS_MAX_SAFE_INTEGER_V1 {
+            return Err(AuthorityError::new(
+                "residency-snapshot-epoch",
+                "residency snapshot epoch is outside the supported range",
+            ));
+        }
+        if snapshot.queued.len() > WORLD_RESIDENCY_MAX_QUEUED_V1
+            || snapshot.active.len() > WORLD_RESIDENCY_MAX_ACTIVE_V1
+            || snapshot.cancelled.len() > WORLD_RESIDENCY_MAX_QUEUED_V1 * 4
+        {
+            return Err(AuthorityError::new(
+                "residency-snapshot-capacity",
+                "residency snapshot exceeds bounded scheduler capacity",
+            ));
+        }
+        let mut queue = BTreeSet::new();
+        let mut queued = BTreeMap::new();
+        let mut active = BTreeMap::new();
+        for request in snapshot.queued {
+            validate_snapshot_request(&request, snapshot.epoch)?;
+            let key = QueueKey::from(&request);
+            if !queue.insert(key) || queued.insert(request.request_id, request).is_some() {
+                return Err(AuthorityError::new(
+                    "residency-snapshot-duplicate",
+                    "residency snapshot repeats a queued request",
+                ));
+            }
+        }
+        for token in snapshot.active {
+            validate_snapshot_request(&token.request, snapshot.epoch)?;
+            token.authority_revision.validate()?;
+            validate_hash(&token.source_hash, "sourceHash")?;
+            if queued.contains_key(&token.request.request_id)
+                || active.insert(token.request.request_id, token).is_some()
+            {
+                return Err(AuthorityError::new(
+                    "residency-snapshot-duplicate",
+                    "residency snapshot repeats an active request id",
+                ));
+            }
+        }
+        let mut cancelled = BTreeSet::new();
+        for request_id in snapshot.cancelled {
+            if request_id == 0 || !cancelled.insert(request_id) || queued.contains_key(&request_id) {
+                return Err(AuthorityError::new(
+                    "residency-snapshot-cancelled",
+                    "residency snapshot has an invalid cancelled request id",
+                ));
+            }
+        }
+        Ok(Self {
+            epoch: snapshot.epoch,
+            queue,
+            queued,
+            active,
+            cancelled,
+        })
+    }
+
+    #[must_use]
     pub fn queued_len(&self) -> usize {
         self.queued.len()
     }
@@ -291,6 +376,21 @@ impl SectionResidencySchedulerV1 {
         }
         hasher.finish()
     }
+}
+
+fn validate_snapshot_request(request: &ResidencyRequestV1, epoch: u64) -> AuthorityResult<()> {
+    request.address.world.validate()?;
+    if request.request_id == 0
+        || request.sequence == 0
+        || request.epoch != epoch
+        || !(0..WORLD_SECTION_COUNT_V1 as i16).contains(&request.address.section_y)
+    {
+        return Err(AuthorityError::new(
+            "residency-snapshot-request",
+            "residency snapshot contains an invalid request",
+        ));
+    }
+    Ok(())
 }
 
 fn write_request_hash(hasher: &mut CanonicalHasher, request: &ResidencyRequestV1) {
