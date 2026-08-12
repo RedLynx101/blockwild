@@ -39,6 +39,16 @@ import type {
   RustMultiplayerAuthorityPeerV1,
   RustMultiplayerAuthorityV1,
 } from "./rust-multiplayer-authority";
+import {
+  canonicalizeRustMultiplayerRuntimeBindingV1,
+  parseRustMultiplayerRuntimeDescriptorV1,
+  rustMultiplayerRuntimeDescriptorEqualsV1,
+  validateRustMultiplayerRuntimeDescriptorV1,
+  type RustMultiplayerAuthorityInterestV1,
+  type RustMultiplayerGuestAuthorityFactoryV1,
+  type RustMultiplayerRuntimeBindingV1,
+  type RustMultiplayerRuntimeDescriptorV1,
+} from "./rust-multiplayer-runtime-bootstrap";
 import type { RustIntegratedNetworkDeltaBuildRequestV1 } from "./rust-integrated-runtime-network-lifecycle";
 import { TypeScriptCanonicalHasher } from "./rust-kernel-shadow";
 
@@ -725,6 +735,8 @@ export type PeerConnectionFactory = (configuration: RTCConfiguration) => PeerCon
 
 export type MultiplayerOptions = {
   identity: PeerIdentity;
+  /** Binds WebRTC signaling to an already-selected Rust runtime session. */
+  sessionId?: string;
   rtcConfiguration?: RTCConfiguration;
   peerConnectionFactory?: PeerConnectionFactory;
   now?: () => number;
@@ -739,7 +751,11 @@ export type MultiplayerOptions = {
   /** Rust is mandatory unless a caller names the non-promotable compatibility mode. */
   authorityMode?: RustMultiplayerAuthorityModeV1;
   rustAuthority?: RustMultiplayerAuthorityV1;
-  authorityInterest?: (input: Readonly<{ sessionId: string; local: PeerIdentity; peer: PeerIdentity; role: MultiplayerRole }>) => NetworkInterestSetV1;
+  authorityInterest?: RustMultiplayerAuthorityInterestV1;
+  /** Required beside a ready authority so offers attest the exact active runtime. */
+  rustRuntimeDescriptor?: RustMultiplayerRuntimeDescriptorV1;
+  /** Guest-only path: starts and attests the offered runtime before negotiation. */
+  guestAuthorityFactory?: RustMultiplayerGuestAuthorityFactoryV1;
   authorityTimeoutMs?: number;
   authorityGrantLifetimeMs?: number;
   onEvent?: MultiplayerListener;
@@ -756,6 +772,7 @@ type OfferSignal = {
   identity: PeerIdentity;
   description: RTCSessionDescriptionInit;
   authority?: AuthoritySignalV1;
+  runtime?: RustMultiplayerRuntimeDescriptorV1;
 };
 
 type AnswerSignal = {
@@ -767,6 +784,7 @@ type AnswerSignal = {
   identity: PeerIdentity;
   description: RTCSessionDescriptionInit;
   authority?: AuthoritySignalV1;
+  runtime?: RustMultiplayerRuntimeDescriptorV1;
 };
 
 export type ManualSignal = OfferSignal | AnswerSignal;
@@ -1757,7 +1775,10 @@ export function validateManualSignal(value: unknown): value is ManualSignal {
     || !validatePeerIdentity(value.identity)
     || (value.authority !== undefined && (!isRecord(value.authority) || value.authority.schema !== 1
       || typeof value.authority.packet !== "string" || value.authority.packet.length < 1 || value.authority.packet.length > 32 * 1024
-      || !/^[A-Za-z0-9_-]+$/u.test(value.authority.packet)))) return false;
+      || !/^[A-Za-z0-9_-]+$/u.test(value.authority.packet)))
+    || (value.runtime !== undefined && !validateRustMultiplayerRuntimeDescriptorV1(value.runtime))
+    || ((value.authority === undefined) !== (value.runtime === undefined))
+    || (value.runtime !== undefined && value.runtime.runtimeSessionId !== value.sessionId)) return false;
   return validateDescription(value.description, value.kind);
 }
 
@@ -1881,8 +1902,11 @@ export class MultiplayerSession {
   private readonly connectionTimeoutMs: number;
   private readonly iceGatheringTimeoutMs: number;
   private readonly artificialLatencyMs: { min: number; max: number } | null;
-  private readonly rustAuthority: RustMultiplayerAuthorityV1 | null;
-  private readonly authorityInterest: MultiplayerOptions["authorityInterest"];
+  private rustAuthority: RustMultiplayerAuthorityV1 | null;
+  private authorityInterest: RustMultiplayerAuthorityInterestV1 | null;
+  private rustRuntimeDescriptor: RustMultiplayerRuntimeDescriptorV1 | null;
+  private readonly guestAuthorityFactory: RustMultiplayerGuestAuthorityFactoryV1 | null;
+  private readonly preboundSessionId: string | null;
   private readonly authorityTimeoutMs: number;
   private readonly authorityGrantLifetimeMs: number;
   private readonly peers = new Map<string, PeerRecord>();
@@ -1898,6 +1922,9 @@ export class MultiplayerSession {
   private readonly authorityOperations = new Set<Promise<unknown>>();
   private readonly authorityGenerations = new Map<string, number>();
   private readonly rustDeltaReassemblies = new Map<string, RustDeltaReassembly>();
+  private guestBootstrapController: AbortController | null = null;
+  private guestBootstrapGeneration = 0;
+  private ownedGuestRuntimeShutdown: (() => Promise<unknown>) | null = null;
   /** Final host responses retained briefly so reconnect/retry is exactly-once. */
   private readonly responseCache = new Map<string, {
     peerId: string;
@@ -1915,16 +1942,55 @@ export class MultiplayerSession {
     }
     this.identity = copyIdentity(options.identity);
     this.authorityMode = options.authorityMode ?? "rust-authoritative";
-    this.rustAuthority = options.rustAuthority ?? null;
-    this.authorityInterest = options.authorityInterest;
+    const requestedSessionId = options.sessionId ?? null;
+    if (requestedSessionId !== null && !isId(requestedSessionId)) {
+      throw new MultiplayerProtocolError("Prebound multiplayer session ID is invalid");
+    }
+    const hasReadyMember = options.rustAuthority !== undefined
+      || options.authorityInterest !== undefined
+      || options.rustRuntimeDescriptor !== undefined;
+    const hasReadyAuthority = options.rustAuthority !== undefined
+      && options.authorityInterest !== undefined
+      && options.rustRuntimeDescriptor !== undefined;
+    const hasGuestFactory = options.guestAuthorityFactory !== undefined;
+    this.rustAuthority = null;
+    this.authorityInterest = null;
+    this.rustRuntimeDescriptor = null;
+    this.guestAuthorityFactory = options.guestAuthorityFactory ?? null;
+    let preboundSessionId = requestedSessionId;
+    if (this.authorityMode === "rust-authoritative") {
+      if (hasReadyMember && !hasReadyAuthority) {
+        throw new MultiplayerProtocolError("A ready Rust authority requires its interest provider and runtime descriptor");
+      }
+      if (hasReadyAuthority === hasGuestFactory) {
+        throw new MultiplayerProtocolError("Rust multiplayer requires either one ready authority binding or one guest authority factory");
+      }
+      if (hasReadyAuthority) {
+        let binding: RustMultiplayerRuntimeBindingV1;
+        try {
+          binding = canonicalizeRustMultiplayerRuntimeBindingV1({
+            descriptor: options.rustRuntimeDescriptor!,
+            authority: options.rustAuthority!,
+            interest: options.authorityInterest!,
+            shutdown: async () => undefined,
+          });
+        } catch (error) {
+          throw new MultiplayerProtocolError(error instanceof Error ? error.message : "Ready Rust authority binding is invalid");
+        }
+        if (preboundSessionId && preboundSessionId !== binding.descriptor.runtimeSessionId) {
+          throw new MultiplayerProtocolError("Prebound multiplayer session does not match the Rust runtime session");
+        }
+        preboundSessionId = binding.descriptor.runtimeSessionId;
+        this.rustAuthority = binding.authority;
+        this.authorityInterest = binding.interest;
+        this.rustRuntimeDescriptor = binding.descriptor;
+      }
+    } else if (hasReadyMember || hasGuestFactory) {
+      throw new MultiplayerProtocolError("Legacy compatibility cannot run beside Rust authority configuration");
+    }
+    this.preboundSessionId = preboundSessionId;
     this.authorityTimeoutMs = options.authorityTimeoutMs ?? 10_000;
     this.authorityGrantLifetimeMs = options.authorityGrantLifetimeMs ?? 10 * 60_000;
-    if (this.authorityMode === "rust-authoritative" && (!this.rustAuthority || !this.authorityInterest)) {
-      throw new MultiplayerProtocolError("Rust multiplayer authority and an interest provider are required. Use authorityMode 'legacy-compatibility' only for the bounded compatibility path.");
-    }
-    if (this.authorityMode === "legacy-compatibility" && this.rustAuthority) {
-      throw new MultiplayerProtocolError("Legacy compatibility cannot run beside Rust authority");
-    }
     this.peerConnectionFactory = options.peerConnectionFactory ?? defaultPeerConnectionFactory;
     this.rtcConfiguration = options.rtcConfiguration ?? {
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -1975,6 +2041,79 @@ export class MultiplayerSession {
     return createNetworkInterestSetV1(this.authorityInterest({ sessionId: this.sessionId, local: this.identity, peer, role }));
   }
 
+  private checkedRuntimeBinding(expected?: RustMultiplayerRuntimeDescriptorV1) {
+    if (!this.rustAuthority || !this.authorityInterest || !this.rustRuntimeDescriptor) {
+      throw new MultiplayerProtocolError("Rust multiplayer runtime is not ready");
+    }
+    try {
+      return canonicalizeRustMultiplayerRuntimeBindingV1({
+        descriptor: this.rustRuntimeDescriptor,
+        authority: this.rustAuthority,
+        interest: this.authorityInterest,
+        shutdown: async () => undefined,
+      }, expected);
+    } catch (error) {
+      throw new MultiplayerProtocolError(error instanceof Error ? error.message : "Rust multiplayer runtime binding is invalid");
+    }
+  }
+
+  private async shutdownUnadoptedGuestRuntime(binding: RustMultiplayerRuntimeBindingV1) {
+    if (!binding || typeof binding.shutdown !== "function") return;
+    const operation = Promise.resolve().then(() => binding.shutdown());
+    this.trackAuthority(operation);
+    try { await operation; } catch { /* Preserve the cancellation or validation failure. */ }
+  }
+
+  private async acquireGuestRuntime(
+    descriptor: RustMultiplayerRuntimeDescriptorV1,
+    controller: AbortController,
+    generation: number,
+  ) {
+    if (!this.guestAuthorityFactory) return this.checkedRuntimeBinding(descriptor);
+    const factoryOperation = Promise.resolve().then(() => this.guestAuthorityFactory!({ descriptor, signal: controller.signal }));
+    this.trackAuthority(factoryOperation);
+    const created = await factoryOperation;
+    if (this.disposed || controller.signal.aborted || generation !== this.guestBootstrapGeneration) {
+      await this.shutdownUnadoptedGuestRuntime(created);
+      throw new MultiplayerOperationCancelledError("Guest runtime startup was cancelled because the session changed");
+    }
+    let binding: RustMultiplayerRuntimeBindingV1;
+    try { binding = canonicalizeRustMultiplayerRuntimeBindingV1(created, descriptor); }
+    catch (error) {
+      await this.shutdownUnadoptedGuestRuntime(created);
+      throw new MultiplayerProtocolError(error instanceof Error ? error.message : "Guest Rust runtime binding is invalid");
+    }
+    this.rustAuthority = binding.authority;
+    this.authorityInterest = binding.interest;
+    this.rustRuntimeDescriptor = binding.descriptor;
+    this.ownedGuestRuntimeShutdown = binding.shutdown;
+    return binding;
+  }
+
+  private releaseOwnedGuestRuntime() {
+    const shutdown = this.ownedGuestRuntimeShutdown;
+    if (!shutdown) return Promise.resolve();
+    this.ownedGuestRuntimeShutdown = null;
+    const authority = this.rustAuthority;
+    const pending = [...this.authorityOperations];
+    const operation = (async () => {
+      let failure: unknown = null;
+      await Promise.allSettled(pending);
+      try { await authority?.drain(); }
+      catch (error) { failure = error; }
+      try { await shutdown(); }
+      catch (error) { failure ??= error; }
+      if (this.rustAuthority === authority) {
+        this.rustAuthority = null;
+        this.authorityInterest = null;
+        this.rustRuntimeDescriptor = null;
+      }
+      if (failure) throw failure;
+    })();
+    this.trackAuthority(operation);
+    return operation;
+  }
+
   private authorityPeer(peer: PeerRecord, capabilities = peer.authorityCapabilities): RustMultiplayerAuthorityPeerV1 {
     if (!this.sessionId || !peer.identity) throw new MultiplayerProtocolError("Cannot grant an unidentified multiplayer peer");
     const peerKind = peer.identity.peerKind ?? "human";
@@ -2002,13 +2141,24 @@ export class MultiplayerSession {
     return operation;
   }
 
-  private async authorityDeadline<T>(operation: Promise<T>, label: string) {
+  private async authorityDeadline<T>(operation: Promise<T>, label: string, signal?: AbortSignal) {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let abortListener: (() => void) | null = null;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new MultiplayerProtocolError(`${label} exceeded the Rust authority deadline`)), this.authorityTimeoutMs);
     });
-    try { return await Promise.race([operation, timeout]); }
-    finally { if (timer !== null) clearTimeout(timer); }
+    const cancelled = signal ? new Promise<never>((_, reject) => {
+      abortListener = () => reject(new MultiplayerOperationCancelledError(`${label} was cancelled because the session changed`));
+      if (signal.aborted) abortListener();
+      else signal.addEventListener("abort", abortListener, { once: true });
+    }) : null;
+    const bounded = Promise.race(cancelled ? [operation, timeout, cancelled] : [operation, timeout]);
+    this.trackAuthority(bounded);
+    try { return await bounded; }
+    finally {
+      if (timer !== null) clearTimeout(timer);
+      if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+    }
   }
 
   private queuePeerAuthority(peer: PeerRecord, operation: () => Promise<void>) {
@@ -2025,7 +2175,9 @@ export class MultiplayerSession {
   }
 
   async drainAuthority() {
-    await Promise.allSettled([...this.authorityOperations]);
+    while (this.authorityOperations.size > 0) {
+      await Promise.allSettled([...this.authorityOperations]);
+    }
     if (this.rustAuthority) await this.rustAuthority.drain();
   }
 
@@ -2225,9 +2377,18 @@ export class MultiplayerSession {
   async createHostInvite() {
     this.ensureOpen();
     if (this.role === "guest") throw new MultiplayerProtocolError("A guest session cannot create host invites");
+    if (this.authorityMode === "rust-authoritative" && this.guestAuthorityFactory) {
+      throw new MultiplayerProtocolError("A guest authority factory cannot create host invites");
+    }
+    const runtime = this.authorityMode === "rust-authoritative" ? this.checkedRuntimeBinding().descriptor : null;
     if (!this.role) {
       this.role = "host";
-      this.sessionId = this.checkedId("session");
+      this.sessionId = this.preboundSessionId ?? this.checkedId("session");
+      if (runtime && runtime.runtimeSessionId !== this.sessionId) {
+        this.role = null;
+        this.sessionId = null;
+        throw new MultiplayerProtocolError("Host WebRTC session does not match its prebound Rust runtime session");
+      }
       this.setState("hosting");
     }
     const token = this.checkedId("invite");
@@ -2256,7 +2417,7 @@ export class MultiplayerSession {
             sessionId: this.sessionId!, peerId: this.identity.id,
             peerKind: this.identity.peerKind ?? "human", role: "host",
           })),
-        } } : {}),
+        }, runtime: runtime! } : {}),
       };
       this.emitPeer(peer, "invite-created");
       return { token, inviteCode: encodeInviteCode(signal) };
@@ -2272,43 +2433,73 @@ export class MultiplayerSession {
 
   async createGuestAnswer(inviteCode: string) {
     this.ensureOpen();
-    if (this.role || this.peers.size) throw new MultiplayerProtocolError("This session is already hosting or joining");
+    if (this.role || this.peers.size || this.guestBootstrapController) throw new MultiplayerProtocolError("This session is already hosting or joining");
     const signal = decodeInviteCode(inviteCode);
     if (signal.kind !== "offer") throw new MultiplayerProtocolError("Expected a host offer code");
     if (signal.identity.id === this.identity.id) throw new MultiplayerProtocolError("Cannot join your own multiplayer invite");
-    this.role = "guest";
-    this.sessionId = signal.sessionId;
-    this.setState("joining");
-    const peer = this.createPeer(signal.token, signal.identity, "connecting");
-    peer.connection.ondatachannel = (event) => {
-      const channel = event.channel as unknown as DataChannelLike;
-      if (channel.label === RELIABLE_CHANNEL_LABEL) this.bindChannel(peer, channel, "reliable");
-      else if (channel.label === MOVEMENT_CHANNEL_LABEL) this.bindChannel(peer, channel, "movement");
-      else if (channel.label === VOICE_CHANNEL_LABEL) this.bindChannel(peer, channel, "voice");
-      else channel.close();
-    };
+    let runtime: RustMultiplayerRuntimeDescriptorV1 | null = null;
+    if (this.authorityMode === "rust-authoritative") {
+      if (!signal.authority || !signal.runtime) {
+        throw new MultiplayerProtocolError("Host invite is missing its required Rust authority handshake or runtime descriptor");
+      }
+      try { runtime = parseRustMultiplayerRuntimeDescriptorV1(signal.runtime); }
+      catch (error) { throw new MultiplayerProtocolError(error instanceof Error ? error.message : "Host runtime descriptor is invalid"); }
+      if (runtime.runtimeSessionId !== signal.sessionId) throw new MultiplayerProtocolError("Host runtime and WebRTC session IDs differ");
+      if (this.preboundSessionId && this.preboundSessionId !== signal.sessionId) {
+        throw new MultiplayerProtocolError("Host offer belongs to a different prebound Rust runtime session");
+      }
+    } else if (signal.authority || signal.runtime) {
+      throw new MultiplayerProtocolError("Legacy compatibility cannot accept a Rust-authoritative offer");
+    }
+
+    const controller = new AbortController();
+    const generation = ++this.guestBootstrapGeneration;
+    this.guestBootstrapController = controller;
+    let peer: PeerRecord | null = null;
     try {
+      if (runtime) await this.acquireGuestRuntime(runtime, controller, generation);
+      if (this.disposed || controller.signal.aborted || generation !== this.guestBootstrapGeneration) {
+        throw new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed");
+      }
+      this.role = "guest";
+      this.sessionId = signal.sessionId;
+      this.setState("joining");
+      peer = this.createPeer(signal.token, signal.identity, "connecting");
+      const activePeer = peer;
+      activePeer.connection.ondatachannel = (event) => {
+        const channel = event.channel as unknown as DataChannelLike;
+        if (channel.label === RELIABLE_CHANNEL_LABEL) this.bindChannel(activePeer, channel, "reliable");
+        else if (channel.label === MOVEMENT_CHANNEL_LABEL) this.bindChannel(activePeer, channel, "movement");
+        else if (channel.label === VOICE_CHANNEL_LABEL) this.bindChannel(activePeer, channel, "voice");
+        else channel.close();
+      };
       let peerHandshake: Uint8Array | null = null;
       if (this.authorityMode === "rust-authoritative") {
-        if (!signal.authority) throw new MultiplayerProtocolError("Host invite is missing the required Rust authority handshake");
         peerHandshake = this.authority().createHandshake({
           sessionId: signal.sessionId, peerId: this.identity.id,
           peerKind: this.identity.peerKind ?? "human", role: "guest",
         });
         const negotiated = await this.authorityDeadline(
-          this.authority().negotiate(base64UrlToBytes(signal.authority.packet), peerHandshake),
+          this.authority().negotiate(base64UrlToBytes(signal.authority!.packet), peerHandshake),
           "Rust authority handshake",
+          controller.signal,
         );
-        peer.authorityCapabilities = negotiated.capabilities;
-        peer.authorityGrant = this.authorityPeer(peer, negotiated.capabilities);
-        await this.authorityDeadline(this.authority().installPeer(peer.authorityGrant), "Rust peer grant");
+        if (this.disposed || activePeer.closed || controller.signal.aborted) {
+          throw new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed");
+        }
+        activePeer.authorityCapabilities = negotiated.capabilities;
+        activePeer.authorityGrant = this.authorityPeer(activePeer, negotiated.capabilities);
+        await this.authorityDeadline(this.authority().installPeer(activePeer.authorityGrant), "Rust peer grant", controller.signal);
+        if (this.disposed || activePeer.closed || controller.signal.aborted) {
+          throw new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed");
+        }
       }
-      await peer.connection.setRemoteDescription(signal.description);
-      const answer = await peer.connection.createAnswer();
+      await activePeer.connection.setRemoteDescription(signal.description);
+      const answer = await activePeer.connection.createAnswer();
       if (!validateDescription(answer, "answer")) throw new MultiplayerProtocolError("Browser created an invalid WebRTC answer");
-      await peer.connection.setLocalDescription(answer);
-      await this.waitForIceGathering(peer.connection, () => this.disposed || peer.closed);
-      if (this.disposed || peer.closed) throw new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed");
+      await activePeer.connection.setLocalDescription(answer);
+      await this.waitForIceGathering(activePeer.connection, () => this.disposed || activePeer.closed || controller.signal.aborted);
+      if (this.disposed || activePeer.closed || controller.signal.aborted) throw new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed");
       const response: AnswerSignal = {
         version: MULTIPLAYER_PROTOCOL_VERSION,
         protocol: MULTIPLAYER_PROTOCOL_NAME,
@@ -2316,20 +2507,31 @@ export class MultiplayerSession {
         sessionId: signal.sessionId,
         token: signal.token,
         identity: copyIdentity(this.identity),
-        description: plainDescription(peer.connection.localDescription, "answer"),
-        ...(peerHandshake ? { authority: { schema: 1 as const, packet: bytesToBase64Url(peerHandshake) } } : {}),
+        description: plainDescription(activePeer.connection.localDescription, "answer"),
+        ...(peerHandshake ? {
+          authority: { schema: 1 as const, packet: bytesToBase64Url(peerHandshake) },
+          runtime: runtime!,
+        } : {}),
       };
       return { host: copyIdentity(signal.identity), answerCode: encodeInviteCode(response) };
     } catch (error) {
-      const normalized = this.disposed || peer.closed || isMultiplayerOperationCancellation(error)
+      const normalized = this.disposed || controller.signal.aborted || peer?.closed || isMultiplayerOperationCancellation(error)
         ? new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed")
         : error;
-      this.closePeer(peer, "join-failed", "failed");
+      if (peer) this.closePeer(peer, "join-failed", "failed");
+      this.role = null;
+      this.sessionId = null;
+      if (this.ownedGuestRuntimeShutdown) {
+        try { await this.releaseOwnedGuestRuntime(); }
+        catch (cleanupError) { if (!isMultiplayerOperationCancellation(normalized)) this.emitError(cleanupError, peer ?? undefined); }
+      }
       if (!isMultiplayerOperationCancellation(normalized)) {
         this.setState("error");
-        this.emitError(normalized, peer);
+        this.emitError(normalized, peer ?? undefined);
       }
       throw normalized;
+    } finally {
+      if (this.guestBootstrapController === controller) this.guestBootstrapController = null;
     }
   }
 
@@ -2339,6 +2541,20 @@ export class MultiplayerSession {
     const signal = decodeInviteCode(answerCode);
     if (signal.kind !== "answer") throw new MultiplayerProtocolError("Expected a guest answer code");
     if (signal.sessionId !== this.sessionId) throw new MultiplayerProtocolError("Answer belongs to a different session");
+    if (this.authorityMode === "rust-authoritative") {
+      if (!signal.authority || !signal.runtime) {
+        throw new MultiplayerProtocolError("Guest answer is missing its Rust authority handshake or runtime descriptor");
+      }
+      let runtime: RustMultiplayerRuntimeDescriptorV1;
+      try { runtime = parseRustMultiplayerRuntimeDescriptorV1(signal.runtime); }
+      catch (error) { throw new MultiplayerProtocolError(error instanceof Error ? error.message : "Guest runtime descriptor is invalid"); }
+      const expected = this.checkedRuntimeBinding().descriptor;
+      if (!rustMultiplayerRuntimeDescriptorEqualsV1(runtime, expected)) {
+        throw new MultiplayerProtocolError("Guest answer attests a different Rust runtime");
+      }
+    } else if (signal.authority || signal.runtime) {
+      throw new MultiplayerProtocolError("Legacy compatibility cannot accept a Rust-authoritative answer");
+    }
     const peer = this.peers.get(signal.token);
     if (!peer || peer.closed || peer.identity) throw new MultiplayerProtocolError("Answer token is unknown or already used");
     if (signal.identity.id === this.identity.id) throw new MultiplayerProtocolError("Host and guest identities must be different");
@@ -2350,13 +2566,12 @@ export class MultiplayerSession {
     peer.state = "connecting";
     try {
       if (this.authorityMode === "rust-authoritative") {
-        if (!signal.authority) throw new MultiplayerProtocolError("Guest answer is missing the required Rust authority handshake");
         const hostHandshake = this.authority().createHandshake({
           sessionId: this.sessionId, peerId: this.identity.id,
           peerKind: this.identity.peerKind ?? "human", role: "host",
         });
         const negotiated = await this.authorityDeadline(
-          this.authority().negotiate(hostHandshake, base64UrlToBytes(signal.authority.packet)),
+          this.authority().negotiate(hostHandshake, base64UrlToBytes(signal.authority!.packet)),
           "Rust authority handshake",
         );
         peer.authorityCapabilities = negotiated.capabilities;
@@ -3071,6 +3286,8 @@ export class MultiplayerSession {
     if (this.disposed) return;
     this.stopMaintenance();
     this.disposed = true;
+    this.guestBootstrapGeneration += 1;
+    this.guestBootstrapController?.abort();
     for (const peer of [...this.peers.values()]) {
       this.sendControl(peer, "goodbye", { reason: isShortString(reason, 160, true) ? reason : "session-disposed" });
       this.closePeer(peer, reason, "closed");
@@ -3081,6 +3298,9 @@ export class MultiplayerSession {
     this.nextReliableArtificialSendAt.clear();
     this.nextVoiceArtificialSendAt.clear();
     this.rustDeltaReassemblies.clear();
+    if (this.ownedGuestRuntimeShutdown) {
+      void this.releaseOwnedGuestRuntime().catch(() => undefined);
+    }
     this.listeners.clear();
   }
 }

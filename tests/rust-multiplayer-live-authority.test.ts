@@ -23,6 +23,7 @@ import type {
   RustMultiplayerInboundCommandV1,
   RustMultiplayerDeltaFrameV1,
 } from "../app/game/rust-multiplayer-authority.ts";
+import { createRustMultiplayerRuntimeDescriptorV1 } from "../app/game/rust-multiplayer-runtime-bootstrap.ts";
 import type { AgentCapabilityGrant, AgentCommandEnvelope } from "../app/game/agent-platform.ts";
 
 const HOST: PeerIdentity = { id: "player_host_001", name: "Host", color: "#44aaee" };
@@ -36,6 +37,14 @@ const INTEREST = createNetworkInterestSetV1({
   sequence: 1,
   chunks: [{ universeId: "blockwild", locationId: "world-main", chunkX: 0, chunkZ: 0 }],
   entityIds: [],
+});
+const RUNTIME = createRustMultiplayerRuntimeDescriptorV1({
+  worldSeed: "rust-live-authority-fixture",
+  universeId: WORLD_IDENTITY.address.universeId,
+  locationId: WORLD_IDENTITY.address.locationId,
+  runtimeSessionId: "session_rust_live_001",
+  generatorHash: "a".repeat(32),
+  contentHash: "b".repeat(32),
 });
 
 class FakeChannel implements DataChannelLike {
@@ -196,8 +205,10 @@ let idSequence = 0;
 function makeSession(identity: PeerIdentity, network: FakeRtcNetwork, authority: FakeAuthority, events: MultiplayerEvent[]) {
   return new MultiplayerSession({
     identity,
+    sessionId: RUNTIME.runtimeSessionId,
     rustAuthority: authority,
     authorityInterest: () => INTEREST,
+    rustRuntimeDescriptor: RUNTIME,
     peerConnectionFactory: network.factory,
     randomId: (prefix) => `${prefix}_${identity.id}_${++idSequence}`,
     autoMaintenance: false,
