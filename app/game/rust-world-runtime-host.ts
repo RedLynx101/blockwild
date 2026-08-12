@@ -260,15 +260,17 @@ export class RustWorldRuntimeHostV1 {
       const adapter = this.adapter;
       this.authority = null;
       this.adapter = null;
-      try {
-        await authority?.drain();
-        await adapter?.shutdown();
-        this.state = "stopped";
-      } catch (error) {
+      let failure: unknown = null;
+      try { await authority?.drain(); }
+      catch (error) { failure = error; }
+      try { await adapter?.shutdown(); }
+      catch (error) { failure ??= error; }
+      if (failure) {
         this.state = "failed";
-        this.lastError = error instanceof Error ? error.message : String(error);
-        throw error;
+        this.lastError = failure instanceof Error ? failure.message : String(failure);
+        throw failure;
       }
+      this.state = "stopped";
     });
   }
 

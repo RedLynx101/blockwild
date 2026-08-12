@@ -66,7 +66,7 @@ class FakeAdapter implements RustWorldRuntimeAdapterV1 {
   diagnostics() { return Object.freeze({ authoritative: this.authoritative, contentReady: this.contentReady, contentManifestHash: CONTENT }); }
 }
 
-function fakeAuthority(calls: string[]): RustMultiplayerAuthorityV1 {
+function fakeAuthority(calls: string[], drainError: Error | null = null): RustMultiplayerAuthorityV1 {
   return {
     backend: "rust-wasm-worker",
     currentIdentity: () => ({}) as ReturnType<RustMultiplayerAuthorityV1["currentIdentity"]>,
@@ -82,7 +82,7 @@ function fakeAuthority(calls: string[]): RustMultiplayerAuthorityV1 {
     reconnectCheckpoint: async () => null,
     releaseCommand: async () => undefined,
     releasePeer: async () => undefined,
-    drain: async () => { calls.push("drain"); },
+    drain: async () => { calls.push("drain"); if (drainError) throw drainError; },
   };
 }
 
@@ -133,4 +133,21 @@ test("failed content attestation shuts down the sole worker and exposes no autho
   assert.equal(host.diagnostics().state, "failed");
   assert.deepEqual(adapter.calls.slice(-1), ["shutdown"]);
   assert.throws(() => host.multiplayerAuthority(), /not ready/u);
+});
+
+test("worker shutdown is attempted even when authority draining fails", async () => {
+  const adapter = new FakeAdapter();
+  const host = new RustWorldRuntimeHostV1({
+    worldSeed: "seed", universeId: "world:test", locationId: "surface", sessionId: "session",
+    generatorHash: GENERATOR, waterBlockId: 7, directionalBlockIds: [], waterloggedBlockIds: [],
+  }, {
+    artifactHash: ARTIFACT,
+    contentFactory: bundle,
+    adapterFactory: () => adapter,
+    authorityFactory: () => fakeAuthority(adapter.calls, new Error("drain failed")),
+  });
+  await host.start();
+  await assert.rejects(() => host.shutdown(), /drain failed/u);
+  assert.deepEqual(adapter.calls.slice(-2), ["drain", "shutdown"]);
+  assert.equal(host.diagnostics().state, "failed");
 });
