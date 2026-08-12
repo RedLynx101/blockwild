@@ -43,7 +43,7 @@ use blockwild_runtime_wire::{
     WireHash, decode_bulk_request_v1, decode_request_v1, encode_bulk_response_v1, encode_response_v1,
     extraction_checksum_v1, wire_checksum_v1,
 };
-use blockwild_types::CanonicalHash;
+use blockwild_types::{CanonicalHash, CanonicalHasher};
 use wasm_bindgen::prelude::*;
 
 const WORKER_EPOCH: u32 = 1;
@@ -53,10 +53,20 @@ const ENTITY_EXTRACTION_SCHEMA_V3: u16 = 3;
 const ENTITY_EXTRACTION_HEADER_BYTES_V3: usize = 51;
 const MAX_ENTITY_EXTRACTION_RECORDS_V3: usize = 4_096;
 const MAX_ENTITY_EXTRACTION_BYTES_V3: usize = 4 * 1_048_576;
-const CAPABILITIES: [&str; 12] = [
+const DOMAIN_VIEW_SCHEMA_V1: u16 = 1;
+const DOMAIN_VIEW_MAX_RECORDS_V1: usize = 2_048;
+// Eight views plus the independently capped 4 MiB BWR6 entity stream must fit
+// the 8 MiB Worker control envelope with audio/diagnostic headroom.
+const DOMAIN_VIEW_MAX_BYTES_V1: usize = 384 * 1_024;
+const DOMAIN_VIEW_MAX_FIELDS_V1: usize = 2_048;
+const DOMAIN_VIEW_MAX_BLOCKERS_V1: usize = 32;
+const DOMAIN_VIEW_COUNT_V1: u16 = 8;
+const AUDIO_EXTRACTION_SCHEMA_V2: u16 = 2;
+const CAPABILITIES: [&str; 13] = [
     "awaited-receipts-v1",
     "bounded-entity-extraction-v1",
     "bounded-extraction-v1-pending-live-domain-views",
+    "bounded-extraction-blockers-v1",
     "bulk-platform-v1",
     "content-bundle-install-v1",
     "entity-authority-snapshot-v2",
@@ -395,7 +405,7 @@ pub fn blockwild_runtime_extract_v2(handle: u32, request_bytes: &[u8]) -> Vec<u8
             (
                 encode_render_extraction(runtime),
                 encode_hud_extraction(runtime),
-                encode_audio_extraction(),
+                encode_audio_extraction(runtime),
                 encode_platform_extraction(runtime),
                 encode_diagnostics(runtime),
             )
@@ -1457,8 +1467,13 @@ fn wire_identity(identity: &IntegratedRuntimeIdentityV2) -> RuntimeIdentityV1 {
 
 fn encode_diagnostics(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
     let revision = runtime.revision();
-    let mut output = Vec::with_capacity(4 + 9 * 8 + 16);
+    let dispatcher = runtime.persistence_dispatcher().diagnostics();
+    let persistence = runtime.persistence_authority().diagnostics();
+    let generation = runtime.generation_diagnostics();
+    let schedule = runtime.entity_schedule_diagnostics();
+    let mut output = Vec::with_capacity(256);
     output.extend_from_slice(b"BWRX");
+    output.extend_from_slice(&2_u16.to_le_bytes());
     output.extend_from_slice(&runtime.tick().to_le_bytes());
     for value in [
         revision.epoch,
@@ -1472,6 +1487,50 @@ fn encode_diagnostics(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
         output.extend_from_slice(&value.to_le_bytes());
     }
     output.extend_from_slice(runtime.state_hash().as_bytes());
+    for value in [
+        dispatcher.persistence_revision,
+        dispatcher.queued as u64,
+        dispatcher.in_flight as u64,
+        dispatcher.retryable as u64,
+        dispatcher.queued_bytes as u64,
+        dispatcher.completed_receipts as u64,
+        persistence.persistence_revision,
+        persistence.journal_sequence,
+        persistence.durable_records as u64,
+        persistence.durable_bytes,
+        persistence.dirty_records as u64,
+        persistence.dirty_bytes,
+        u64::from(persistence.transactions_since_compaction),
+        persistence.journal_bytes_since_compaction,
+        generation.submitted,
+        generation.completed,
+        generation.cache_hits,
+        generation.cache_misses,
+        generation.cancelled,
+        generation.stale,
+        generation.failed,
+        generation.generated_microseconds,
+        generation.cache_entries as u64,
+        schedule.entity_jobs_completed,
+        schedule.entity_jobs_rejected_stale,
+        schedule.ecology_jobs_completed,
+        schedule.ecology_jobs_rejected_stale,
+        schedule.path_jobs_completed,
+        schedule.path_jobs_rejected_stale,
+    ] {
+        output.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [
+        dispatcher.closed,
+        persistence.commit_in_flight,
+        persistence.tombstoned,
+        runtime.native_save_ready(),
+        runtime.is_stopped(),
+    ] {
+        output.push(u8::from(value));
+    }
+    output.extend_from_slice(dispatcher.state_hash.as_bytes());
+    output.extend_from_slice(persistence.state_hash.as_bytes());
     output
 }
 
@@ -1629,46 +1688,967 @@ fn encode_render_entity_record(runtime: &IntegratedRuntimeV2, source: &RenderEnt
     output
 }
 
+#[derive(Clone, Debug)]
+enum DomainViewValueV1 {
+    Bool(bool),
+    U64(u64),
+    I64(i64),
+    F64(f64),
+    String(String),
+    Hash(CanonicalHash),
+    Bytes(Vec<u8>),
+}
+
+#[derive(Clone, Debug)]
+struct DomainViewRowV1 {
+    kind: u16,
+    key: String,
+    revision: u64,
+    fields: BTreeMap<String, DomainViewValueV1>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum DomainViewStatusV1 {
+    Complete = 0,
+    Partial = 1,
+    Absent = 2,
+}
+
+#[derive(Clone, Debug)]
+struct DomainViewV1 {
+    domain: u8,
+    revision: u64,
+    status: DomainViewStatusV1,
+    rows: Vec<DomainViewRowV1>,
+    blockers: Vec<String>,
+}
+
+fn domain_row(kind: u16, key: impl Into<String>, revision: u64) -> DomainViewRowV1 {
+    DomainViewRowV1 {
+        kind,
+        key: key.into(),
+        revision,
+        fields: BTreeMap::new(),
+    }
+}
+
+fn domain_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: DomainViewValueV1) {
+    let previous = row.fields.insert(key.into(), value);
+    assert!(previous.is_none(), "domain extraction fields are canonical and unique");
+}
+
+fn bool_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: bool) {
+    domain_field(row, key, DomainViewValueV1::Bool(value));
+}
+
+fn u64_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: u64) {
+    domain_field(row, key, DomainViewValueV1::U64(value));
+}
+
+fn i64_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: i64) {
+    domain_field(row, key, DomainViewValueV1::I64(value));
+}
+
+fn f64_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: f64) {
+    domain_field(row, key, DomainViewValueV1::F64(value));
+}
+
+fn string_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: impl Into<String>) {
+    domain_field(row, key, DomainViewValueV1::String(value.into()));
+}
+
+fn hash_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: CanonicalHash) {
+    domain_field(row, key, DomainViewValueV1::Hash(value));
+}
+
+fn bytes_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: &[u8]) {
+    domain_field(row, key, DomainViewValueV1::Bytes(value.to_vec()));
+}
+
+fn option_string_field(row: &mut DomainViewRowV1, key: impl Into<String>, value: Option<&str>) {
+    let key = key.into();
+    bool_field(row, format!("{key}.present"), value.is_some());
+    if let Some(value) = value {
+        string_field(row, format!("{key}.value"), value);
+    }
+}
+
+fn encode_domain_value(output: &mut Vec<u8>, value: &DomainViewValueV1) {
+    match value {
+        DomainViewValueV1::Bool(value) => {
+            output.push(0);
+            output.push(u8::from(*value));
+        }
+        DomainViewValueV1::U64(value) => {
+            output.push(1);
+            output.extend_from_slice(&value.to_le_bytes());
+        }
+        DomainViewValueV1::I64(value) => {
+            output.push(2);
+            output.extend_from_slice(&value.to_le_bytes());
+        }
+        DomainViewValueV1::F64(value) => {
+            output.push(3);
+            output.extend_from_slice(&value.to_le_bytes());
+        }
+        DomainViewValueV1::String(value) => {
+            output.push(4);
+            write_extraction_string(output, value);
+        }
+        DomainViewValueV1::Hash(value) => {
+            output.push(5);
+            output.extend_from_slice(value.as_bytes());
+        }
+        DomainViewValueV1::Bytes(value) => {
+            output.push(6);
+            write_extraction_bytes(output, value);
+        }
+    }
+}
+
+fn encode_domain_row(row: &DomainViewRowV1) -> Option<Vec<u8>> {
+    if row.fields.len() > DOMAIN_VIEW_MAX_FIELDS_V1 {
+        return None;
+    }
+    let mut output = Vec::with_capacity(64 + row.fields.len().saturating_mul(32));
+    output.extend_from_slice(&row.kind.to_le_bytes());
+    write_extraction_string(&mut output, &row.key);
+    output.extend_from_slice(&row.revision.to_le_bytes());
+    output.extend_from_slice(&(row.fields.len() as u16).to_le_bytes());
+    for (key, value) in &row.fields {
+        write_extraction_string(&mut output, key);
+        encode_domain_value(&mut output, value);
+    }
+    (output.len() <= DOMAIN_VIEW_MAX_BYTES_V1).then_some(output)
+}
+
+fn encode_domain_view(mut view: DomainViewV1) -> Vec<u8> {
+    view.rows
+        .sort_by(|left, right| (left.kind, &left.key).cmp(&(right.kind, &right.key)));
+    view.blockers.sort();
+    view.blockers.dedup();
+    assert!(view.blockers.len() <= DOMAIN_VIEW_MAX_BLOCKERS_V1);
+    let total = view.rows.len();
+    let mut payload = Vec::new();
+    let mut selected = 0_usize;
+    for row in &view.rows {
+        if selected >= DOMAIN_VIEW_MAX_RECORDS_V1 {
+            break;
+        }
+        let Some(encoded) = encode_domain_row(row) else { break };
+        if payload.len().saturating_add(encoded.len()) > DOMAIN_VIEW_MAX_BYTES_V1 {
+            break;
+        }
+        payload.extend_from_slice(&encoded);
+        selected += 1;
+    }
+    let omitted = total.saturating_sub(selected);
+    if omitted > 0 {
+        view.status = DomainViewStatusV1::Partial;
+        view.blockers.push("records-truncated-at-bounded-cursor".into());
+        view.blockers.sort();
+        view.blockers.dedup();
+    }
+    let mut hasher = CanonicalHasher::new("blockwild.r10.domain-view-payload.v1");
+    hasher.write_bytes(&payload);
+    let payload_hash = hasher.finish();
+    let mut output = Vec::with_capacity(64 + payload.len());
+    output.push(view.domain);
+    output.extend_from_slice(&DOMAIN_VIEW_SCHEMA_V1.to_le_bytes());
+    output.push(view.status as u8);
+    output.extend_from_slice(&view.revision.to_le_bytes());
+    output.extend_from_slice(&(total as u32).to_le_bytes());
+    output.extend_from_slice(&(selected as u32).to_le_bytes());
+    output.extend_from_slice(&(omitted as u32).to_le_bytes());
+    output.extend_from_slice(&(selected as u32).to_le_bytes());
+    output.extend_from_slice(&(view.blockers.len() as u16).to_le_bytes());
+    for blocker in &view.blockers {
+        write_extraction_string(&mut output, blocker);
+    }
+    output.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    output.extend_from_slice(payload_hash.as_bytes());
+    output.extend_from_slice(&payload);
+    output
+}
+
+macro_rules! container_view_key {
+    ($container:expr) => {
+        format!(
+            "{}:{}:{}",
+            $container.kind as u16,
+            $container.owner_id.as_deref().unwrap_or(""),
+            $container.id
+        )
+    };
+}
+
+macro_rules! printing_view_key {
+    ($printing:expr) => {
+        format!("{}:{}:{}", $printing.card_id, $printing.variant_id, $printing.finish_id)
+    };
+}
+
+fn runtime_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let identity = runtime.identity();
+    let config = runtime.config();
+    let mut row = domain_row(1, "runtime", identity.revision.epoch);
+    string_field(&mut row, "universeId", &identity.universe_id);
+    string_field(&mut row, "locationId", &identity.location_id);
+    string_field(&mut row, "sessionId", &config.session_id);
+    string_field(&mut row, "worldSeed", &config.world_seed);
+    u64_field(&mut row, "tick", identity.tick);
+    hash_field(&mut row, "stateHash", identity.state_hash);
+    hash_field(&mut row, "contentHash", config.content_hash);
+    hash_field(&mut row, "generatorHash", config.generator_hash);
+    bool_field(&mut row, "contentReady", runtime.content_ready());
+    for (key, value) in [
+        ("revision.epoch", identity.revision.epoch),
+        ("revision.world", identity.revision.world),
+        ("revision.entities", identity.revision.entities),
+        ("revision.gameplay", identity.revision.gameplay),
+        ("revision.persistence", identity.revision.persistence),
+        ("revision.network", identity.revision.network),
+        ("revision.simulation", identity.revision.simulation),
+    ] {
+        u64_field(&mut row, key, value);
+    }
+    let content = runtime.content_attestation();
+    bool_field(&mut row, "contentAttestation.present", content.is_some());
+    if let Some(content) = content {
+        string_field(&mut row, "contentAttestation.installId", &content.install_id);
+        string_field(&mut row, "contentAttestation.sourceRevision", &content.source_revision);
+        u64_field(
+            &mut row,
+            "contentAttestation.entries",
+            u64::from(content.installed_entries),
+        );
+        u64_field(&mut row, "contentAttestation.bytes", content.installed_bytes);
+    }
+    DomainViewV1 {
+        domain: 1,
+        revision: identity.revision.epoch,
+        status: DomainViewStatusV1::Complete,
+        rows: vec![row],
+        blockers: Vec::new(),
+    }
+}
+
+fn player_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let mut rows = Vec::new();
+    if let Some(player) = runtime.player() {
+        let body = &player.body;
+        let mut row = domain_row(1, &player.binding.external_entity_id, player.last_input_sequence);
+        u64_field(&mut row, "entityId", player.entity_id.packed());
+        for (key, value) in [
+            ("position.x", body.position.x),
+            ("position.y", body.position.y),
+            ("position.z", body.position.z),
+            ("velocity.x", body.velocity.x),
+            ("velocity.y", body.velocity.y),
+            ("velocity.z", body.velocity.z),
+            ("radius", body.radius),
+            ("height", body.height),
+            ("mass", body.mass),
+            ("fallDistance", body.fall_distance),
+            ("oxygenSeconds", body.oxygen_seconds),
+            ("drowningAccumulator", body.drowning_accumulator),
+            ("swimEntryMomentumSpeed", body.swim_entry_momentum_speed),
+            ("swimSurfaceBreachSeconds", body.swim_surface_breach_seconds),
+            ("swimStrokeCooldownSeconds", body.swim_stroke_cooldown_seconds),
+            ("maximumOxygenSeconds", player.binding.maximum_oxygen_seconds),
+        ] {
+            f64_field(&mut row, key, value);
+        }
+        for (key, value) in [
+            ("grounded", body.grounded),
+            ("crouching", body.crouching),
+            ("swimSurfaceBreachReady", body.swim_surface_breach_ready),
+            ("swimSurfaceBobActive", body.swim_surface_bob_active),
+        ] {
+            bool_field(&mut row, key, value);
+        }
+        u64_field(&mut row, "contactFlags", u64::from(player.contact_flags));
+        u64_field(&mut row, "selectedSlot", u64::from(player.selected_slot));
+        i64_field(&mut row, "lookPitch", i64::from(player.look_pitch));
+        u64_field(&mut row, "buttons", u64::from(player.buttons));
+        u64_field(&mut row, "flags", u64::from(player.flags));
+        u64_field(&mut row, "lastInputSequence", player.last_input_sequence);
+        if let Some(input) = runtime.last_applied_input() {
+            u64_field(&mut row, "input.targetTick", input.target_tick);
+            i64_field(&mut row, "input.moveX", i64::from(input.move_x));
+            i64_field(&mut row, "input.moveZ", i64::from(input.move_z));
+            i64_field(&mut row, "input.lookYaw", i64::from(input.look_yaw));
+            i64_field(&mut row, "input.lookPitch", i64::from(input.look_pitch));
+        }
+        rows.push(row);
+    }
+    DomainViewV1 {
+        domain: 2,
+        revision: runtime.revision().simulation,
+        status: DomainViewStatusV1::Partial,
+        rows,
+        blockers: vec![
+            "camera-projection-and-orientation-not-authoritative".into(),
+            "player-inventory-container-binding-not-explicit".into(),
+        ],
+    }
+}
+
+fn inventory_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let state = &runtime.gameplay().state.inventory;
+    let mut rows = Vec::new();
+    for (code, item) in &state.items {
+        let mut row = domain_row(1, format!("item:{code}"), 0);
+        u64_field(&mut row, "code", u64::from(*code));
+        string_field(&mut row, "contentId", &item.content_id);
+        u64_field(&mut row, "maxStack", u64::from(item.max_stack));
+        for (index, tag) in item.tags.iter().enumerate() {
+            string_field(&mut row, format!("tag.{index:04}"), tag);
+        }
+        rows.push(row);
+    }
+    for (key, container) in &state.containers {
+        let stable = container_view_key!(key);
+        let mut header = domain_row(2, format!("container:{stable}"), container.revision);
+        u64_field(&mut header, "kind", key.kind as u64);
+        string_field(&mut header, "id", &key.id);
+        option_string_field(&mut header, "ownerId", key.owner_id.as_deref());
+        u64_field(&mut header, "slotCount", container.slots.len() as u64);
+        rows.push(header);
+        for (index, stack) in container.slots.iter().enumerate() {
+            let mut slot = domain_row(3, format!("slot:{stable}:{index:05}"), container.revision);
+            u64_field(&mut slot, "index", index as u64);
+            option_string_field(&mut slot, "equipmentTag", container.equipment_tags[index].as_deref());
+            bool_field(&mut slot, "occupied", stack.is_some());
+            if let Some(stack) = stack {
+                u64_field(&mut slot, "itemCode", u64::from(stack.item_code));
+                u64_field(&mut slot, "count", u64::from(stack.count));
+                bool_field(&mut slot, "durability.present", stack.durability_millionths.is_some());
+                if let Some(value) = stack.durability_millionths {
+                    u64_field(&mut slot, "durability.value", u64::from(value));
+                }
+                hash_field(&mut slot, "metadataHash", stack.metadata_hash);
+            }
+            rows.push(slot);
+        }
+    }
+    for (recipe_id, recipe) in &state.recipes {
+        let mut row = domain_row(4, format!("recipe:{recipe_id}"), 0);
+        option_string_field(&mut row, "stationTag", recipe.station_tag.as_deref());
+        u64_field(&mut row, "ticks", u64::from(recipe.ticks));
+        for (index, ingredient) in recipe.inputs.iter().enumerate() {
+            u64_field(
+                &mut row,
+                format!("input.{index:04}.itemCode"),
+                u64::from(ingredient.item_code),
+            );
+            u64_field(&mut row, format!("input.{index:04}.count"), u64::from(ingredient.count));
+            bool_field(
+                &mut row,
+                format!("input.{index:04}.metadata.present"),
+                ingredient.metadata_hash.is_some(),
+            );
+            if let Some(hash) = ingredient.metadata_hash {
+                hash_field(&mut row, format!("input.{index:04}.metadata.value"), hash);
+            }
+        }
+        for (index, stack) in recipe.outputs.iter().enumerate() {
+            u64_field(
+                &mut row,
+                format!("output.{index:04}.itemCode"),
+                u64::from(stack.item_code),
+            );
+            u64_field(&mut row, format!("output.{index:04}.count"), u64::from(stack.count));
+            hash_field(&mut row, format!("output.{index:04}.metadataHash"), stack.metadata_hash);
+        }
+        rows.push(row);
+    }
+    for (furnace_id, furnace) in &state.furnaces {
+        let mut row = domain_row(5, format!("furnace:{furnace_id}"), furnace.revision);
+        string_field(&mut row, "recipeId", &furnace.recipe_id);
+        string_field(&mut row, "source", container_view_key!(&furnace.source));
+        string_field(&mut row, "destination", container_view_key!(&furnace.destination));
+        u64_field(&mut row, "progressTicks", furnace.progress_ticks);
+        u64_field(&mut row, "fuelTicks", furnace.fuel_ticks);
+        u64_field(&mut row, "lastTick", furnace.last_tick);
+        bool_field(&mut row, "active", furnace.active);
+        rows.push(row);
+    }
+    DomainViewV1 {
+        domain: 3,
+        revision: runtime.gameplay().state.revision.inventory,
+        status: DomainViewStatusV1::Partial,
+        rows,
+        blockers: vec!["dropped-item-spatial-state-not-authoritative".into()],
+    }
+}
+
+macro_rules! resource_fields {
+    ($row:expr, $prefix:expr, $resource:expr, $amount:expr) => {{
+        let prefix = $prefix;
+        let resource = $resource;
+        u64_field($row, format!("{prefix}.kind"), resource.kind as u64);
+        string_field($row, format!("{prefix}.contentId"), &resource.content_id);
+        bool_field($row, format!("{prefix}.itemCode.present"), resource.item_code.is_some());
+        if let Some(code) = resource.item_code {
+            u64_field($row, format!("{prefix}.itemCode.value"), u64::from(code));
+        }
+        hash_field($row, format!("{prefix}.metadataHash"), resource.metadata_hash);
+        u64_field($row, format!("{prefix}.amount"), $amount);
+    }};
+}
+
+fn machine_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let state = &runtime.gameplay().state.machines;
+    let mut rows = Vec::new();
+    for (machine_id, machine) in &state.machines {
+        let mut row = domain_row(1, format!("machine:{machine_id}"), machine.revision);
+        option_string_field(&mut row, "ownerId", machine.owner_id.as_deref());
+        u64_field(&mut row, "kind", machine.kind as u64);
+        bool_field(&mut row, "active", machine.active);
+        option_string_field(&mut row, "recipeId", machine.recipe_id.as_deref());
+        u64_field(&mut row, "progressTicks", machine.progress_ticks);
+        u64_field(&mut row, "lastTick", machine.last_tick);
+        bool_field(&mut row, "lease.present", machine.lease.is_some());
+        if let Some(lease) = &machine.lease {
+            string_field(&mut row, "lease.id", &lease.lease_id);
+            string_field(&mut row, "lease.ownerId", &lease.owner_id);
+            u64_field(&mut row, "lease.startTick", lease.start_tick);
+            u64_field(&mut row, "lease.endTick", lease.end_tick);
+            u64_field(&mut row, "lease.maxCycles", u64::from(lease.max_cycles));
+        }
+        bool_field(&mut row, "settings.present", machine.settings.is_some());
+        if let Some(settings) = &machine.settings {
+            string_field(&mut row, "settings.typeId", &settings.type_id);
+            u64_field(&mut row, "settings.schema", u64::from(settings.schema));
+            bytes_field(&mut row, "settings.bytes", &settings.bytes);
+        }
+        rows.push(row);
+        for (port_id, port) in &machine.ports {
+            let mut port_row = domain_row(2, format!("port:{machine_id}:{port_id}"), machine.revision);
+            u64_field(&mut port_row, "mode", port.mode as u64);
+            u64_field(&mut port_row, "capacity", port.capacity);
+            u64_field(&mut port_row, "amount", port.amount());
+            for (index, kind) in port.accepted.iter().enumerate() {
+                u64_field(&mut port_row, format!("accepted.{index:03}"), *kind as u64);
+            }
+            for (index, (resource, amount)) in port.resources.iter().enumerate() {
+                resource_fields!(&mut port_row, &format!("resource.{index:04}"), resource, *amount);
+            }
+            rows.push(port_row);
+        }
+    }
+    for (recipe_id, recipe) in &state.recipes {
+        let mut row = domain_row(3, format!("machine-recipe:{recipe_id}"), 0);
+        u64_field(&mut row, "durationTicks", u64::from(recipe.duration_ticks));
+        for (index, (resource, amount)) in recipe.inputs.iter().enumerate() {
+            resource_fields!(&mut row, &format!("input.{index:04}"), resource, *amount);
+        }
+        for (index, (resource, amount)) in recipe.outputs.iter().enumerate() {
+            resource_fields!(&mut row, &format!("output.{index:04}"), resource, *amount);
+        }
+        rows.push(row);
+    }
+    for (network_id, network) in &state.power_networks {
+        let mut row = domain_row(4, format!("power:{network_id}"), network.revision);
+        u64_field(&mut row, "stored", network.stored);
+        u64_field(&mut row, "capacity", network.capacity);
+        for (index, member) in network.members.iter().enumerate() {
+            string_field(&mut row, format!("member.{index:04}"), member);
+        }
+        rows.push(row);
+    }
+    DomainViewV1 {
+        domain: 4,
+        revision: runtime.gameplay().state.revision.machines,
+        status: DomainViewStatusV1::Partial,
+        rows,
+        blockers: vec![
+            "machine-spatial-anchors-not-authoritative".into(),
+            "machine-light-profiles-not-authoritative".into(),
+            "world-prop-presentation-not-authoritative".into(),
+        ],
+    }
+}
+
+fn combat_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let state = &runtime.gameplay().state.combat;
+    let mut rows = Vec::new();
+    for (record_id, combatant) in &state.combatants {
+        let mut row = domain_row(1, format!("combatant:{record_id}"), combatant.revision);
+        option_string_field(&mut row, "ownerId", combatant.owner_id.as_deref());
+        for (key, value) in [
+            ("position.xMilli", combatant.position.x_milli),
+            ("position.yMilli", combatant.position.y_milli),
+            ("position.zMilli", combatant.position.z_milli),
+        ] {
+            i64_field(&mut row, key, i64::from(value));
+        }
+        for (key, value) in [
+            ("health", combatant.health),
+            ("maxHealth", combatant.max_health),
+            ("stamina", combatant.stamina),
+            ("mana", combatant.mana),
+            ("armor", combatant.armor),
+        ] {
+            u64_field(&mut row, key, u64::from(value));
+        }
+        bool_field(&mut row, "alive", combatant.alive);
+        for (kind, resistance) in &combatant.resist_per_mille {
+            u64_field(
+                &mut row,
+                format!("resistance.{:02}", *kind as u8),
+                u64::from(*resistance),
+            );
+        }
+        for (status_id, status) in &combatant.statuses {
+            string_field(&mut row, format!("status.{status_id}.sourceId"), &status.source_id);
+            i64_field(
+                &mut row,
+                format!("status.{status_id}.magnitude"),
+                i64::from(status.magnitude),
+            );
+            u64_field(&mut row, format!("status.{status_id}.expiresTick"), status.expires_tick);
+            u64_field(&mut row, format!("status.{status_id}.stacks"), u64::from(status.stacks));
+        }
+        for (ability, tick) in &combatant.cooldown_until {
+            u64_field(&mut row, format!("cooldown.{ability}"), *tick);
+        }
+        rows.push(row);
+    }
+    for (ability_id, ability) in &state.abilities {
+        let mut row = domain_row(2, format!("ability:{ability_id}"), 0);
+        u64_field(&mut row, "damageKind", ability.damage_kind as u64);
+        u64_field(&mut row, "baseDamage", u64::from(ability.base_damage));
+        u64_field(&mut row, "rangeMilli", u64::from(ability.range_milli));
+        u64_field(&mut row, "cooldownTicks", u64::from(ability.cooldown_ticks));
+        u64_field(&mut row, "staminaCost", u64::from(ability.stamina_cost));
+        u64_field(&mut row, "manaCost", u64::from(ability.mana_cost));
+        bool_field(
+            &mut row,
+            "projectileSpeed.present",
+            ability.projectile_speed_milli.is_some(),
+        );
+        if let Some(value) = ability.projectile_speed_milli {
+            u64_field(&mut row, "projectileSpeed.value", u64::from(value));
+        }
+        rows.push(row);
+    }
+    for (projectile_id, projectile) in &state.projectiles {
+        let mut row = domain_row(3, format!("projectile:{projectile_id}"), projectile.revision);
+        string_field(&mut row, "sourceId", &projectile.source_id);
+        option_string_field(&mut row, "targetId", projectile.target_id.as_deref());
+        string_field(&mut row, "abilityId", &projectile.ability_id);
+        for (key, value) in [
+            ("position.xMilli", projectile.position.x_milli),
+            ("position.yMilli", projectile.position.y_milli),
+            ("position.zMilli", projectile.position.z_milli),
+            ("velocity.xMilli", projectile.velocity.x_milli),
+            ("velocity.yMilli", projectile.velocity.y_milli),
+            ("velocity.zMilli", projectile.velocity.z_milli),
+        ] {
+            i64_field(&mut row, key, i64::from(value));
+        }
+        u64_field(&mut row, "spawnedTick", projectile.spawned_tick);
+        u64_field(&mut row, "expiresTick", projectile.expires_tick);
+        rows.push(row);
+    }
+    for (record_id, creature) in &state.creatures {
+        let mut row = domain_row(4, format!("creature:{record_id}"), creature.revision);
+        string_field(&mut row, "contentId", &creature.creature_content_id);
+        string_field(&mut row, "variantId", &creature.variant_id);
+        u64_field(&mut row, "disposition", creature.disposition as u64);
+        u64_field(&mut row, "readiness", creature.readiness as u64);
+        option_string_field(&mut row, "capturedBy", creature.captured_by.as_deref());
+        option_string_field(&mut row, "ownerId", creature.owner_id.as_deref());
+        u64_field(&mut row, "bond", u64::from(creature.bond));
+        u64_field(&mut row, "care", u64::from(creature.care));
+        u64_field(&mut row, "pacificationScore", u64::from(creature.pacification_score));
+        u64_field(&mut row, "lastAggressionTick", creature.last_aggression_tick);
+        for (index, equipment) in creature.equipment_ids.iter().enumerate() {
+            string_field(&mut row, format!("equipment.{index:04}"), equipment);
+        }
+        for (index, flag) in creature.research_flags.iter().enumerate() {
+            string_field(&mut row, format!("research.{index:04}"), flag);
+        }
+        rows.push(row);
+    }
+    for (summon_id, summon) in &state.summons {
+        let mut row = domain_row(5, format!("summon:{summon_id}"), summon.revision);
+        string_field(&mut row, "contentId", &summon.content_id);
+        string_field(&mut row, "ownerId", &summon.owner_id);
+        u64_field(&mut row, "spawnedTick", summon.spawned_tick);
+        bool_field(&mut row, "expiresTick.present", summon.expires_tick.is_some());
+        if let Some(value) = summon.expires_tick {
+            u64_field(&mut row, "expiresTick.value", value);
+        }
+        bool_field(&mut row, "grounded", summon.grounded);
+        rows.push(row);
+    }
+    DomainViewV1 {
+        domain: 5,
+        revision: runtime.gameplay().state.revision.combat,
+        status: DomainViewStatusV1::Partial,
+        rows,
+        blockers: vec!["combat-projectile-and-summon-render-presentation-not-authoritative".into()],
+    }
+}
+
+fn progression_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let state = &runtime.gameplay().state.progression;
+    let mut rows = Vec::new();
+    for (player_id, player) in &state.players {
+        let mut row = domain_row(1, format!("player:{player_id}"), player.revision);
+        u64_field(&mut row, "level", u64::from(player.level));
+        u64_field(&mut row, "perkPoints", u64::from(player.perk_points));
+        u64_field(&mut row, "fastTravelCharges", u64::from(player.fast_travel_charges));
+        for (skill_id, skill) in &player.skills {
+            u64_field(&mut row, format!("skill.{skill_id}.rank"), u64::from(skill.rank));
+            u64_field(&mut row, format!("skill.{skill_id}.xp"), skill.xp);
+        }
+        for (index, perk) in player.unlocked_perks.iter().enumerate() {
+            string_field(&mut row, format!("perk.{index:04}"), perk);
+        }
+        for (index, flag) in player.research_flags.iter().enumerate() {
+            string_field(&mut row, format!("research.{index:04}"), flag);
+        }
+        rows.push(row);
+    }
+    for (perk_id, perk) in &state.perks {
+        let mut row = domain_row(2, format!("perk:{perk_id}"), 0);
+        string_field(&mut row, "skillId", &perk.skill_id);
+        u64_field(&mut row, "requiredRank", u64::from(perk.required_rank));
+        u64_field(&mut row, "cost", u64::from(perk.cost));
+        for (index, prerequisite) in perk.prerequisites.iter().enumerate() {
+            string_field(&mut row, format!("prerequisite.{index:04}"), prerequisite);
+        }
+        rows.push(row);
+    }
+    for (record_id, quest) in &state.quests {
+        let mut row = domain_row(3, format!("quest:{record_id}"), quest.revision);
+        string_field(&mut row, "ownerId", &quest.owner_id);
+        string_field(&mut row, "questId", &quest.quest_id);
+        u64_field(&mut row, "stage", u64::from(quest.stage));
+        bool_field(&mut row, "completed", quest.completed);
+        for (index, choice) in quest.choices.iter().enumerate() {
+            string_field(&mut row, format!("choice.{index:04}"), choice);
+        }
+        for (index, flag) in quest.flags.iter().enumerate() {
+            string_field(&mut row, format!("flag.{index:04}"), flag);
+        }
+        rows.push(row);
+    }
+    for (record_id, alignment) in &state.factions {
+        let family = "faction";
+        let mut row = domain_row(4, format!("{family}:{record_id}"), alignment.revision);
+        string_field(&mut row, "family", family);
+        string_field(&mut row, "ownerId", &alignment.owner_id);
+        string_field(&mut row, "contentId", &alignment.content_id);
+        i64_field(&mut row, "standing", i64::from(alignment.standing));
+        u64_field(&mut row, "rank", u64::from(alignment.rank));
+        for (index, flag) in alignment.flags.iter().enumerate() {
+            string_field(&mut row, format!("flag.{index:04}"), flag);
+        }
+        rows.push(row);
+    }
+    for (record_id, alignment) in &state.guilds {
+        let family = "guild";
+        let mut row = domain_row(4, format!("{family}:{record_id}"), alignment.revision);
+        string_field(&mut row, "family", family);
+        string_field(&mut row, "ownerId", &alignment.owner_id);
+        string_field(&mut row, "contentId", &alignment.content_id);
+        i64_field(&mut row, "standing", i64::from(alignment.standing));
+        u64_field(&mut row, "rank", u64::from(alignment.rank));
+        for (index, flag) in alignment.flags.iter().enumerate() {
+            string_field(&mut row, format!("flag.{index:04}"), flag);
+        }
+        rows.push(row);
+    }
+    for (owner_id, wallet) in &state.wallets {
+        let mut row = domain_row(5, format!("wallet:{owner_id}"), wallet.revision);
+        for (currency, balance) in &wallet.balances {
+            u64_field(&mut row, format!("balance.{currency}"), *balance);
+        }
+        rows.push(row);
+    }
+    for (listing_id, listing) in &state.listings {
+        let mut row = domain_row(6, format!("listing:{listing_id}"), listing.revision);
+        string_field(&mut row, "sellerId", &listing.seller_id);
+        string_field(&mut row, "contentId", &listing.content_id);
+        string_field(&mut row, "currencyId", &listing.currency_id);
+        u64_field(&mut row, "unitPrice", listing.unit_price);
+        u64_field(&mut row, "available", u64::from(listing.available));
+        rows.push(row);
+    }
+    for (settlement_id, settlement) in &state.settlements {
+        let mut row = domain_row(7, format!("settlement:{settlement_id}"), settlement.revision);
+        string_field(&mut row, "factionId", &settlement.faction_id);
+        u64_field(&mut row, "prosperity", u64::from(settlement.prosperity));
+        u64_field(&mut row, "safety", u64::from(settlement.safety));
+        u64_field(&mut row, "population", u64::from(settlement.population));
+        for (index, upgrade) in settlement.upgrades.iter().enumerate() {
+            string_field(&mut row, format!("upgrade.{index:04}"), upgrade);
+        }
+        rows.push(row);
+    }
+    for (dragon_id, dragon) in &state.dragons {
+        let mut row = domain_row(8, format!("dragon:{dragon_id}"), dragon.revision);
+        string_field(&mut row, "ownerId", &dragon.owner_id);
+        string_field(&mut row, "speciesId", &dragon.species_id);
+        string_field(&mut row, "variantId", &dragon.variant_id);
+        u64_field(&mut row, "level", u64::from(dragon.level));
+        u64_field(&mut row, "xp", dragon.xp);
+        u64_field(&mut row, "bond", u64::from(dragon.bond));
+        for (index, movement) in dragon.unlocked_moves.iter().enumerate() {
+            string_field(&mut row, format!("move.{index:04}"), movement);
+        }
+        for (index, equipment) in dragon.equipment_ids.iter().enumerate() {
+            string_field(&mut row, format!("equipment.{index:04}"), equipment);
+        }
+        rows.push(row);
+    }
+    for (encounter_id, encounter) in &state.legendary {
+        let mut row = domain_row(9, format!("legendary:{encounter_id}"), encounter.revision);
+        string_field(&mut row, "creatureId", &encounter.creature_id);
+        u64_field(&mut row, "phase", u64::from(encounter.phase));
+        bool_field(&mut row, "resolved", encounter.resolved);
+        for (index, player) in encounter.eligible_players.iter().enumerate() {
+            string_field(&mut row, format!("eligible.{index:04}"), player);
+        }
+        for (index, flag) in encounter.flags.iter().enumerate() {
+            string_field(&mut row, format!("flag.{index:04}"), flag);
+        }
+        rows.push(row);
+    }
+    for (owner_id, history) in &state.dialogue_history {
+        let mut row = domain_row(10, format!("dialogue:{owner_id}"), history.len() as u64);
+        for (index, choice) in history.iter().enumerate() {
+            string_field(&mut row, format!("choice.{index:04}"), choice);
+        }
+        rows.push(row);
+    }
+    DomainViewV1 {
+        domain: 6,
+        revision: runtime.gameplay().state.revision.progression,
+        status: DomainViewStatusV1::Complete,
+        rows,
+        blockers: Vec::new(),
+    }
+}
+
+fn cardforge_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let state = &runtime.gameplay().state.cardforge;
+    let mut rows = Vec::new();
+    for (printing, card) in &state.cards {
+        let stable = printing_view_key!(printing);
+        let mut row = domain_row(1, format!("card:{stable}"), 0);
+        u64_field(&mut row, "rarity", card.rarity as u64);
+        u64_field(&mut row, "deckCost", u64::from(card.deck_cost));
+        u64_field(&mut row, "power", u64::from(card.power));
+        u64_field(&mut row, "health", u64::from(card.health));
+        for (index, class_id) in card.class_ids.iter().enumerate() {
+            string_field(&mut row, format!("class.{index:04}"), class_id);
+        }
+        for (index, type_id) in card.type_ids.iter().enumerate() {
+            string_field(&mut row, format!("type.{index:04}"), type_id);
+        }
+        if let Some(rules) = &card.rules {
+            string_field(&mut row, "rules.typeId", &rules.type_id);
+            u64_field(&mut row, "rules.schema", u64::from(rules.schema));
+            bytes_field(&mut row, "rules.bytes", &rules.bytes);
+        }
+        rows.push(row);
+    }
+    for (pack_id, pack) in &state.packs {
+        let mut row = domain_row(2, format!("pack:{pack_id}"), 0);
+        for (slot_index, slot) in pack.slots.iter().enumerate() {
+            for (candidate_index, candidate) in slot.candidates.iter().enumerate() {
+                string_field(
+                    &mut row,
+                    format!("slot.{slot_index:03}.candidate.{candidate_index:04}.printing"),
+                    printing_view_key!(&candidate.printing),
+                );
+                u64_field(
+                    &mut row,
+                    format!("slot.{slot_index:03}.candidate.{candidate_index:04}.weight"),
+                    u64::from(candidate.weight),
+                );
+            }
+        }
+        rows.push(row);
+    }
+    for (record_id, record) in &state.pack_records {
+        let mut row = domain_row(3, format!("pack-record:{record_id}"), record.revision);
+        string_field(&mut row, "ownerId", &record.owner_id);
+        string_field(&mut row, "packId", &record.pack_id);
+        string_field(&mut row, "seed", &record.seed);
+        bool_field(&mut row, "opened", record.opened);
+        rows.push(row);
+    }
+    for (owner_id, custody) in &state.custody {
+        let mut row = domain_row(4, format!("custody:{owner_id}"), custody.revision);
+        for (index, reward) in custody.rewards_claimed.iter().enumerate() {
+            string_field(&mut row, format!("reward.{index:04}"), reward);
+        }
+        rows.push(row);
+        for (printing, count) in &custody.case {
+            let mut holding = domain_row(
+                5,
+                format!("holding:{owner_id}:case:{}", printing_view_key!(printing)),
+                custody.revision,
+            );
+            u64_field(&mut holding, "count", u64::from(*count));
+            rows.push(holding);
+        }
+        for (printing, count) in &custody.archive {
+            let mut holding = domain_row(
+                5,
+                format!("holding:{owner_id}:archive:{}", printing_view_key!(printing)),
+                custody.revision,
+            );
+            u64_field(&mut holding, "count", u64::from(*count));
+            rows.push(holding);
+        }
+    }
+    for (rules_id, rules) in &state.deck_rules {
+        let mut row = domain_row(6, format!("deck-rules:{rules_id}"), 0);
+        u64_field(&mut row, "minCards", u64::from(rules.min_cards));
+        u64_field(&mut row, "maxCards", u64::from(rules.max_cards));
+        u64_field(&mut row, "maxCopies", u64::from(rules.max_copies));
+        u64_field(&mut row, "maxCost", u64::from(rules.max_cost));
+        for (index, class) in rules.allowed_classes.iter().enumerate() {
+            string_field(&mut row, format!("allowedClass.{index:04}"), class);
+        }
+        for (index, card) in rules.banned_cards.iter().enumerate() {
+            string_field(&mut row, format!("bannedCard.{index:04}"), card);
+        }
+        rows.push(row);
+    }
+    for (deck_id, deck) in &state.decks {
+        let mut row = domain_row(7, format!("deck:{deck_id}"), deck.revision);
+        string_field(&mut row, "ownerId", &deck.owner_id);
+        string_field(&mut row, "rulesId", &deck.rules_id);
+        for (printing, count) in &deck.cards {
+            u64_field(
+                &mut row,
+                format!("card.{}", printing_view_key!(printing)),
+                u64::from(*count),
+            );
+        }
+        rows.push(row);
+    }
+    for (match_id, battle) in &state.battles {
+        let mut row = domain_row(8, format!("battle:{match_id}"), battle.revision);
+        u64_field(&mut row, "sequence", u64::from(battle.sequence));
+        u64_field(&mut row, "activePlayer", u64::from(battle.active_player));
+        option_string_field(&mut row, "winner", battle.winner.as_deref());
+        for (index, player) in battle.players.iter().enumerate() {
+            string_field(&mut row, format!("player.{index}.ownerId"), &player.owner_id);
+            string_field(&mut row, format!("player.{index}.deckId"), &player.deck_id);
+            u64_field(&mut row, format!("player.{index}.health"), u64::from(player.health));
+            u64_field(&mut row, format!("player.{index}.resource"), u64::from(player.resource));
+            for (card_index, printing) in player.hand.iter().enumerate() {
+                string_field(
+                    &mut row,
+                    format!("player.{index}.hand.{card_index:04}"),
+                    printing_view_key!(printing),
+                );
+            }
+            for (card_index, printing) in player.draw_pile.iter().enumerate() {
+                string_field(
+                    &mut row,
+                    format!("player.{index}.draw.{card_index:04}"),
+                    printing_view_key!(printing),
+                );
+            }
+            for (card_index, printing) in player.board.iter().enumerate() {
+                string_field(
+                    &mut row,
+                    format!("player.{index}.board.{card_index:04}"),
+                    printing_view_key!(printing),
+                );
+            }
+        }
+        rows.push(row);
+    }
+    DomainViewV1 {
+        domain: 7,
+        revision: runtime.gameplay().state.revision.cardforge,
+        status: DomainViewStatusV1::Complete,
+        rows,
+        blockers: Vec::new(),
+    }
+}
+
+fn environment_domain_view(runtime: &IntegratedRuntimeV2) -> DomainViewV1 {
+    let identity = runtime.identity();
+    let mut row = domain_row(1, "location", identity.revision.world);
+    string_field(&mut row, "universeId", &identity.universe_id);
+    string_field(&mut row, "locationId", &identity.location_id);
+    DomainViewV1 {
+        domain: 8,
+        revision: identity.revision.world,
+        status: DomainViewStatusV1::Absent,
+        rows: vec![row],
+        blockers: vec![
+            "atmosphere-and-gravity-profile-not-authoritative".into(),
+            "celestial-sky-state-not-authoritative".into(),
+            "weather-lighting-and-fog-not-authoritative".into(),
+        ],
+    }
+}
+
+fn domain_views(runtime: &IntegratedRuntimeV2) -> Vec<DomainViewV1> {
+    vec![
+        runtime_domain_view(runtime),
+        player_domain_view(runtime),
+        inventory_domain_view(runtime),
+        machine_domain_view(runtime),
+        combat_domain_view(runtime),
+        progression_domain_view(runtime),
+        cardforge_domain_view(runtime),
+        environment_domain_view(runtime),
+    ]
+}
+
 fn encode_hud_extraction(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
     let identity = runtime.identity();
-    let mut output = Vec::with_capacity(128);
-    output.extend_from_slice(b"BWH7");
-    output.extend_from_slice(&1_u16.to_le_bytes());
+    let views = domain_views(runtime);
+    assert_eq!(views.len(), usize::from(DOMAIN_VIEW_COUNT_V1));
+    let mut output = Vec::with_capacity(512);
+    output.extend_from_slice(b"BWX0");
+    output.extend_from_slice(&DOMAIN_VIEW_SCHEMA_V1.to_le_bytes());
+    output.extend_from_slice(&runtime_extraction_revision(runtime).to_le_bytes());
     output.extend_from_slice(&identity.tick.to_le_bytes());
     output.extend_from_slice(identity.state_hash.as_bytes());
-    for value in [
-        identity.revision.epoch,
-        identity.revision.world,
-        identity.revision.entities,
-        identity.revision.gameplay,
-        identity.revision.persistence,
-        identity.revision.network,
-        identity.revision.simulation,
-    ] {
-        output.extend_from_slice(&value.to_le_bytes());
-    }
-    if let Some(input) = runtime.last_applied_input() {
-        output.push(1);
-        output.extend_from_slice(&input.sequence.to_le_bytes());
-        output.extend_from_slice(&input.target_tick.to_le_bytes());
-        output.extend_from_slice(&input.move_x.to_le_bytes());
-        output.extend_from_slice(&input.move_z.to_le_bytes());
-        output.extend_from_slice(&input.look_yaw.to_le_bytes());
-        output.extend_from_slice(&input.look_pitch.to_le_bytes());
-        output.extend_from_slice(&input.buttons.to_le_bytes());
-        output.push(input.selected_slot);
-        output.push(input.flags);
-    } else {
-        output.push(0);
+    output.extend_from_slice(runtime.content_manifest_hash().as_bytes());
+    output.push(u8::from(runtime.content_ready()));
+    output.extend_from_slice(&DOMAIN_VIEW_COUNT_V1.to_le_bytes());
+    for view in views {
+        output.extend_from_slice(&encode_domain_view(view));
     }
     output
 }
 
-fn encode_audio_extraction() -> Vec<u8> {
-    let mut output = Vec::with_capacity(10);
+fn encode_audio_extraction(runtime: &IntegratedRuntimeV2) -> Vec<u8> {
+    let events = runtime.effect_events();
+    let selected = events.len().min(256);
+    let omitted = events.len().saturating_sub(selected);
+    let mut output = Vec::with_capacity(16 + selected.saturating_mul(48));
     output.extend_from_slice(b"BWAU");
-    output.extend_from_slice(&1_u16.to_le_bytes());
-    output.extend_from_slice(&0_u32.to_le_bytes());
+    output.extend_from_slice(&AUDIO_EXTRACTION_SCHEMA_V2.to_le_bytes());
+    output.extend_from_slice(&runtime.tick().to_le_bytes());
+    output.extend_from_slice(&(events.len() as u32).to_le_bytes());
+    output.extend_from_slice(&(selected as u32).to_le_bytes());
+    output.extend_from_slice(&(omitted as u32).to_le_bytes());
+    for event in events.iter().skip(omitted) {
+        output.extend_from_slice(&event.sequence.to_le_bytes());
+        output.extend_from_slice(&event.tick.to_le_bytes());
+        write_extraction_string(&mut output, &event.entity_external_id);
+        output.push(event.kind as u8);
+        output.extend_from_slice(&event.amount.to_le_bytes());
+    }
     output
 }
 
@@ -1786,10 +2766,36 @@ fn write_extraction_research(output: &mut Vec<u8>, research: &BTreeMap<String, u
 
 fn capabilities(runtime: &IntegratedRuntimeV2) -> Vec<String> {
     let mut values = CAPABILITIES.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>();
+    if extraction_promotion_ready(runtime) {
+        values.retain(|value| value != "bounded-extraction-v1-pending-live-domain-views");
+        values.push("bounded-extraction-v1".into());
+    }
     if runtime.native_save_ready() {
         values.push("native-save-hydration-v1".into());
     }
     values
+}
+
+fn extraction_promotion_ready(runtime: &IntegratedRuntimeV2) -> bool {
+    domain_views(runtime).iter().all(|view| {
+        if view.status != DomainViewStatusV1::Complete
+            || !view.blockers.is_empty()
+            || view.rows.len() > DOMAIN_VIEW_MAX_RECORDS_V1
+        {
+            return false;
+        }
+        let mut bytes = 0_usize;
+        for row in &view.rows {
+            let Some(encoded) = encode_domain_row(row) else {
+                return false;
+            };
+            bytes = bytes.saturating_add(encoded.len());
+            if bytes > DOMAIN_VIEW_MAX_BYTES_V1 {
+                return false;
+            }
+        }
+        true
+    })
 }
 
 fn domain_name(domain: blockwild_runtime_wire::RuntimeDomainV1) -> &'static str {
@@ -2085,7 +3091,7 @@ mod tests {
             client_epoch: 1,
             expected: identity.clone(),
             after_revision: 0,
-            max_bytes: 1_024,
+            max_bytes: 8 * 1_048_576,
         };
         let extracted = decode_response_v1(&blockwild_runtime_extract_v2(
             runtime_handle,
@@ -3021,5 +4027,91 @@ mod tests {
         assert_eq!(reader.string(), "care");
         assert_eq!(reader.u32(), 3);
         reader.finish();
+    }
+
+    #[test]
+    fn domain_row_wire_matches_the_shared_typescript_fixture() {
+        let mut row = domain_row(7, "golden", 9);
+        bool_field(&mut row, "bool", true);
+        bytes_field(&mut row, "bytes", &[0, 1, 0x80]);
+        f64_field(&mut row, "f64", 1.5);
+        hash_field(
+            &mut row,
+            "hash",
+            CanonicalHash([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        );
+        i64_field(&mut row, "i64", -2);
+        string_field(&mut row, "string", "\u{e9}");
+        u64_field(&mut row, "u64", 0x0102_0304_0506_0708);
+        let encoded = encode_domain_row(&row).expect("bounded golden domain row");
+        let actual = encoded.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let expected =
+            include_str!("../../../../tests/fixtures/rust-engine/r10-authoritative-extraction/domain-row-v1.hex")
+                .trim();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn domain_bundle_names_every_missing_authority_and_stays_pending() {
+        let runtime = IntegratedRuntimeV2::new(IntegratedRuntimeConfigV2::default()).unwrap();
+        let views = domain_views(&runtime);
+        assert_eq!(
+            views.iter().map(|view| view.domain).collect::<Vec<_>>(),
+            (1..=8).collect::<Vec<_>>()
+        );
+        assert_eq!(views[0].status, DomainViewStatusV1::Complete);
+        assert_eq!(
+            views[1].blockers,
+            [
+                "camera-projection-and-orientation-not-authoritative",
+                "player-inventory-container-binding-not-explicit",
+            ]
+        );
+        assert!(
+            views[2]
+                .blockers
+                .iter()
+                .any(|value| value == "dropped-item-spatial-state-not-authoritative")
+        );
+        assert!(
+            views[3]
+                .blockers
+                .iter()
+                .any(|value| value == "machine-spatial-anchors-not-authoritative")
+        );
+        assert!(
+            views[4]
+                .blockers
+                .iter()
+                .any(|value| value == "combat-projectile-and-summon-render-presentation-not-authoritative")
+        );
+        assert_eq!(views[7].status, DomainViewStatusV1::Absent);
+        assert_eq!(
+            views[7].blockers,
+            [
+                "atmosphere-and-gravity-profile-not-authoritative",
+                "celestial-sky-state-not-authoritative",
+                "weather-lighting-and-fog-not-authoritative",
+            ]
+        );
+        assert!(!extraction_promotion_ready(&runtime));
+        let capabilities = capabilities(&runtime);
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value == "bounded-extraction-v1-pending-live-domain-views")
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value == "bounded-extraction-blockers-v1")
+        );
+        assert!(!capabilities.iter().any(|value| value == "bounded-extraction-v1"));
+
+        let bundle = encode_hud_extraction(&runtime);
+        assert_eq!(&bundle[..4], b"BWX0");
+        assert!(bundle.len() < DOMAIN_VIEW_COUNT_V1 as usize * DOMAIN_VIEW_MAX_BYTES_V1);
+        assert_eq!(&encode_audio_extraction(&runtime)[..4], b"BWAU");
+        assert_eq!(&encode_diagnostics(&runtime)[..4], b"BWRX");
     }
 }

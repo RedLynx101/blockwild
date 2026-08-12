@@ -727,6 +727,11 @@ impl IntegratedRuntimeV2 {
     }
 
     #[must_use]
+    pub const fn config(&self) -> &IntegratedRuntimeConfigV2 {
+        &self.config
+    }
+
+    #[must_use]
     pub fn world(&self) -> &WorldAuthorityStoreR4V1 {
         &self.world
     }

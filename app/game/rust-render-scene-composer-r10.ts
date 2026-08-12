@@ -31,6 +31,13 @@ import {
   type RenderEntityPresentationR10,
   type RustEntityRenderExtractionR10,
 } from "./rust-render-entity-extraction-r10.ts";
+import {
+  decodeRustAuthoritativeExtractionR10,
+  type RustAudioExtractionR10,
+  type RustDomainBundleR10,
+  type RustRuntimeDiagnosticsR10,
+} from "./rust-authoritative-extraction-r10.ts";
+import type { RustIntegratedRuntimeExtractionV1 } from "./rust-integrated-runtime-contract.ts";
 
 const U64_MAX = BigInt("0xffffffffffffffff");
 const RESOURCE_FINGERPRINT_EPOCH = BigInt(0);
@@ -106,6 +113,11 @@ export type RustRenderSceneComposerDiagnosticsR10 = Readonly<{
   omittedEntityGroups: number;
   omittedEntityInstances: number;
   recoveryRequests: number;
+  staleDomainExtractions: number;
+  domainExtractionRevision: bigint | null;
+  domainAuthorityTick: bigint | null;
+  domainBlockers: number;
+  audioLastSequence: bigint | null;
   metadataRevision: bigint;
   contentManifestHashHex: string;
   modelCatalogHash: string;
@@ -161,6 +173,7 @@ type MutableCountersR10 = {
   omittedEntityGroups: number;
   omittedEntityInstances: number;
   recoveryRequests: number;
+  staleDomainExtractions: number;
 };
 
 function invariant(condition: unknown, message: string): asserts condition {
@@ -495,12 +508,17 @@ export class RustRenderSceneComposerR10 implements RenderSceneExtractionSinkR10 
   private entityExtractionSignature: string | null = null;
   private entityResult: RenderEntityExtractionResultR10 | null = null;
   private presentations: readonly RenderEntityPresentationViewR10[] = Object.freeze([]);
+  private domainBundle: RustDomainBundleR10 | null = null;
+  private audioExtraction: RustAudioExtractionR10 | null = null;
+  private runtimeDiagnostics: RustRuntimeDiagnosticsR10 | null = null;
+  private domainExtractionSignature: string | null = null;
   private metadataRevision = BigInt(0);
   private counters: MutableCountersR10 = {
     emittedResourceBatches: 0, deduplicatedResourceOperations: 0, removedResources: 0,
     submittedFrames: 0, rejectedFrames: 0, staleTerrainFrames: 0, staleEntityExtractions: 0,
     futureEntityFrames: 0, expiredEntityFrames: 0, omittedEntityGroups: 0,
     omittedEntityInstances: 0, recoveryRequests: 0,
+    staleDomainExtractions: 0,
   };
 
   readonly epoch: bigint;
@@ -596,6 +614,17 @@ export class RustRenderSceneComposerR10 implements RenderSceneExtractionSinkR10 
     return this.submitEntities(this.entityExtractor.extractBytes(bytes, context));
   }
 
+  /** Validate every R10 section before mutating the composed renderer state. */
+  submitRuntimeExtraction(extraction: RustIntegratedRuntimeExtractionV1, context: RenderEntityFrameContextR10) {
+    const decoded = decodeRustAuthoritativeExtractionR10(extraction);
+    const staged = decoded.domains
+      ? this.validateDomainExtraction(decoded.domains, decoded.audio, decoded.diagnostics, context)
+      : null;
+    if (extraction.render.byteLength > 0 && !this.submitEntityBytes(extraction.render, context)) return false;
+    if (staged) this.commitDomainExtraction(staged.bundle, staged.audio, staged.diagnostics, staged.signature);
+    return true;
+  }
+
   submitEntities(result: RenderEntityExtractionResultR10) {
     invariant(equalBytes(result.contentManifestHash, this.trustedContentManifestHash), "entity content manifest attestation mismatch");
     invariant(result.modelCatalogHash === this.trustedModelCatalogHash, "entity model catalog attestation mismatch");
@@ -659,6 +688,49 @@ export class RustRenderSceneComposerR10 implements RenderSceneExtractionSinkR10 
     });
   }
 
+  authoritativeMetadata() {
+    const bundle = this.domainBundle;
+    return Object.freeze({
+      schema: 1 as const,
+      revision: this.metadataRevision,
+      extractionRevision: bundle?.extractionRevision ?? null,
+      authorityTick: bundle?.authorityTick ?? null,
+      stateHashHex: bundle ? hex(bundle.stateHash) : null,
+      promotion: bundle?.promotion ?? Object.freeze({
+        ready: false,
+        blockers: Object.freeze(["domain-extraction-not-submitted"]),
+      }),
+      views: Object.freeze((bundle?.views ?? []).map((view) => Object.freeze({
+        domain: view.domain,
+        status: view.status,
+        revision: view.revision,
+        total: view.total,
+        selected: view.selected,
+        omitted: view.omitted,
+        nextCursor: view.nextCursor,
+        blockers: Object.freeze([...view.blockers]),
+        rows: Object.freeze(view.rows.map((row) => Object.freeze({
+          kind: row.kind,
+          key: row.key,
+          revision: row.revision,
+          fields: Object.freeze(row.fields.map(([key, value]) => Object.freeze([
+            key,
+            value instanceof Uint8Array ? hex(value) : value,
+          ] as const))),
+        }))),
+      }))),
+      audio: Object.freeze([...(this.audioExtraction?.cues ?? [])]),
+      diagnostics: this.runtimeDiagnostics ? Object.freeze({
+        authorityTick: this.runtimeDiagnostics.authorityTick,
+        stateHashHex: hex(this.runtimeDiagnostics.stateHash),
+        counters: this.runtimeDiagnostics.counters,
+        flags: this.runtimeDiagnostics.flags,
+        dispatcherHashHex: hex(this.runtimeDiagnostics.dispatcherHash),
+        persistenceHashHex: hex(this.runtimeDiagnostics.persistenceHash),
+      }) : null,
+    });
+  }
+
   diagnostics(): RustRenderSceneComposerDiagnosticsR10 {
     return Object.freeze({
       schema: 1,
@@ -674,12 +746,62 @@ export class RustRenderSceneComposerR10 implements RenderSceneExtractionSinkR10 
       knownTerrainResources: this.terrain.known.size,
       knownEntityResources: this.entity.known.size,
       ...this.counters,
+      domainExtractionRevision: this.domainBundle?.extractionRevision ?? null,
+      domainAuthorityTick: this.domainBundle?.authorityTick ?? null,
+      domainBlockers: this.domainBundle?.promotion.blockers.length ?? 0,
+      audioLastSequence: this.audioExtraction?.cues.at(-1)?.sequence ?? null,
       metadataRevision: this.metadataRevision,
       contentManifestHashHex: hex(this.trustedContentManifestHash),
       modelCatalogHash: this.trustedModelCatalogHash,
       modelCatalogRevision: this.trustedModelCatalogRevision,
       sink: this.sink.diagnostics(),
     });
+  }
+
+  private validateDomainExtraction(
+    bundle: RustDomainBundleR10,
+    audio: RustAudioExtractionR10 | null,
+    diagnostics: RustRuntimeDiagnosticsR10 | null,
+    context: RenderEntityFrameContextR10,
+  ) {
+    invariant(equalBytes(bundle.contentManifestHash, this.trustedContentManifestHash), "domain content manifest attestation mismatch");
+    invariant(bundle.authorityTick === context.simulationTick, "domain authority tick does not match render extraction context");
+    if (audio) invariant(audio.authorityTick === bundle.authorityTick, "audio authority tick does not match domain extraction");
+    if (diagnostics) {
+      invariant(diagnostics.authorityTick === bundle.authorityTick, "diagnostic authority tick does not match domain extraction");
+      invariant(equalBytes(diagnostics.stateHash, bundle.stateHash), "diagnostic state hash does not match domain extraction");
+    }
+    const signature = [
+      hex(bundle.stateHash),
+      ...bundle.views.map((view) => hex(view.payloadHash)),
+      audio?.cues.at(-1)?.sequence.toString() ?? "-",
+      diagnostics ? hex(diagnostics.dispatcherHash) : "-",
+      diagnostics ? hex(diagnostics.persistenceHash) : "-",
+    ].join(":");
+    const current = this.domainBundle?.extractionRevision ?? null;
+    if (current !== null && bundle.extractionRevision <= current) {
+      if (bundle.extractionRevision === current && signature === this.domainExtractionSignature) {
+        return { bundle, audio, diagnostics, signature } as const;
+      }
+      this.counters.staleDomainExtractions += 1;
+      throw new Error("stale authoritative domain extraction revision");
+    }
+    return { bundle, audio, diagnostics, signature } as const;
+  }
+
+  private commitDomainExtraction(
+    bundle: RustDomainBundleR10,
+    audio: RustAudioExtractionR10 | null,
+    diagnostics: RustRuntimeDiagnosticsR10 | null,
+    signature: string,
+  ) {
+    if (this.domainBundle?.extractionRevision === bundle.extractionRevision
+      && this.domainExtractionSignature === signature) return;
+    this.domainBundle = bundle;
+    this.audioExtraction = audio;
+    this.runtimeDiagnostics = diagnostics;
+    this.domainExtractionSignature = signature;
+    this.metadataRevision += BigInt(1);
   }
 
   private validateEntityPhases(frame: RenderFrameV2, presentations: readonly RenderEntityPresentationViewR10[]) {
