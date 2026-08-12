@@ -5,14 +5,17 @@ use blockwild_types::CanonicalHash;
 use crate::{
     RENDER_EXTRACTION_SCHEMA_V2, RenderBlendModeV2, RenderBoundsV2, RenderCameraV2, RenderEnvironmentV2,
     RenderExtractionError, RenderFrameInputV2, RenderFrameV2, RenderGeometryKindV2, RenderGeometryV2,
-    RenderInstanceDomainV2, RenderInstanceV2, RenderLightingExtensionV2, RenderMaterialV2, RenderParticleV2,
-    RenderPointLightV2, RenderResourceBatchV2, RenderResourceId, RenderResourceOperationV2, RenderShadingModelV2,
-    RenderTextureColorSpaceV2, RenderTextureFilterV2, RenderTextureV2, RenderTransformV2,
+    RenderInstanceDomainV2, RenderInstanceV2, RenderLightingExtensionV2, RenderMaterialTextureV2, RenderMaterialV2,
+    RenderParticleV2, RenderPointLightV2, RenderResourceBatchV2, RenderResourceId, RenderResourceOperationV2,
+    RenderShadingModelV2, RenderTextureAnimationV2, RenderTextureAtlasV2, RenderTextureColorSpaceV2,
+    RenderTextureFilterV2, RenderTextureMipmapFilterV2, RenderTextureOriginV2, RenderTextureSamplerV2,
+    RenderTextureUvModeV2, RenderTextureV2, RenderTextureWrapV2, RenderTransformV2,
 };
 
 const RESOURCE_MAGIC: [u8; 4] = *b"BWRD";
 const FRAME_MAGIC: [u8; 4] = *b"BWRF";
 const MAX_WIRE_BYTES: usize = 256 * 1024 * 1024;
+const RESOURCE_WIRE_TEXTURE_MATERIAL_EXTENSION_V2: u16 = 1;
 const FRAME_WIRE_LIGHTING_EXTENSION_V2: u16 = 1;
 
 pub fn encode_render_resource_batch_v2(value: &RenderResourceBatchV2) -> Result<Vec<u8>, RenderExtractionError> {
@@ -20,7 +23,15 @@ pub fn encode_render_resource_batch_v2(value: &RenderResourceBatchV2) -> Result<
     let mut writer = Writer::new();
     writer.bytes_raw(&RESOURCE_MAGIC);
     writer.u16(value.schema);
-    writer.u16(0);
+    let extended_texture_materials = value.operations.iter().any(|operation| match operation {
+        RenderResourceOperationV2::UpsertMaterial(material) => material.texture.is_some(),
+        RenderResourceOperationV2::UpsertTexture(texture) => texture.sampler.is_some() || texture.atlas.is_some(),
+        RenderResourceOperationV2::UpsertGeometry(_)
+        | RenderResourceOperationV2::RemoveMaterial(_)
+        | RenderResourceOperationV2::RemoveGeometry(_)
+        | RenderResourceOperationV2::RemoveTexture(_) => false,
+    });
+    writer.u16(u16::from(extended_texture_materials) * RESOURCE_WIRE_TEXTURE_MATERIAL_EXTENSION_V2);
     writer.u64(value.epoch);
     writer.u64(value.revision);
     writer.u32(length_u32(value.operations.len(), "resource operation count")?);
@@ -63,10 +74,9 @@ pub fn decode_render_resource_batch_v2(bytes: &[u8]) -> Result<RenderResourceBat
     if schema != RENDER_EXTRACTION_SCHEMA_V2 {
         return Err(RenderExtractionError::UnsupportedSchema(schema));
     }
-    if reader.u16()? != 0 {
-        return Err(RenderExtractionError::InvalidRecord(
-            "resource wire reserved bits are nonzero",
-        ));
+    let wire_flags = reader.u16()?;
+    if wire_flags & !RESOURCE_WIRE_TEXTURE_MATERIAL_EXTENSION_V2 != 0 {
+        return Err(RenderExtractionError::InvalidRecord("resource wire flags are invalid"));
     }
     let epoch = reader.u64()?;
     let revision = reader.u64()?;
@@ -75,11 +85,11 @@ pub fn decode_render_resource_batch_v2(bytes: &[u8]) -> Result<RenderResourceBat
     let mut operations = Vec::with_capacity(count);
     for _ in 0..count {
         operations.push(match reader.u8()? {
-            0 => RenderResourceOperationV2::UpsertMaterial(reader.material()?),
+            0 => RenderResourceOperationV2::UpsertMaterial(reader.material(wire_flags)?),
             1 => RenderResourceOperationV2::UpsertGeometry(reader.geometry()?),
             2 => RenderResourceOperationV2::RemoveMaterial(RenderResourceId(reader.u64()?)),
             3 => RenderResourceOperationV2::RemoveGeometry(RenderResourceId(reader.u64()?)),
-            4 => RenderResourceOperationV2::UpsertTexture(reader.texture()?),
+            4 => RenderResourceOperationV2::UpsertTexture(reader.texture(wire_flags)?),
             5 => RenderResourceOperationV2::RemoveTexture(RenderResourceId(reader.u64()?)),
             _ => {
                 return Err(RenderExtractionError::InvalidRecord(
@@ -229,12 +239,21 @@ impl Writer {
         self.u8(value.blend as u8);
         self.bytes_raw(&value.base_color_rgba8);
         self.bytes_raw(&value.emissive_rgb8);
-        self.u8(u8::from(value.double_sided) | (u8::from(value.depth_write) << 1));
+        self.u8(u8::from(value.double_sided)
+            | (u8::from(value.depth_write) << 1)
+            | (u8::from(value.texture.is_some()) << 2));
         self.f32(value.emissive_strength);
         self.f32(value.roughness);
         self.f32(value.metalness);
         self.f32(value.alpha_cutoff);
         self.u16(value.atlas_tile.unwrap_or(u16::MAX));
+        if let Some(texture) = value.texture {
+            self.u64(texture.texture.0);
+            self.u8(texture.uv_mode as u8);
+            self.u8(texture.animation as u8);
+            self.u16(0);
+            self.f32(texture.opacity);
+        }
     }
 
     fn bounds(&mut self, value: RenderBoundsV2) {
@@ -267,7 +286,24 @@ impl Writer {
         self.u32(value.height);
         self.u8(value.color_space as u8);
         self.u8(value.filter as u8);
-        self.u16(0);
+        self.u16(u16::from(value.sampler.is_some()) | (u16::from(value.atlas.is_some()) << 1));
+        if let Some(sampler) = value.sampler {
+            self.u8(sampler.mag_filter as u8);
+            self.u8(sampler.min_filter as u8);
+            self.u8(sampler.mipmap_filter as u8);
+            self.u8(sampler.wrap_u as u8);
+            self.u8(sampler.wrap_v as u8);
+            self.u8(0);
+        }
+        if let Some(atlas) = value.atlas {
+            self.u16(atlas.columns);
+            self.u16(atlas.rows);
+            self.u16(atlas.tile_width);
+            self.u16(atlas.tile_height);
+            self.f32(atlas.edge_inset);
+            self.u8(atlas.origin as u8);
+            self.bytes_raw(&[0; 3]);
+        }
         self.u8s(&value.rgba8)
     }
 
@@ -459,7 +495,7 @@ impl<'a> Reader<'a> {
         usize::try_from(self.u32()?).map_err(|_| RenderExtractionError::LimitExceeded(label))
     }
 
-    fn material(&mut self) -> Result<RenderMaterialV2, RenderExtractionError> {
+    fn material(&mut self, wire_flags: u16) -> Result<RenderMaterialV2, RenderExtractionError> {
         let id = RenderResourceId(self.u64()?);
         let revision = self.u32()?;
         let shading = match self.u8()? {
@@ -481,14 +517,46 @@ impl<'a> Reader<'a> {
         let base_color_rgba8 = self.take(4)?.try_into().expect("exact length");
         let emissive_rgb8 = self.take(3)?.try_into().expect("exact length");
         let flags = self.u8()?;
-        if flags & !0b11 != 0 {
+        if flags & !0b111 != 0 {
             return Err(RenderExtractionError::InvalidRecord("unknown material flags"));
+        }
+        if flags & 0b100 != 0 && wire_flags & RESOURCE_WIRE_TEXTURE_MATERIAL_EXTENSION_V2 == 0 {
+            return Err(RenderExtractionError::InvalidRecord(
+                "material texture extension is missing its wire flag",
+            ));
         }
         let emissive_strength = self.f32()?;
         let roughness = self.f32()?;
         let metalness = self.f32()?;
         let alpha_cutoff = self.f32()?;
         let tile = self.u16()?;
+        let texture = if flags & 0b100 == 0 {
+            None
+        } else {
+            let texture = RenderResourceId(self.u64()?);
+            let uv_mode = match self.u8()? {
+                0 => RenderTextureUvModeV2::Geometry,
+                1 => RenderTextureUvModeV2::AtlasTile,
+                _ => return Err(RenderExtractionError::InvalidRecord("unknown texture UV mode")),
+            };
+            let animation = match self.u8()? {
+                0 => RenderTextureAnimationV2::None,
+                1 => RenderTextureAnimationV2::WaterScrollX,
+                _ => return Err(RenderExtractionError::InvalidRecord("unknown texture animation")),
+            };
+            if self.u16()? != 0 {
+                return Err(RenderExtractionError::InvalidRecord(
+                    "material texture reserved bits are nonzero",
+                ));
+            }
+            let opacity = self.f32()?;
+            Some(RenderMaterialTextureV2 {
+                texture,
+                uv_mode,
+                animation,
+                opacity,
+            })
+        };
         Ok(RenderMaterialV2 {
             id,
             revision,
@@ -501,6 +569,7 @@ impl<'a> Reader<'a> {
             metalness,
             alpha_cutoff,
             atlas_tile: (tile != u16::MAX).then_some(tile),
+            texture,
             double_sided: flags & 1 != 0,
             depth_write: flags & 2 != 0,
         })
@@ -549,7 +618,7 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn texture(&mut self) -> Result<RenderTextureV2, RenderExtractionError> {
+    fn texture(&mut self, wire_flags: u16) -> Result<RenderTextureV2, RenderExtractionError> {
         let id = RenderResourceId(self.u64()?);
         let revision = self.u32()?;
         let width = self.u32()?;
@@ -564,11 +633,81 @@ impl<'a> Reader<'a> {
             1 => RenderTextureFilterV2::Linear,
             _ => return Err(RenderExtractionError::InvalidRecord("unknown texture filter")),
         };
-        if self.u16()? != 0 {
+        let extension_flags = self.u16()?;
+        if extension_flags & !0b11 != 0 {
             return Err(RenderExtractionError::InvalidRecord(
-                "texture reserved bits are nonzero",
+                "texture extension flags are invalid",
             ));
         }
+        if extension_flags != 0 && wire_flags & RESOURCE_WIRE_TEXTURE_MATERIAL_EXTENSION_V2 == 0 {
+            return Err(RenderExtractionError::InvalidRecord(
+                "texture extension is missing its wire flag",
+            ));
+        }
+        let sampler = if extension_flags & 1 == 0 {
+            None
+        } else {
+            let filter = |value| match value {
+                0 => Ok(RenderTextureFilterV2::Nearest),
+                1 => Ok(RenderTextureFilterV2::Linear),
+                _ => Err(RenderExtractionError::InvalidRecord("unknown texture sampler filter")),
+            };
+            let mag_filter = filter(self.u8()?)?;
+            let min_filter = filter(self.u8()?)?;
+            let mipmap_filter = match self.u8()? {
+                0 => RenderTextureMipmapFilterV2::Disabled,
+                1 => RenderTextureMipmapFilterV2::Nearest,
+                2 => RenderTextureMipmapFilterV2::Linear,
+                _ => return Err(RenderExtractionError::InvalidRecord("unknown texture mipmap filter")),
+            };
+            let wrap = |value| match value {
+                0 => Ok(RenderTextureWrapV2::ClampToEdge),
+                1 => Ok(RenderTextureWrapV2::Repeat),
+                2 => Ok(RenderTextureWrapV2::MirroredRepeat),
+                _ => Err(RenderExtractionError::InvalidRecord("unknown texture wrap mode")),
+            };
+            let wrap_u = wrap(self.u8()?)?;
+            let wrap_v = wrap(self.u8()?)?;
+            if self.u8()? != 0 {
+                return Err(RenderExtractionError::InvalidRecord(
+                    "texture sampler reserved byte is nonzero",
+                ));
+            }
+            Some(RenderTextureSamplerV2 {
+                mag_filter,
+                min_filter,
+                mipmap_filter,
+                wrap_u,
+                wrap_v,
+            })
+        };
+        let atlas = if extension_flags & 2 == 0 {
+            None
+        } else {
+            let columns = self.u16()?;
+            let rows = self.u16()?;
+            let tile_width = self.u16()?;
+            let tile_height = self.u16()?;
+            let edge_inset = self.f32()?;
+            let origin = match self.u8()? {
+                0 => RenderTextureOriginV2::TopLeft,
+                1 => RenderTextureOriginV2::BottomLeft,
+                _ => return Err(RenderExtractionError::InvalidRecord("unknown texture origin")),
+            };
+            if self.take(3)? != [0; 3] {
+                return Err(RenderExtractionError::InvalidRecord(
+                    "texture atlas reserved bits are nonzero",
+                ));
+            }
+            Some(RenderTextureAtlasV2 {
+                columns,
+                rows,
+                tile_width,
+                tile_height,
+                edge_inset,
+                origin,
+            })
+        };
         Ok(RenderTextureV2 {
             id,
             revision,
@@ -576,6 +715,8 @@ impl<'a> Reader<'a> {
             height,
             color_space,
             filter,
+            sampler,
+            atlas,
             rgba8: self.u8s()?,
         })
     }
@@ -748,6 +889,7 @@ mod tests {
             metalness: 0.2,
             alpha_cutoff: 0.4,
             atlas_tile: Some(12),
+            texture: None,
             double_sided: true,
             depth_write: false,
         }
@@ -761,6 +903,8 @@ mod tests {
             height: 1,
             color_space: RenderTextureColorSpaceV2::Srgb,
             filter: RenderTextureFilterV2::Nearest,
+            sampler: None,
+            atlas: None,
             rgba8: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
@@ -839,6 +983,63 @@ mod tests {
         let last = corrupted.len() - 1;
         corrupted[last] ^= 0x40;
         assert!(decode_render_resource_batch_v2(&corrupted).is_err());
+    }
+
+    #[test]
+    fn additive_texture_material_extension_round_trips_without_changing_legacy_flags() {
+        let legacy =
+            RenderResourceBatchV2::create(1, 1, vec![RenderResourceOperationV2::UpsertMaterial(material())]).unwrap();
+        let legacy_bytes = encode_render_resource_batch_v2(&legacy).unwrap();
+        assert_eq!(u16::from_le_bytes([legacy_bytes[6], legacy_bytes[7]]), 0);
+
+        let mut extended_texture = texture();
+        extended_texture.width = 2;
+        extended_texture.height = 1;
+        extended_texture.sampler = Some(RenderTextureSamplerV2 {
+            mag_filter: RenderTextureFilterV2::Nearest,
+            min_filter: RenderTextureFilterV2::Nearest,
+            mipmap_filter: RenderTextureMipmapFilterV2::Disabled,
+            wrap_u: RenderTextureWrapV2::ClampToEdge,
+            wrap_v: RenderTextureWrapV2::MirroredRepeat,
+        });
+        extended_texture.atlas = Some(RenderTextureAtlasV2 {
+            columns: 2,
+            rows: 1,
+            tile_width: 1,
+            tile_height: 1,
+            edge_inset: 0.014,
+            origin: RenderTextureOriginV2::TopLeft,
+        });
+        let mut extended_material = material();
+        extended_material.texture = Some(RenderMaterialTextureV2 {
+            texture: extended_texture.id,
+            uv_mode: RenderTextureUvModeV2::AtlasTile,
+            animation: RenderTextureAnimationV2::WaterScrollX,
+            opacity: 0.76,
+        });
+        let extended = RenderResourceBatchV2::create(
+            1,
+            2,
+            vec![
+                RenderResourceOperationV2::UpsertTexture(extended_texture),
+                RenderResourceOperationV2::UpsertMaterial(extended_material),
+            ],
+        )
+        .unwrap();
+        let bytes = encode_render_resource_batch_v2(&extended).unwrap();
+        assert_eq!(
+            u16::from_le_bytes([bytes[6], bytes[7]]),
+            RESOURCE_WIRE_TEXTURE_MATERIAL_EXTENSION_V2
+        );
+        assert_eq!(decode_render_resource_batch_v2(&bytes).unwrap(), extended);
+    }
+
+    #[test]
+    fn checked_in_legacy_resource_fixture_remains_byte_exact() {
+        let bytes = include_bytes!("../../../../tests/fixtures/rust-engine/r11-renderer/canonical-resources.bwrd");
+        assert_eq!(u16::from_le_bytes([bytes[6], bytes[7]]), 0);
+        let decoded = decode_render_resource_batch_v2(bytes).unwrap();
+        assert_eq!(encode_render_resource_batch_v2(&decoded).unwrap(), bytes);
     }
 
     #[test]

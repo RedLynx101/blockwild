@@ -116,6 +116,38 @@ pub enum RenderShadingModelV2 {
     Particle = 4,
 }
 
+/// Selects how a material interprets the geometry UV stream when a texture is
+/// bound. Existing terrain pages already contain atlas-global UVs, while
+/// authored boxes and planes use local 0..1 UVs and select one atlas cell.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderTextureUvModeV2 {
+    Geometry = 0,
+    AtlasTile = 1,
+}
+
+/// Presentation-only texture motion. The phase itself remains frame-owned so
+/// skipped presentation frames cannot advance authoritative state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderTextureAnimationV2 {
+    None = 0,
+    /// Scroll the U coordinate inside its current atlas tile by the bounded
+    /// `RenderLightingExtensionV2::water_phase` value.
+    WaterScrollX = 1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderMaterialTextureV2 {
+    pub texture: RenderResourceId,
+    pub uv_mode: RenderTextureUvModeV2,
+    pub animation: RenderTextureAnimationV2,
+    /// Exact material opacity multiplier. Keeping this as an f32 preserves
+    /// Three's authored 0.86/0.76/0.42 values instead of quantizing them into
+    /// the legacy RGBA8 base color.
+    pub opacity: f32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderMaterialV2 {
     pub id: RenderResourceId,
@@ -129,6 +161,9 @@ pub struct RenderMaterialV2 {
     pub metalness: f32,
     pub alpha_cutoff: f32,
     pub atlas_tile: Option<u16>,
+    /// Additive texture binding extension. `None` preserves the original V2
+    /// material bytes and the legacy block-atlas compatibility behavior.
+    pub texture: Option<RenderMaterialTextureV2>,
     pub double_sided: bool,
     pub depth_write: bool,
 }
@@ -159,6 +194,21 @@ impl RenderMaterialV2 {
                 "material scalar is outside its bounded range",
             ));
         }
+        if let Some(texture) = self.texture {
+            if texture.texture.0 == 0 {
+                return Err(RenderExtractionError::InvalidRecord("material texture id is zero"));
+            }
+            if !texture.opacity.is_finite() || !(0.0..=1.0).contains(&texture.opacity) {
+                return Err(RenderExtractionError::InvalidRecord(
+                    "material texture opacity is outside its bounded range",
+                ));
+            }
+            if texture.uv_mode == RenderTextureUvModeV2::AtlasTile && self.atlas_tile.is_none() {
+                return Err(RenderExtractionError::InvalidRecord(
+                    "tile-local material has no atlas tile",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -180,6 +230,15 @@ impl RenderMaterialV2 {
         hasher.write_u16(self.atlas_tile.unwrap_or(u16::MAX));
         hasher.write_u16(u16::from(self.double_sided));
         hasher.write_u16(u16::from(self.depth_write));
+        if let Some(texture) = self.texture {
+            // The marker makes the extension unambiguous without perturbing
+            // hashes for every pre-extension material record.
+            hasher.write_u16(0x5458);
+            hasher.write_u64(texture.texture.0);
+            hasher.write_u16(texture.uv_mode as u16);
+            hasher.write_u16(texture.animation as u16);
+            hasher.write_u32(canonical_f32(texture.opacity).to_bits());
+        }
     }
 }
 
@@ -293,6 +352,51 @@ pub enum RenderTextureFilterV2 {
     Linear = 1,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderTextureMipmapFilterV2 {
+    Disabled = 0,
+    Nearest = 1,
+    Linear = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderTextureWrapV2 {
+    ClampToEdge = 0,
+    Repeat = 1,
+    MirroredRepeat = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderTextureOriginV2 {
+    /// RGBA row zero is the top row, matching CanvasTexture/ImageData.
+    TopLeft = 0,
+    BottomLeft = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderTextureSamplerV2 {
+    pub mag_filter: RenderTextureFilterV2,
+    pub min_filter: RenderTextureFilterV2,
+    pub mipmap_filter: RenderTextureMipmapFilterV2,
+    pub wrap_u: RenderTextureWrapV2,
+    pub wrap_v: RenderTextureWrapV2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderTextureAtlasV2 {
+    pub columns: u16,
+    pub rows: u16,
+    pub tile_width: u16,
+    pub tile_height: u16,
+    /// Normalized inset inside one tile. Production water uses 0.014 to
+    /// prevent animated nearest-neighbor samples from leaking across cells.
+    pub edge_inset: f32,
+    pub origin: RenderTextureOriginV2,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderTextureV2 {
     pub id: RenderResourceId,
@@ -301,6 +405,10 @@ pub struct RenderTextureV2 {
     pub height: u32,
     pub color_space: RenderTextureColorSpaceV2,
     pub filter: RenderTextureFilterV2,
+    /// Explicit sampler state is additive. `None` decodes exactly as the
+    /// original nearest/linear + clamp-to-edge + no-mipmap contract.
+    pub sampler: Option<RenderTextureSamplerV2>,
+    pub atlas: Option<RenderTextureAtlasV2>,
     pub rgba8: Vec<u8>,
 }
 
@@ -328,6 +436,29 @@ impl RenderTextureV2 {
         {
             return Err(RenderExtractionError::InvalidRecord("texture record is invalid"));
         }
+        if self
+            .sampler
+            .is_some_and(|sampler| sampler.mipmap_filter != RenderTextureMipmapFilterV2::Disabled)
+        {
+            return Err(RenderExtractionError::InvalidRecord(
+                "texture mip filter requires an unavailable mip stream",
+            ));
+        }
+        if let Some(atlas) = self.atlas {
+            let atlas_width = u32::from(atlas.columns).checked_mul(u32::from(atlas.tile_width));
+            let atlas_height = u32::from(atlas.rows).checked_mul(u32::from(atlas.tile_height));
+            if atlas.columns == 0
+                || atlas.rows == 0
+                || atlas.tile_width == 0
+                || atlas.tile_height == 0
+                || atlas_width != Some(self.width)
+                || atlas_height != Some(self.height)
+                || !atlas.edge_inset.is_finite()
+                || !(0.0..0.5).contains(&atlas.edge_inset)
+            {
+                return Err(RenderExtractionError::InvalidRecord("texture atlas layout is invalid"));
+            }
+        }
         Ok(())
     }
 
@@ -339,6 +470,23 @@ impl RenderTextureV2 {
         hasher.write_u16(self.color_space as u16);
         hasher.write_u16(self.filter as u16);
         hasher.write_bytes(&self.rgba8);
+        if let Some(sampler) = self.sampler {
+            hasher.write_u16(0x5341);
+            hasher.write_u16(sampler.mag_filter as u16);
+            hasher.write_u16(sampler.min_filter as u16);
+            hasher.write_u16(sampler.mipmap_filter as u16);
+            hasher.write_u16(sampler.wrap_u as u16);
+            hasher.write_u16(sampler.wrap_v as u16);
+        }
+        if let Some(atlas) = self.atlas {
+            hasher.write_u16(0x4154);
+            hasher.write_u16(atlas.columns);
+            hasher.write_u16(atlas.rows);
+            hasher.write_u16(atlas.tile_width);
+            hasher.write_u16(atlas.tile_height);
+            hasher.write_u32(canonical_f32(atlas.edge_inset).to_bits());
+            hasher.write_u16(atlas.origin as u16);
+        }
     }
 }
 
@@ -1021,6 +1169,7 @@ mod tests {
             metalness: 0.0,
             alpha_cutoff: 0.5,
             atlas_tile: Some(2),
+            texture: None,
             double_sided: false,
             depth_write: true,
         };

@@ -1,3 +1,5 @@
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
@@ -11,6 +13,7 @@ use blockwild_render::{
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 360;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
     let fixtures_only = arguments.iter().any(|value| value == "--fixtures-only");
@@ -86,6 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}
 
 struct SceneRecord {
     name: String,

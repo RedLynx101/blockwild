@@ -2,6 +2,7 @@
 
 mod extraction;
 mod extraction_wire;
+mod material_contract;
 mod model_asset;
 mod scene_renderer;
 mod scene_store;
@@ -9,6 +10,7 @@ mod visual_matrix;
 
 pub use extraction::*;
 pub use extraction_wire::*;
+pub use material_contract::*;
 pub use model_asset::*;
 pub use scene_renderer::*;
 pub use scene_store::*;

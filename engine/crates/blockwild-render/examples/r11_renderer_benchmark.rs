@@ -1,3 +1,5 @@
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +15,7 @@ const HEIGHT: u32 = 720;
 const WARMUP_FRAMES: u64 = 30;
 const MEASURED_FRAMES: u64 = 180;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = env::args_os()
         .nth(1)
@@ -47,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let p99 = percentile(&micros, 0.99);
     let diagnostics = last.ok_or("renderer benchmark submitted no frames")?;
     let json = format!(
-        "{{\n  \"schema\": 1,\n  \"renderer\": \"blockwild-wgpu-r11\",\n  \"adapter\": \"{}\",\n  \"backend\": \"{}\",\n  \"width\": {WIDTH},\n  \"height\": {HEIGHT},\n  \"warmupFrames\": {WARMUP_FRAMES},\n  \"measuredFrames\": {MEASURED_FRAMES},\n  \"instances\": {},\n  \"particles\": {},\n  \"drawCalls\": {},\n  \"visibleInstances\": {},\n  \"culledInstances\": {},\n  \"residentInstanceBytes\": {},\n  \"instanceBufferReallocations\": {},\n  \"cpuSubmitMicros\": {{\"mean\": {:.2}, \"p50\": {:.2}, \"p95\": {:.2}, \"p99\": {:.2}}}\n}}\n",
+        "{{\n  \"schema\": 1,\n  \"renderer\": \"blockwild-wgpu-r11\",\n  \"adapter\": \"{}\",\n  \"backend\": \"{}\",\n  \"width\": {WIDTH},\n  \"height\": {HEIGHT},\n  \"warmupFrames\": {WARMUP_FRAMES},\n  \"measuredFrames\": {MEASURED_FRAMES},\n  \"instances\": {},\n  \"particles\": {},\n  \"drawCalls\": {},\n  \"visibleInstances\": {},\n  \"culledInstances\": {},\n  \"residentGeometryBytes\": {},\n  \"residentTextureBytes\": {},\n  \"residentInstanceBytes\": {},\n  \"uploadedTextureBytes\": {},\n  \"instanceBufferReallocations\": {},\n  \"cpuSubmitMicros\": {{\"mean\": {:.2}, \"p50\": {:.2}, \"p95\": {:.2}, \"p99\": {:.2}}}\n}}\n",
         escape_json(&diagnostics.adapter),
         escape_json(&diagnostics.backend),
         scene.frame.instances.len(),
@@ -55,7 +58,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         diagnostics.draw_calls,
         diagnostics.visible_instances,
         diagnostics.culled_instances,
+        diagnostics.resident_geometry_bytes,
+        diagnostics.resident_texture_bytes,
         diagnostics.resident_instance_buffer_bytes,
+        diagnostics.uploaded_texture_bytes,
         diagnostics.instance_buffer_reallocations,
         mean,
         p50,
@@ -71,6 +77,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}
 
 fn animation_frame(
     source: &RenderFrameV2,

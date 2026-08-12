@@ -18,6 +18,8 @@ struct MaterialUniform {
     emissive_strength: vec4<f32>,
     surface: vec4<f32>,
     render_flags: vec4<f32>,
+    texture_config: vec4<f32>,
+    texture_layout: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
@@ -72,26 +74,46 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let shading = u32(round(material.surface.w));
     let blend = u32(round(material.render_flags.x));
     let atlas_tile = material.render_flags.y;
-    let has_real_atlas = material.render_flags.z > 0.5;
+    let has_real_texture = material.render_flags.z > 0.5;
+    let atlas_grid = max(material.texture_config.xy, vec2<f32>(1.0));
+    let uv_mode = u32(round(material.texture_config.z));
+    let texture_animation = u32(round(material.texture_config.w));
+    let tile_inset = clamp(material.texture_layout.x, 0.0, 0.499);
+    let texture_origin = u32(round(material.texture_layout.y));
     var atlas_tone = 1.0;
     var atlas_color = vec4<f32>(1.0);
-    if (atlas_tile >= 0.0 && has_real_atlas) {
+    if (has_real_texture) {
         var sample_uv = input.uv;
-        if (blend == 4u) {
-            let tile = floor(sample_uv * 16.0);
-            var local_uv = fract(sample_uv * 16.0);
+        if (uv_mode == 1u && atlas_tile >= 0.0) {
+            let tile_row = floor(atlas_tile / atlas_grid.x);
+            let tile = vec2<f32>(
+                floor(atlas_tile - floor(atlas_tile / atlas_grid.x) * atlas_grid.x),
+                select(tile_row, atlas_grid.y - 1.0 - tile_row, texture_origin == 0u),
+            );
+            var local_uv = clamp(input.uv, vec2<f32>(0.0), vec2<f32>(1.0));
+            if (texture_animation == 1u) {
+                local_uv.x = fract(local_uv.x + camera.lighting_config.z);
+            }
+            local_uv = clamp(local_uv, vec2<f32>(tile_inset), vec2<f32>(1.0 - tile_inset));
+            sample_uv = (tile + local_uv) / atlas_grid;
+        } else if (texture_animation == 1u) {
+            let tile = floor(sample_uv * atlas_grid);
+            var local_uv = fract(sample_uv * atlas_grid);
             local_uv.x = fract(local_uv.x + camera.lighting_config.z);
-            local_uv = clamp(local_uv, vec2<f32>(0.014), vec2<f32>(0.986));
-            sample_uv = (tile + local_uv) / 16.0;
+            local_uv = clamp(local_uv, vec2<f32>(tile_inset), vec2<f32>(1.0 - tile_inset));
+            sample_uv = (tile + local_uv) / atlas_grid;
         }
-        atlas_color = textureSample(atlas_texture, atlas_sampler, vec2<f32>(sample_uv.x, 1.0 - sample_uv.y));
+        if (texture_origin == 0u) {
+            sample_uv.y = 1.0 - sample_uv.y;
+        }
+        atlas_color = textureSample(atlas_texture, atlas_sampler, sample_uv);
     } else if (atlas_tile >= 0.0) {
         let atlas_cell = floor(input.uv * 16.0);
         let noise = fract(sin(dot(atlas_cell + vec2<f32>(atlas_tile, atlas_tile * 0.37), vec2<f32>(12.9898, 78.233))) * 43758.5453);
         atlas_tone = mix(0.90, 1.08, noise);
     }
     var base = material.base_color * input.color * atlas_color;
-    if (has_real_atlas) {
+    if (has_real_texture) {
         // Three restores PACKED_VERTEX_COLOR_RANGE=1.1 on every voxel
         // material because the immutable vertex colors are packed as /1.1.
         base = vec4<f32>(base.rgb * 1.1, base.a);

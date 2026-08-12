@@ -15,6 +15,10 @@ unavailable; it does not crash, silently create a software oracle, or mutate
 scene state. Surface resize, device recovery, and resource replay preserve the
 same revision rules as the native scene store.
 
+Diagnostics report cumulative geometry/texture uploads separately from
+resident geometry, texture, and instance-buffer bytes. This keeps device-loss
+replay and atlas memory costs visible instead of folding them into CPU timing.
+
 Build it for `wasm32-unknown-unknown` with `wasm-bindgen` or the repository's
 content-addressed renderer publishing script. Native renderer behavior remains
 tested in `blockwild-render`; this crate is intentionally a browser-only edge.

@@ -84,6 +84,7 @@ run("cargo", [
 ], ENGINE);
 await cp(path.join(ROOT, "tests", "fixtures", "rust-engine", "r11-renderer", "canonical-resources.bwrd"), path.join(BINDGEN, "canonical-resources.bwrd"));
 await cp(path.join(ROOT, "tests", "fixtures", "rust-engine", "r11-renderer", "canonical-frame.bwrf"), path.join(BINDGEN, "canonical-frame.bwrf"));
+await cp(path.join(ROOT, "tests", "fixtures", "rust-engine", "r11-renderer", "texture-material-v2.bwrd"), path.join(BINDGEN, "texture-material-v2.bwrd"));
 await cp(path.join(MATRIX_FIXTURES, "live-resources.bwrd"), path.join(BINDGEN, "live-resources.bwrd"));
 await cp(path.join(MATRIX_FIXTURES, "live-frame.bwrf"), path.join(BINDGEN, "live-frame.bwrf"));
 for (const name of await readdir(MATRIX_FIXTURES)) {
@@ -146,6 +147,7 @@ const next = {
     wasm: `${hash}/renderer_bg.wasm`,
     resourceFixture: `${hash}/canonical-resources.bwrd`,
     frameFixture: `${hash}/canonical-frame.bwrf`,
+    textureMaterialFixture: `${hash}/texture-material-v2.bwrd`,
     liveResourceFixture: `${hash}/live-resources.bwrd`,
     liveFrameFixture: `${hash}/live-frame.bwrf`,
     visualMatrix: {

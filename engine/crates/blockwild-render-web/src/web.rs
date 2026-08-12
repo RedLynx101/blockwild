@@ -216,7 +216,7 @@ async fn create_device_and_renderer(
 
 fn diagnostics_json(value: &WgpuSceneDiagnosticsV2, cpu_micros: u64) -> String {
     format!(
-        "{{\"cpuMicros\":{cpu_micros},\"gpuMicros\":null,\"backend\":\"{}\",\"adapter\":\"{}\",\"visibleInstances\":{},\"culledInstances\":{},\"drawCalls\":{},\"transparentDrawCalls\":{},\"geometryBytes\":{},\"instanceBytes\":{},\"residentInstanceBytes\":{},\"instanceBufferReallocations\":{},\"deviceLost\":{}}}",
+        "{{\"cpuMicros\":{cpu_micros},\"gpuMicros\":null,\"backend\":\"{}\",\"adapter\":\"{}\",\"visibleInstances\":{},\"culledInstances\":{},\"drawCalls\":{},\"transparentDrawCalls\":{},\"geometryBytes\":{},\"textureBytes\":{},\"instanceBytes\":{},\"residentGeometryBytes\":{},\"residentTextureBytes\":{},\"residentInstanceBytes\":{},\"instanceBufferReallocations\":{},\"deviceLost\":{}}}",
         json_escape(&value.backend),
         json_escape(&value.adapter),
         value.visible_instances,
@@ -224,7 +224,10 @@ fn diagnostics_json(value: &WgpuSceneDiagnosticsV2, cpu_micros: u64) -> String {
         value.draw_calls,
         value.transparent_draw_calls,
         value.uploaded_geometry_bytes,
+        value.uploaded_texture_bytes,
         value.uploaded_instance_bytes,
+        value.resident_geometry_bytes,
+        value.resident_texture_bytes,
         value.resident_instance_buffer_bytes,
         value.instance_buffer_reallocations,
         value.device_lost,

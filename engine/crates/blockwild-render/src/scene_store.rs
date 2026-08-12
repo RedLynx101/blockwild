@@ -155,6 +155,16 @@ impl RenderResourceStoreV2 {
         let mut material_ids = self.materials.keys().copied().collect::<BTreeSet<_>>();
         let mut geometry_ids = self.geometries.keys().copied().collect::<BTreeSet<_>>();
         let mut texture_ids = self.textures.keys().copied().collect::<BTreeSet<_>>();
+        let mut final_materials = self
+            .materials
+            .iter()
+            .map(|(id, value)| (*id, value))
+            .collect::<BTreeMap<_, _>>();
+        let mut final_textures = self
+            .textures
+            .iter()
+            .map(|(id, value)| (*id, value))
+            .collect::<BTreeMap<_, _>>();
         for operation in &batch.operations {
             match operation {
                 RenderResourceOperationV2::UpsertMaterial(value) => {
@@ -169,6 +179,7 @@ impl RenderResourceStoreV2 {
                         return Err(RenderExtractionError::ResourceRevisionConflict(value.id.0));
                     }
                     material_ids.insert(value.id);
+                    final_materials.insert(value.id, value);
                 }
                 RenderResourceOperationV2::UpsertGeometry(value) => {
                     if material_ids.contains(&value.id) || texture_ids.contains(&value.id) {
@@ -185,6 +196,7 @@ impl RenderResourceStoreV2 {
                 }
                 RenderResourceOperationV2::RemoveMaterial(id) => {
                     material_ids.remove(id);
+                    final_materials.remove(id);
                 }
                 RenderResourceOperationV2::RemoveGeometry(id) => {
                     geometry_ids.remove(id);
@@ -201,9 +213,11 @@ impl RenderResourceStoreV2 {
                         return Err(RenderExtractionError::ResourceRevisionConflict(value.id.0));
                     }
                     texture_ids.insert(value.id);
+                    final_textures.insert(value.id, value);
                 }
                 RenderResourceOperationV2::RemoveTexture(id) => {
                     texture_ids.remove(id);
+                    final_textures.remove(id);
                 }
             }
         }
@@ -212,6 +226,22 @@ impl RenderResourceStoreV2 {
             || geometry_ids.intersection(&texture_ids).next().is_some()
         {
             return Err(RenderExtractionError::InvalidRecord("resource id spaces overlap"));
+        }
+        for material in final_materials.values() {
+            let Some(binding) = material.texture else {
+                continue;
+            };
+            let texture = final_textures
+                .get(&binding.texture)
+                .ok_or(RenderExtractionError::MissingResource(binding.texture.0))?;
+            if (binding.uv_mode == crate::RenderTextureUvModeV2::AtlasTile
+                || binding.animation != crate::RenderTextureAnimationV2::None)
+                && texture.atlas.is_none()
+            {
+                return Err(RenderExtractionError::InvalidRecord(
+                    "tile-local material references a texture without atlas metadata",
+                ));
+            }
         }
         Ok(())
     }
@@ -291,8 +321,9 @@ mod tests {
     use super::*;
     use crate::{
         BLOCK_ATLAS_TEXTURE_ID_V2, RenderBoundsV2, RenderCameraV2, RenderEnvironmentV2, RenderFrameInputV2,
-        RenderGeometryKindV2, RenderInstanceDomainV2, RenderInstanceV2, RenderShadingModelV2,
-        RenderTextureColorSpaceV2, RenderTextureFilterV2, RenderTransformV2,
+        RenderGeometryKindV2, RenderInstanceDomainV2, RenderInstanceV2, RenderMaterialTextureV2, RenderShadingModelV2,
+        RenderTextureAnimationV2, RenderTextureAtlasV2, RenderTextureColorSpaceV2, RenderTextureFilterV2,
+        RenderTextureOriginV2, RenderTextureUvModeV2, RenderTransformV2,
     };
 
     fn material(id: u64, revision: u32, blend: RenderBlendModeV2) -> RenderMaterialV2 {
@@ -308,6 +339,7 @@ mod tests {
             metalness: 0.0,
             alpha_cutoff: 0.5,
             atlas_tile: None,
+            texture: None,
             double_sided: false,
             depth_write: true,
         }
@@ -389,6 +421,8 @@ mod tests {
             height: 1,
             color_space: RenderTextureColorSpaceV2::Srgb,
             filter: RenderTextureFilterV2::Nearest,
+            sampler: None,
+            atlas: None,
             rgba8: vec![10, 20, 30, 255],
         };
         store
@@ -400,6 +434,84 @@ mod tests {
         assert_eq!(store.texture(BLOCK_ATLAS_TEXTURE_ID_V2), Some(&texture));
         assert_eq!(store.diagnostics().texture_count, 1);
         assert_eq!(store.diagnostics().texture_bytes, 4);
+    }
+
+    #[test]
+    fn texture_bindings_are_transactional_and_cannot_be_orphaned() {
+        let texture_id = RenderResourceId(40);
+        let texture = RenderTextureV2 {
+            id: texture_id,
+            revision: 1,
+            width: 2,
+            height: 1,
+            color_space: RenderTextureColorSpaceV2::Srgb,
+            filter: RenderTextureFilterV2::Nearest,
+            sampler: None,
+            atlas: Some(RenderTextureAtlasV2 {
+                columns: 2,
+                rows: 1,
+                tile_width: 1,
+                tile_height: 1,
+                edge_inset: 0.014,
+                origin: RenderTextureOriginV2::TopLeft,
+            }),
+            rgba8: vec![255; 8],
+        };
+        let mut textured = material(41, 1, RenderBlendModeV2::Water);
+        textured.atlas_tile = Some(1);
+        textured.texture = Some(RenderMaterialTextureV2 {
+            texture: texture_id,
+            uv_mode: RenderTextureUvModeV2::AtlasTile,
+            animation: RenderTextureAnimationV2::WaterScrollX,
+            opacity: 0.76,
+        });
+
+        let mut missing_store = RenderResourceStoreV2::default();
+        let missing =
+            RenderResourceBatchV2::create(1, 1, vec![RenderResourceOperationV2::UpsertMaterial(textured.clone())])
+                .unwrap();
+        assert_eq!(
+            missing_store.apply_resource_batch(&missing),
+            Err(RenderExtractionError::MissingResource(texture_id.0))
+        );
+        assert_eq!(missing_store.diagnostics().resource_revision, 0);
+
+        let mut store = RenderResourceStoreV2::default();
+        store
+            .apply_resource_batch(
+                &RenderResourceBatchV2::create(
+                    1,
+                    1,
+                    vec![
+                        RenderResourceOperationV2::UpsertMaterial(textured),
+                        RenderResourceOperationV2::UpsertTexture(texture),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let orphan =
+            RenderResourceBatchV2::create(1, 2, vec![RenderResourceOperationV2::RemoveTexture(texture_id)]).unwrap();
+        assert_eq!(
+            store.apply_resource_batch(&orphan),
+            Err(RenderExtractionError::MissingResource(texture_id.0))
+        );
+        assert_eq!(store.diagnostics().resource_revision, 1);
+        store
+            .apply_resource_batch(
+                &RenderResourceBatchV2::create(
+                    1,
+                    2,
+                    vec![
+                        RenderResourceOperationV2::RemoveMaterial(RenderResourceId(41)),
+                        RenderResourceOperationV2::RemoveTexture(texture_id),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(store.diagnostics().texture_count, 0);
+        assert_eq!(store.diagnostics().material_count, 0);
     }
 
     #[test]

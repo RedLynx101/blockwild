@@ -258,6 +258,7 @@ pub fn instantiate_compiled_model_v2(
             metalness: 0.0,
             alpha_cutoff: 0.0,
             atlas_tile: None,
+            texture: None,
             double_sided: false,
             depth_write: color[3] == 255,
         }));

@@ -8,8 +8,9 @@ use crate::{
     CompiledModelCatalogV2, RENDER_ANIMATION_BOB_V2, RENDER_ANIMATION_FLAP_V2, RENDER_ANIMATION_PULSE_V2,
     RENDER_ANIMATION_SPIN_V2, RENDER_ANIMATION_SWAY_V2, RenderBlendModeV2, RenderCameraV2, RenderEnvironmentV2,
     RenderExtractionError, RenderFrameInputV2, RenderFrameV2, RenderInstanceDomainV2, RenderInstanceV2,
-    RenderMaterialV2, RenderParticleV2, RenderResourceBatchV2, RenderResourceId, RenderResourceOperationV2,
-    RenderShadingModelV2, RenderTransformV2, VisualDiffPolicy, instantiate_compiled_model_v2,
+    RenderMaterialTextureV2, RenderMaterialV2, RenderParticleV2, RenderResourceBatchV2, RenderResourceId,
+    RenderResourceOperationV2, RenderShadingModelV2, RenderTextureAnimationV2, RenderTextureUvModeV2, RenderTextureV2,
+    RenderTransformV2, VisualDiffPolicy, instantiate_compiled_model_v2, production_block_atlas_texture_v2,
 };
 
 const FIXTURE_EPOCH: u64 = 11;
@@ -60,10 +61,10 @@ impl<'a> SceneBuilder<'a> {
         let box_geometry = RenderResourceId(1);
         let mut value = Self {
             catalog,
-            operations: vec![RenderResourceOperationV2::UpsertGeometry(unit_box_geometry_v2(
-                box_geometry,
-                1,
-            ))],
+            operations: vec![
+                RenderResourceOperationV2::UpsertGeometry(unit_box_geometry_v2(box_geometry, 1)),
+                RenderResourceOperationV2::UpsertTexture(deterministic_visual_atlas_v2()?),
+            ],
             instances: Vec::new(),
             particles: Vec::new(),
             next_resource: 100,
@@ -122,7 +123,7 @@ impl<'a> SceneBuilder<'a> {
                 Some(19),
             ),
             leaves: value.material(
-                [31, 91, 58, 232],
+                [31, 91, 58, 255],
                 [0; 3],
                 0.0,
                 RenderBlendModeV2::AlphaClip,
@@ -130,7 +131,7 @@ impl<'a> SceneBuilder<'a> {
                 Some(23),
             ),
             water: value.material(
-                [38, 118, 178, 154],
+                [38, 118, 178, 194],
                 [18, 54, 84],
                 0.14,
                 RenderBlendModeV2::Water,
@@ -138,7 +139,7 @@ impl<'a> SceneBuilder<'a> {
                 Some(31),
             ),
             ice: value.material(
-                [155, 222, 241, 184],
+                [155, 222, 241, 219],
                 [22, 68, 83],
                 0.08,
                 RenderBlendModeV2::AlphaBlend,
@@ -146,7 +147,7 @@ impl<'a> SceneBuilder<'a> {
                 Some(37),
             ),
             glass: value.material(
-                [149, 227, 216, 48],
+                [149, 227, 216, 107],
                 [22, 72, 65],
                 0.05,
                 RenderBlendModeV2::AlphaBlend,
@@ -232,13 +233,24 @@ impl<'a> SceneBuilder<'a> {
     ) -> RenderResourceId {
         let id = RenderResourceId(self.next_resource);
         self.next_resource += 1;
+        let opacity = match atlas_tile {
+            Some(31) => 0.76,
+            Some(37) => 0.86,
+            Some(41) => 0.42,
+            Some(_) => f32::from(color[3]) / 255.0,
+            None => 1.0,
+        };
+        let mut base_color = color;
+        if atlas_tile.is_some() {
+            base_color[3] = u8::MAX;
+        }
         self.operations
             .push(RenderResourceOperationV2::UpsertMaterial(RenderMaterialV2 {
                 id,
                 revision: 1,
                 shading,
                 blend,
-                base_color_rgba8: color,
+                base_color_rgba8: base_color,
                 emissive_rgb8: emissive,
                 emissive_strength,
                 roughness: if shading == RenderShadingModelV2::Standard {
@@ -252,16 +264,28 @@ impl<'a> SceneBuilder<'a> {
                     0.0
                 },
                 alpha_cutoff: if blend == RenderBlendModeV2::AlphaClip {
-                    0.42
+                    0.32
                 } else {
                     0.0
                 },
                 atlas_tile,
-                double_sided: !matches!(blend, RenderBlendModeV2::Opaque),
-                depth_write: !matches!(
-                    blend,
-                    RenderBlendModeV2::AlphaBlend | RenderBlendModeV2::Additive | RenderBlendModeV2::Water
-                ),
+                texture: atlas_tile.map(|_| RenderMaterialTextureV2 {
+                    texture: crate::BLOCK_ATLAS_TEXTURE_ID_V2,
+                    uv_mode: RenderTextureUvModeV2::AtlasTile,
+                    animation: if blend == RenderBlendModeV2::Water {
+                        RenderTextureAnimationV2::WaterScrollX
+                    } else {
+                        RenderTextureAnimationV2::None
+                    },
+                    opacity,
+                }),
+                double_sided: !(matches!(blend, RenderBlendModeV2::Opaque)
+                    || blend == RenderBlendModeV2::AlphaBlend && atlas_tile == Some(37)),
+                depth_write: atlas_tile == Some(37)
+                    || !matches!(
+                        blend,
+                        RenderBlendModeV2::AlphaBlend | RenderBlendModeV2::Additive | RenderBlendModeV2::Water
+                    ),
             }));
         id
     }
@@ -430,6 +454,66 @@ fn hash_unit(value: u32) -> f32 {
     let mixed = value.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     let mixed = ((mixed >> ((mixed >> 28) + 4)) ^ mixed).wrapping_mul(277_803_737);
     f32::from(((mixed >> 22) ^ mixed) as u16) / f32::from(u16::MAX)
+}
+
+/// Deterministic atlas used by the acceptance matrix. Its layout and sampler
+/// are the production 16 x 16-cell contract; pixels are deliberately compact
+/// fixture art so the renderer can exercise opaque grain, cutout foliage,
+/// translucent ice, and tile-local water without importing Three.js.
+fn deterministic_visual_atlas_v2() -> Result<RenderTextureV2, RenderExtractionError> {
+    const SIDE: usize = 256;
+    const TILE: usize = 16;
+    let mut rgba8 = vec![0_u8; SIDE * SIDE * 4];
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            let tile_column = x / TILE;
+            let tile_row = y / TILE;
+            let tile = tile_row * 16 + tile_column;
+            let local_x = x % TILE;
+            let local_y = y % TILE;
+            let grain = ((local_x * 17 + local_y * 29 + tile * 13 + local_x * local_y * 3) % 31) as u8;
+            let mut pixel = [
+                210_u8.saturating_add(grain),
+                216_u8.saturating_add(grain / 2),
+                205_u8.saturating_add(grain),
+                255,
+            ];
+            match tile {
+                // Cutout foliage: stable holes and a brighter central vein.
+                23 => {
+                    let stem = (7..=8).contains(&local_x);
+                    let leaf = (local_x * 5 + local_y * 7 + local_x * local_y) % 11 < 7;
+                    pixel = if stem || leaf {
+                        [154 + grain / 2, 224 + grain / 4, 168 + grain / 3, 255]
+                    } else {
+                        [0, 0, 0, 0]
+                    };
+                }
+                // Water bands make phase changes observable without crossing
+                // into a neighboring tile.
+                31 => {
+                    let ripple = ((local_x + local_y * 2) % 7) as u8;
+                    pixel = [184 + ripple * 3, 215 + ripple * 2, 238 + ripple * 2, 255];
+                }
+                // Ice keeps authored alpha opaque and relies on exact layer
+                // opacity/depth state, matching the Three material contract.
+                37 => {
+                    let crack = local_x == local_y || local_x + local_y == 15;
+                    pixel = if crack {
+                        [173, 211, 229, 255]
+                    } else {
+                        [224, 241, 248, 255]
+                    };
+                }
+                // Glass uses material opacity; texture alpha remains intact.
+                41 => pixel = [222, 245, 241, 255],
+                _ => {}
+            }
+            let offset = (y * SIDE + x) * 4;
+            rgba8[offset..offset + 4].copy_from_slice(&pixel);
+        }
+    }
+    production_block_atlas_texture_v2(1, rgba8)
 }
 
 fn camera(viewport: [u32; 2], position: [f32; 3], pitch: f32) -> RenderCameraV2 {
