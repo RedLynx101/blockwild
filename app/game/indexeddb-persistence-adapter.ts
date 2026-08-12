@@ -22,11 +22,12 @@ import {
 import { TypeScriptCanonicalHasher } from "./rust-kernel-shadow";
 
 export const RUST_PERSISTENCE_DATABASE_V1 = "blockwild-rust-persistence-v1";
-export const RUST_PERSISTENCE_DATABASE_VERSION_V1 = 2;
+export const RUST_PERSISTENCE_DATABASE_VERSION_V1 = 3;
 
 const STORE_META = "meta";
 const STORE_JOURNAL = "journal";
 const STORE_RECORDS = "records";
+const STORE_RECORD_VERSIONS = "record-versions";
 const STORE_CHECKPOINTS = "checkpoints";
 const STORE_LEGACY_BACKUPS = "legacy-backups";
 const STORE_PLATFORM_CHUNKS = "platform-chunks";
@@ -83,6 +84,9 @@ export type PersistenceMigrationReadbackV1 = Readonly<{
 
 function checkpointKey(worldId: string, checkpointId: string) { return `${encodeURIComponent(worldId)}|${encodeURIComponent(checkpointId)}`; }
 function journalKey(worldId: string, sequence: number) { return `${encodeURIComponent(worldId)}|${sequence.toString().padStart(16, "0")}`; }
+function recordVersionKey(address: PersistenceRecordAddressV1, revision: number) {
+  return `${persistenceRecordKeyV1(address)}|revision:${revision.toString().padStart(20, "0")}`;
+}
 function sequenceKey(worldId: string) { return `journal-sequence|${encodeURIComponent(worldId)}`; }
 function latestCheckpointKey(worldId: string) { return `latest-checkpoint|${encodeURIComponent(worldId)}`; }
 function migrationKey(worldId: string) { return `migration-complete|${encodeURIComponent(worldId)}`; }
@@ -94,6 +98,23 @@ function platformChunkPrefix(operation: StoredPlatformChunk["operation"], worldI
 }
 function platformChunkKey(operation: StoredPlatformChunk["operation"], worldId: string, objectId: string, offset: number) {
   return `${platformChunkPrefix(operation, worldId, objectId)}${offset.toString().padStart(20, "0")}`;
+}
+
+function recordBelongsToWorld(record: StoredRecord | undefined, worldId: string) {
+  if (!record) return false;
+  const address = record.address;
+  return address.universeId === worldId
+    || address.universeId === `world:${worldId}`
+    || `${address.universeId}@${address.locationId}` === worldId
+    || `world:${address.universeId}` === worldId;
+}
+
+function sameStoredRecord(left: StoredRecord, right: StoredRecord) {
+  return left.revision === right.revision
+    && persistenceRecordKeyV1(left.address) === persistenceRecordKeyV1(right.address)
+    && left.payloadHash === right.payloadHash
+    && left.payload.byteLength === right.payload.byteLength
+    && left.payload.every((value, index) => value === right.payload[index]);
 }
 
 class PlatformWriter {
@@ -327,7 +348,7 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
       const request = this.factory!.open(this.databaseName, RUST_PERSISTENCE_DATABASE_VERSION_V1);
       request.onupgradeneeded = () => {
         const database = request.result;
-        for (const name of [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS, STORE_PLATFORM_CHUNKS, STORE_TOMBSTONES]) {
+        for (const name of [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_RECORD_VERSIONS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS, STORE_PLATFORM_CHUNKS, STORE_TOMBSTONES]) {
           if (!database.objectStoreNames.contains(name)) database.createObjectStore(name, { keyPath: "key" });
         }
       };
@@ -348,11 +369,14 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
     if (checkpoint && (checkpoint.worldId !== transaction.worldId || checkpoint.journalSequence !== transaction.nextJournalSequence)) {
       return reject(transaction, "corrupt", "Checkpoint does not describe the transaction's committed world revision.");
     }
-    const idb = database.transaction(checkpoint ? [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_CHECKPOINTS, STORE_TOMBSTONES] : [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_TOMBSTONES], "readwrite", { durability: "strict" });
+    const idb = database.transaction(checkpoint
+      ? [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_RECORD_VERSIONS, STORE_CHECKPOINTS, STORE_TOMBSTONES]
+      : [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_RECORD_VERSIONS, STORE_TOMBSTONES], "readwrite", { durability: "strict" });
     const done = transactionDone(idb);
     try {
       const metaStore = idb.objectStore(STORE_META);
       const recordStore = idb.objectStore(STORE_RECORDS);
+      const versionStore = idb.objectStore(STORE_RECORD_VERSIONS);
       const journalStore = idb.objectStore(STORE_JOURNAL);
       const tombstone = await requestValue(idb.objectStore(STORE_TOMBSTONES).get(tombstoneKey(transaction.worldId))) as StoredTombstone | undefined;
       if (tombstone) {
@@ -373,11 +397,31 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
           await abortTransaction(idb);
           return reject(transaction, "record-conflict", `Record ${key} changed before the transaction committed.`);
         }
+        if (current) {
+          if (!persistencePayloadMatchesV1(current.payload, current.payloadHash)) {
+            await abortTransaction(idb);
+            return reject(transaction, "corrupt", `Record ${key} failed its durable payload hash.`);
+          }
+          const versionKey = recordVersionKey(current.address, current.revision);
+          const historical = await requestValue(versionStore.get(versionKey)) as StoredRecord | undefined;
+          if (historical && !sameStoredRecord(current, historical)) {
+            await abortTransaction(idb);
+            return reject(transaction, "corrupt", `Immutable record version ${versionKey} disagrees with the current durable record.`);
+          }
+          // V2 databases have only the mutable current record. Materialize
+          // that exact parent revision in this same strict V3 transaction
+          // before an overwrite or delete can make it unreachable.
+          if (!historical) versionStore.put(Object.freeze({ ...current, key: versionKey }) satisfies StoredRecord);
+        }
       }
       for (const mutation of transaction.mutations) {
         const key = persistenceRecordKeyV1(mutation.address);
         if (mutation.operation === "delete") recordStore.delete(key);
-        else recordStore.put(Object.freeze({ key, address: mutation.address, revision: mutation.nextRecordRevision, payload: Uint8Array.from(mutation.payload), payloadHash: mutation.payloadHash }) satisfies StoredRecord);
+        else {
+          const stored = Object.freeze({ key, address: mutation.address, revision: mutation.nextRecordRevision, payload: Uint8Array.from(mutation.payload), payloadHash: mutation.payloadHash }) satisfies StoredRecord;
+          recordStore.put(stored);
+          versionStore.put(Object.freeze({ ...stored, key: recordVersionKey(mutation.address, mutation.nextRecordRevision) }) satisfies StoredRecord);
+        }
       }
       journalStore.put(Object.freeze({ key: journalKey(transaction.worldId, transaction.nextJournalSequence), worldId: transaction.worldId, sequence: transaction.nextJournalSequence, transaction: cloneTransaction(transaction) }) satisfies StoredJournal);
       metaStore.put(Object.freeze({ key: sequenceKey(transaction.worldId), value: transaction.nextJournalSequence }) satisfies StoredMeta);
@@ -423,8 +467,15 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
 
   async readRecord(address: PersistenceRecordAddressV1, revision?: number) {
     const database = await this.open();
-    const idb = database.transaction(STORE_RECORDS, "readonly");
-    const result = await requestValue(idb.objectStore(STORE_RECORDS).get(persistenceRecordKeyV1(address))) as StoredRecord | undefined;
+    const idb = database.transaction([STORE_RECORDS, STORE_RECORD_VERSIONS], "readonly");
+    const key = revision === undefined ? persistenceRecordKeyV1(address) : recordVersionKey(address, revision);
+    let result = await requestValue(idb.objectStore(revision === undefined ? STORE_RECORDS : STORE_RECORD_VERSIONS).get(key)) as StoredRecord | undefined;
+    // Databases upgraded from V2 have only the current record. It is a valid
+    // exact-version source until the first V3 commit materializes history.
+    if (!result && revision !== undefined) {
+      const current = await requestValue(idb.objectStore(STORE_RECORDS).get(persistenceRecordKeyV1(address))) as StoredRecord | undefined;
+      if (current?.revision === revision) result = current;
+    }
     await transactionDone(idb);
     if (!result || revision !== undefined && result.revision !== revision) return null;
     return Uint8Array.from(result.payload);
@@ -515,7 +566,7 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
 
   private async compactPlatform(request: RustPersistencePlatformRequestV1) {
     const database = await this.open();
-    const idb = database.transaction([STORE_META, STORE_JOURNAL, STORE_CHECKPOINTS], "readwrite", { durability: "strict" });
+    const idb = database.transaction([STORE_META, STORE_JOURNAL, STORE_RECORD_VERSIONS, STORE_CHECKPOINTS], "readwrite", { durability: "strict" });
     const done = transactionDone(idb); const meta = idb.objectStore(STORE_META); const checkpoints = idb.objectStore(STORE_CHECKPOINTS);
     try {
       const latest = await requestValue(meta.get(latestCheckpointKey(request.worldId))) as StoredMeta | undefined;
@@ -523,9 +574,12 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
       if (!head || latest?.value !== request.objectId || head.checkpoint.checkpointHash !== request.expectedHeadHash) {
         await abortTransaction(idb); return platformResponse(request, "conflict", { message: "Compaction head changed before the browser transaction began." });
       }
-      const keep = new Set<string>(); let cursor: PersistenceCheckpointV1 | null = head.checkpoint;
+      const keep = new Set<string>();
+      const keepRecordVersions = new Set<string>();
+      let cursor: PersistenceCheckpointV1 | null = head.checkpoint;
       for (let depth = 0; cursor && depth <= request.limit; depth += 1) {
         keep.add(checkpointKey(cursor.worldId, cursor.checkpointId));
+        for (const descriptor of cursor.records) keepRecordVersions.add(recordVersionKey(descriptor.address, descriptor.revision));
         if (!cursor.parentCheckpointId) break;
         const parentRecord = await requestValue(checkpoints.get(checkpointKey(cursor.worldId, cursor.parentCheckpointId))) as StoredCheckpoint | undefined;
         cursor = parentRecord?.checkpoint ?? null;
@@ -534,6 +588,10 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
       await deleteMatching(idb.objectStore(STORE_JOURNAL), (value) => {
         const journal = value as StoredJournal | undefined;
         return journal?.worldId === request.worldId && journal.sequence <= head.checkpoint.journalSequence;
+      });
+      await deleteMatching(idb.objectStore(STORE_RECORD_VERSIONS), (value, key) => {
+        const record = value as StoredRecord | undefined;
+        return recordBelongsToWorld(record, request.worldId) && !keepRecordVersions.has(String(key));
       });
       const previous = await requestValue(meta.get(storageRevisionKey(request.worldId))) as StoredMeta | undefined;
       const storageRevision = (typeof previous?.value === "number" ? previous.value : 0) + 1;
@@ -550,7 +608,7 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
 
   private async deleteWorldPlatform(request: RustPersistencePlatformRequestV1) {
     const database = await this.open();
-    const stores = [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS, STORE_PLATFORM_CHUNKS, STORE_TOMBSTONES];
+    const stores = [STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_RECORD_VERSIONS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS, STORE_PLATFORM_CHUNKS, STORE_TOMBSTONES];
     const idb = database.transaction(stores, "readwrite", { durability: "strict" }); const done = transactionDone(idb); const meta = idb.objectStore(STORE_META);
     try {
       const latest = await requestValue(meta.get(latestCheckpointKey(request.worldId))) as StoredMeta | undefined;
@@ -566,7 +624,8 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
       await Promise.all([
         deleteMatching(meta, (_value, key) => typeof key === "string" && (key.endsWith(`|${encodedWorldId}`) || key.includes(`|${encodedWorldId}|`))),
         deleteMatching(idb.objectStore(STORE_JOURNAL), (value) => (value as StoredJournal | undefined)?.worldId === request.worldId),
-        deleteMatching(idb.objectStore(STORE_RECORDS), (value) => (value as StoredRecord | undefined)?.address?.universeId === `world:${request.worldId}`),
+        deleteMatching(idb.objectStore(STORE_RECORDS), (value) => recordBelongsToWorld(value as StoredRecord | undefined, request.worldId)),
+        deleteMatching(idb.objectStore(STORE_RECORD_VERSIONS), (value) => recordBelongsToWorld(value as StoredRecord | undefined, request.worldId)),
         deleteMatching(idb.objectStore(STORE_CHECKPOINTS), (value) => (value as StoredCheckpoint | undefined)?.checkpoint?.worldId === request.worldId),
         deleteMatching(idb.objectStore(STORE_LEGACY_BACKUPS), (value) => (value as StoredLegacyBackup | undefined)?.worldId === request.worldId),
         deleteMatching(idb.objectStore(STORE_PLATFORM_CHUNKS), (value) => (value as StoredPlatformChunk | undefined)?.worldId === request.worldId),
@@ -673,11 +732,14 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
       if (payload.byteLength !== descriptor.byteLength || !persistencePayloadMatchesV1(payload, descriptor.payloadHash)) throw new Error(`migration record ${key} failed semantic readback hashing`);
     }
     const database = await this.open();
-    const idb = database.transaction([STORE_META, STORE_RECORDS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS], "readwrite", { durability: "strict" });
+    const idb = database.transaction([STORE_META, STORE_RECORDS, STORE_RECORD_VERSIONS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS], "readwrite", { durability: "strict" });
     const records = idb.objectStore(STORE_RECORDS);
+    const versions = idb.objectStore(STORE_RECORD_VERSIONS);
     for (const descriptor of input.checkpoint.records) {
       const key = persistenceRecordKeyV1(descriptor.address);
-      records.put(Object.freeze({ key, address: descriptor.address, revision: descriptor.revision, payload: Uint8Array.from(input.recordPayloads.get(key)!), payloadHash: descriptor.payloadHash }) satisfies StoredRecord);
+      const stored = Object.freeze({ key, address: descriptor.address, revision: descriptor.revision, payload: Uint8Array.from(input.recordPayloads.get(key)!), payloadHash: descriptor.payloadHash }) satisfies StoredRecord;
+      records.put(stored);
+      versions.put(Object.freeze({ ...stored, key: recordVersionKey(descriptor.address, descriptor.revision) }) satisfies StoredRecord);
     }
     idb.objectStore(STORE_CHECKPOINTS).put(Object.freeze({ key: checkpointKey(input.checkpoint.worldId, input.checkpoint.checkpointId), checkpoint: cloneCheckpoint(input.checkpoint) }) satisfies StoredCheckpoint);
     idb.objectStore(STORE_LEGACY_BACKUPS).put(Object.freeze({ key: backupKey(input.bundle), worldId: input.bundle.worldId, sourceKey: input.bundle.sourceKey, bundle: input.bundle, sourcePayload: Uint8Array.from(input.sourcePayload) }) satisfies StoredLegacyBackup);
@@ -707,12 +769,13 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
 
   async deleteWorld(worldId: string) {
     const database = await this.open();
-    const idb = database.transaction([STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS], "readwrite", { durability: "strict" });
+    const idb = database.transaction([STORE_META, STORE_JOURNAL, STORE_RECORDS, STORE_RECORD_VERSIONS, STORE_CHECKPOINTS, STORE_LEGACY_BACKUPS], "readwrite", { durability: "strict" });
     const encodedWorldId = encodeURIComponent(worldId);
     await Promise.all([
       deleteMatching(idb.objectStore(STORE_META), (_value, key) => typeof key === "string" && (key.endsWith(`|${encodedWorldId}`) || key.includes(`|${encodedWorldId}|`))),
       deleteMatching(idb.objectStore(STORE_JOURNAL), (value) => (value as StoredJournal | undefined)?.worldId === worldId),
-      deleteMatching(idb.objectStore(STORE_RECORDS), (value) => (value as StoredRecord | undefined)?.address?.universeId === `world:${worldId}`),
+      deleteMatching(idb.objectStore(STORE_RECORDS), (value) => recordBelongsToWorld(value as StoredRecord | undefined, worldId)),
+      deleteMatching(idb.objectStore(STORE_RECORD_VERSIONS), (value) => recordBelongsToWorld(value as StoredRecord | undefined, worldId)),
       deleteMatching(idb.objectStore(STORE_CHECKPOINTS), (value) => (value as StoredCheckpoint | undefined)?.checkpoint?.worldId === worldId),
       deleteMatching(idb.objectStore(STORE_LEGACY_BACKUPS), (value) => (value as StoredLegacyBackup | undefined)?.worldId === worldId),
     ]);
@@ -741,6 +804,7 @@ export class IndexedDbPersistenceAdapterV1 implements PersistencePlatformAdapter
 export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 {
   private readonly sequences = new Map<string, number>();
   private readonly records = new Map<string, StoredRecord>();
+  private readonly recordVersions = new Map<string, StoredRecord>();
   private readonly checkpoints = new Map<string, PersistenceCheckpointV1>();
   private readonly latestCheckpoints = new Map<string, string>();
   private readonly storageRevisions = new Map<string, number>();
@@ -760,7 +824,11 @@ export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 
     for (const mutation of transaction.mutations) {
       const key = persistenceRecordKeyV1(mutation.address);
       if (mutation.operation === "delete") next.delete(key);
-      else next.set(key, Object.freeze({ key, address: mutation.address, revision: mutation.nextRecordRevision, payload: Uint8Array.from(mutation.payload), payloadHash: mutation.payloadHash }));
+      else {
+        const stored = Object.freeze({ key, address: mutation.address, revision: mutation.nextRecordRevision, payload: Uint8Array.from(mutation.payload), payloadHash: mutation.payloadHash });
+        next.set(key, stored);
+        this.recordVersions.set(recordVersionKey(mutation.address, mutation.nextRecordRevision), Object.freeze({ ...stored, key: recordVersionKey(mutation.address, mutation.nextRecordRevision) }));
+      }
     }
     this.records.clear(); for (const [key, value] of next) this.records.set(key, value);
     this.sequences.set(transaction.worldId, transaction.nextJournalSequence);
@@ -777,7 +845,12 @@ export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 
     return checkpointId ? this.readCheckpoint(worldId, checkpointId) : null;
   }
   async readCheckpoint(worldId: string, checkpointId: string) { const value = this.checkpoints.get(checkpointKey(worldId, checkpointId)); return value ? cloneCheckpoint(value) : null; }
-  async readRecord(address: PersistenceRecordAddressV1, revision?: number) { const value = this.records.get(persistenceRecordKeyV1(address)); return !value || revision !== undefined && value.revision !== revision ? null : Uint8Array.from(value.payload); }
+  async readRecord(address: PersistenceRecordAddressV1, revision?: number) {
+    const value = revision === undefined
+      ? this.records.get(persistenceRecordKeyV1(address))
+      : this.recordVersions.get(recordVersionKey(address, revision)) ?? this.records.get(persistenceRecordKeyV1(address));
+    return !value || revision !== undefined && value.revision !== revision ? null : Uint8Array.from(value.payload);
+  }
   async estimate() { return Object.freeze({ usage: [...this.records.values()].reduce((total, record) => total + record.payload.byteLength, 0), quota: null }); }
   async executePlatform(request: RustPersistencePlatformRequestV1): Promise<Extract<RustPersistenceResponseV1, { kind: "platform" }>> {
     const revision = () => this.storageRevisions.get(request.worldId) ?? 0;
@@ -788,7 +861,9 @@ export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 
     if (request.operation === "read-recovery-page") {
       const checkpoint = await this.readCheckpoint(request.worldId, request.objectId); if (!checkpoint) return platformResponse(request, "empty");
       const start = request.cursor; const descriptors = checkpoint.records.slice(start, start + request.limit); const entries: RecoveryPageEntry[] = descriptors.map((descriptor) => {
-        const record = this.records.get(persistenceRecordKeyV1(descriptor.address)); return Object.freeze({ descriptor, payload: record ? Uint8Array.from(record.payload) : null });
+        const record = this.recordVersions.get(recordVersionKey(descriptor.address, descriptor.revision))
+          ?? this.records.get(persistenceRecordKeyV1(descriptor.address));
+        return Object.freeze({ descriptor, payload: record?.revision === descriptor.revision ? Uint8Array.from(record.payload) : null });
       });
       const nextCursor = start + entries.length < checkpoint.records.length ? start + entries.length : null;
       const payload = encodePagedRecoveryPage(checkpoint.checkpointId, start, entries, nextCursor);
@@ -814,7 +889,17 @@ export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 
     }
     if (request.operation === "compact") {
       const checkpoint = await this.readCheckpoint(request.worldId, request.objectId);
-      if (!checkpoint || checkpoint.checkpointHash !== request.expectedHeadHash) return platformResponse(request, "conflict");
+      if (!checkpoint || this.latestCheckpoints.get(request.worldId) !== request.objectId || checkpoint.checkpointHash !== request.expectedHeadHash) return platformResponse(request, "conflict");
+      const keepCheckpoints = new Set<string>();
+      const keepVersions = new Set<string>();
+      let cursor: PersistenceCheckpointV1 | null = checkpoint;
+      for (let depth = 0; cursor && depth <= request.limit; depth += 1) {
+        keepCheckpoints.add(checkpointKey(cursor.worldId, cursor.checkpointId));
+        for (const descriptor of cursor.records) keepVersions.add(recordVersionKey(descriptor.address, descriptor.revision));
+        cursor = cursor.parentCheckpointId ? this.checkpoints.get(checkpointKey(cursor.worldId, cursor.parentCheckpointId)) ?? null : null;
+      }
+      for (const [key, candidate] of this.checkpoints) if (candidate.worldId === request.worldId && !keepCheckpoints.has(key)) this.checkpoints.delete(key);
+      for (const [key, record] of this.recordVersions) if (recordBelongsToWorld(record, request.worldId) && !keepVersions.has(key)) this.recordVersions.delete(key);
       const next = revision() + 1; this.storageRevisions.set(request.worldId, next); return platformResponse(request, "accepted", { storageRevision: next, durableHash: platformReceiptHash(request, next) });
     }
     if (request.operation === "export-page") {
@@ -823,7 +908,9 @@ export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 
       const endCursor = checkpoint.records.length + 1;
       if (request.cursor === endCursor) return platformResponse(request, "accepted", { storageRevision: revision(), durableHash: portableArchiveHash(checkpoint), payload: encodePortableEnd(checkpoint) });
       const descriptor = checkpoint.records[request.cursor - 1]; if (!descriptor) return platformResponse(request, "empty");
-      const record = this.records.get(persistenceRecordKeyV1(descriptor.address)); if (!record) return platformResponse(request, "corrupt");
+      const record = this.recordVersions.get(recordVersionKey(descriptor.address, descriptor.revision))
+        ?? this.records.get(persistenceRecordKeyV1(descriptor.address));
+      if (!record || record.revision !== descriptor.revision) return platformResponse(request, "corrupt");
       const payload = encodePortableRecord(request.cursor - 1, descriptor, 0, record.payload, true);
       return platformResponse(request, "accepted", { storageRevision: revision(), durableHash: portableArchiveHash(checkpoint), nextCursor: request.cursor + 1, payload });
     }
@@ -838,7 +925,8 @@ export class MemoryPersistenceAdapterV1 implements PersistencePlatformAdapterV1 
   async deleteWorld(worldId: string) {
     this.sequences.delete(worldId);
     this.latestCheckpoints.delete(worldId);
-    for (const [key, record] of this.records) if (record.address.universeId === `world:${worldId}`) this.records.delete(key);
+    for (const [key, record] of this.records) if (recordBelongsToWorld(record, worldId)) this.records.delete(key);
+    for (const [key, record] of this.recordVersions) if (recordBelongsToWorld(record, worldId)) this.recordVersions.delete(key);
     for (const [key, checkpoint] of this.checkpoints) if (checkpoint.worldId === worldId) this.checkpoints.delete(key);
     for (const [key, chunk] of this.platformChunks) if (chunk.worldId === worldId) this.platformChunks.delete(key);
   }

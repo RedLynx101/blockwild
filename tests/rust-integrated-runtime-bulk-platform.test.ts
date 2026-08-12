@@ -390,3 +390,52 @@ test("bulk authority rejection stays usable only when it proves the expected sta
   );
   assert.equal(stale.diagnostics().state, "failed", "a rejection that lies about current authority fails closed");
 });
+
+test("production service routes native save initialization through the dedicated bulk operation", async () => {
+  const seen: RustIntegratedRuntimeBulkRequestV1[] = [];
+  const transport = {
+    async request(request: RustIntegratedRuntimeRequestV1): Promise<RustIntegratedRuntimeResponseV1> {
+      if (request.type !== "runtime-create-v1") throw new Error(`unexpected ${request.type}`);
+      return {
+        ...normalReady(request),
+        artifactHash: "fixture",
+        capabilities: [
+          "awaited-receipts-v1", "bounded-extraction-v1", "bulk-platform-v1",
+          "fixed-step-input-v1", "integrated-runtime-v1", "native-save-hydration-v1",
+        ],
+      };
+    },
+    async requestBulk(request: RustIntegratedRuntimeBulkRequestV1): Promise<RustIntegratedRuntimeBulkResponseV1> {
+      seen.push(request);
+      if (request.type !== "runtime-bulk-initialize-native-save-v1") throw new Error(`unexpected ${request.type}`);
+      return {
+        type: "runtime-bulk-save-progress-v1",
+        requestId: request.requestId,
+        clientEpoch: request.clientEpoch,
+        workerEpoch: 3,
+        current: request.expected,
+        stageId: request.saveId,
+        state: "finalized",
+        receivedChunks: 0,
+        chunkCount: 0,
+        receivedBytes: 0,
+        setHash: "2".repeat(32),
+        manifestHash: "3".repeat(32),
+        dispatcherRequestId: 1,
+        remainingDirtyRecords: 5,
+      };
+    },
+    bulkDiagnostics: () => Object.freeze({ pending: 0, queuedBytes: 0, peakQueuedBytes: 0, requests: seen.length, routineRequests: seen.length, recoveryScaleRequests: 0, backpressureRejects: 0, copiedInputBytes: 0, transferredInputBytes: 0, transferredOutputBytes: 0 }),
+    dispose() {},
+  };
+  const service = new RustIntegratedRuntimeServiceV1({
+    expectedArtifactHash: "fixture",
+    transportFactory: () => transport,
+  });
+  await service.start(config());
+  assert.equal(service.isAuthoritative(), true);
+  const progress = await service.initializeNativeSave("native.new.fixture", 101);
+  assert.equal(progress.stageId, "native.new.fixture");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].type, "runtime-bulk-initialize-native-save-v1");
+});

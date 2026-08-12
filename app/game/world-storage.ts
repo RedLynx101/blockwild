@@ -12,6 +12,11 @@ import {
 } from "./settlement-index";
 import { LEGACY_GAME_VERSION, normalizeGameVersion } from "./version";
 import { IndexedDbPersistenceAdapterV1 } from "./indexeddb-persistence-adapter";
+import type {
+  RustNativeWorldPersistenceRecoveryV1,
+  RustNativeWorldPersistenceSaveV1,
+  RustNativeWorldPersistenceSessionV1,
+} from "./rust-native-world-persistence";
 import { WorldPersistenceCoordinatorV1 } from "./world-persistence-coordinator";
 
 export const WORLD_CATALOG_VERSION = 1;
@@ -147,6 +152,8 @@ export type WorldStorageDependencies = {
   storageEventTarget?: StorageEventTarget | null;
   /** Injectable journal coordinator; null keeps the synchronous compatibility path. */
   persistenceCoordinator?: WorldPersistenceCoordinatorV1 | null;
+  /** Optional post-runtime Rust authority binding. Compatibility bytes stay protected, never relabeled. */
+  nativePersistence?: Readonly<{ catalogWorldId: string; session: RustNativeWorldPersistenceSessionV1 }> | null;
 };
 
 type StorageEventTarget = {
@@ -455,6 +462,7 @@ export class WorldStorage {
   private readonly idFactory: () => string;
   private readonly storageEventTarget: StorageEventTarget | null;
   private readonly persistence: WorldPersistenceCoordinatorV1 | null;
+  private nativePersistence: Readonly<{ catalogWorldId: string; session: RustNativeWorldPersistenceSessionV1 }> | null;
   private catalog: WorldCatalog = emptyCatalog();
   private catalogStored = false;
   private observedCatalogRevision = 0;
@@ -498,6 +506,7 @@ export class WorldStorage {
       ? this.defaultStorageEventTarget()
       : dependencies.storageEventTarget;
     this.persistence = dependencies.persistenceCoordinator === undefined ? defaultPersistenceCoordinator() : dependencies.persistenceCoordinator;
+    this.nativePersistence = dependencies.nativePersistence ?? null;
     this.readCatalog();
     this.observedCatalogRevision = revisionsFor(this.storage)?.catalog ?? 0;
     this.migrateLegacySave();
@@ -509,7 +518,66 @@ export class WorldStorage {
     this.trustedDocumentShells.clear();
   }
 
-  async flushPersistence() { await this.persistence?.flush(); }
+  async flushPersistence() {
+    await this.persistence?.flush();
+    await this.nativePersistence?.session.flush();
+  }
+
+  /** Bind the already-created Rust runtime for explicit native save/hydration. */
+  bindNativePersistence(catalogWorldId: string, session: RustNativeWorldPersistenceSessionV1) {
+    this.ensureCatalogCurrent();
+    if (!this.catalog.worlds.some((world) => world.id === catalogWorldId)) {
+      return fail<true>("not-found", "That world does not exist on this device.", this.dataKey(catalogWorldId));
+    }
+    if (this.nativePersistence && this.nativePersistence.catalogWorldId !== catalogWorldId) {
+      return fail<true>("invalid", "Another world still owns the live Rust persistence session.", this.dataKey(this.nativePersistence.catalogWorldId));
+    }
+    this.nativePersistence = Object.freeze({ catalogWorldId, session });
+    return ok(true);
+  }
+
+  unbindNativePersistence(session: RustNativeWorldPersistenceSessionV1) {
+    if (this.nativePersistence?.session === session) this.nativePersistence = null;
+  }
+
+  async initializeNativeWorld(catalogWorldId: string, createdAt = this.now()): Promise<WorldStorageResult<RustNativeWorldPersistenceSaveV1>> {
+    const binding = this.requireNativeBinding(catalogWorldId);
+    if (!binding.ok) return binding;
+    try { return ok(await binding.value.initializeNewWorld(createdAt)); }
+    catch (error) { return this.nativePersistenceFailure(catalogWorldId, "initialize", error); }
+  }
+
+  async hydrateNativeWorld(catalogWorldId: string): Promise<WorldStorageResult<RustNativeWorldPersistenceRecoveryV1>> {
+    const binding = this.requireNativeBinding(catalogWorldId);
+    if (!binding.ok) return binding;
+    try {
+      const recovery = await binding.value.recoverAndHydrate();
+      if (recovery.status === "blocked") {
+        return fail("corrupt", `Native Rust recovery was blocked: ${recovery.message}`, this.dataKey(catalogWorldId));
+      }
+      if (recovery.status === "empty") {
+        return fail(
+          "corrupt",
+          "This browser world has no native Rust checkpoint. Its protected compatibility save needs an explicit lossless migration adapter before it can be opened.",
+          this.dataKey(catalogWorldId),
+        );
+      }
+      return ok(recovery);
+    } catch (error) { return this.nativePersistenceFailure(catalogWorldId, "hydrate", error); }
+  }
+
+  async saveNativeWorld(catalogWorldId: string, createdAt = this.now()): Promise<WorldStorageResult<RustNativeWorldPersistenceSaveV1>> {
+    const binding = this.requireNativeBinding(catalogWorldId);
+    if (!binding.ok) return binding;
+    try { return ok(await binding.value.saveNative(createdAt)); }
+    catch (error) { return this.nativePersistenceFailure(catalogWorldId, "save", error); }
+  }
+
+  async shutdownNativePersistence() {
+    const binding = this.nativePersistence;
+    this.nativePersistence = null;
+    await binding?.session.shutdown();
+  }
 
   get ownershipNotice() {
     return WORLD_OWNERSHIP_NOTICE;
@@ -1027,6 +1095,16 @@ export class WorldStorage {
   }
 
   private schedulePersistence(document: StoredWorld) {
+    if (this.nativePersistence?.catalogWorldId === document.metadata.id) {
+      void this.nativePersistence.session.saveNative(this.now()).catch((error) => {
+        this.diagnostics.push({
+          code: "unavailable",
+          message: `The native Rust save could not commit; the protected local compatibility document remains untouched. ${error instanceof Error ? error.message : "Persistence unavailable."}`,
+          key: this.dataKey(document.metadata.id),
+        });
+      });
+      return;
+    }
     if (!this.persistence) return;
     void this.persistence.persistWorld(document.metadata.id, document.save).catch((error) => {
       this.diagnostics.push({
@@ -1046,6 +1124,27 @@ export class WorldStorage {
         options: { ...document.options, enabledFactions: [...document.options.enabledFactions] },
       },
     });
+  }
+
+  private requireNativeBinding(catalogWorldId: string): WorldStorageResult<RustNativeWorldPersistenceSessionV1> {
+    this.ensureCatalogCurrent();
+    if (!this.catalog.worlds.some((world) => world.id === catalogWorldId)) {
+      return fail("not-found", "That world does not exist on this device.", this.dataKey(catalogWorldId));
+    }
+    if (!this.nativePersistence || this.nativePersistence.catalogWorldId !== catalogWorldId) {
+      return fail("unavailable", "This world has no live Rust persistence authority binding.", this.dataKey(catalogWorldId));
+    }
+    return ok(this.nativePersistence.session);
+  }
+
+  private nativePersistenceFailure<T>(catalogWorldId: string, operation: string, error: unknown): WorldStorageResult<T> {
+    const issue: WorldStorageIssue = {
+      code: "unavailable",
+      message: `Native Rust persistence could not ${operation} this world. ${error instanceof Error ? error.message : "Persistence unavailable."}`,
+      key: this.dataKey(catalogWorldId),
+    };
+    this.diagnostics.push(issue);
+    return { ok: false, error: issue };
   }
 
   private defaultStorageEventTarget(): StorageEventTarget | null {

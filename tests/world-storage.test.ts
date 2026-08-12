@@ -4,6 +4,7 @@ import type { WorldSave } from "../app/game/engine.ts";
 import { DEFAULT_WORLD_GENERATION_OPTIONS, GENERATOR_VERSION } from "../app/game/world.ts";
 import { MemoryPersistenceAdapterV1 } from "../app/game/indexeddb-persistence-adapter.ts";
 import { WorldPersistenceCoordinatorV1 } from "../app/game/world-persistence-coordinator.ts";
+import type { RustNativeWorldPersistenceSessionV1 } from "../app/game/rust-native-world-persistence.ts";
 import {
   DEFAULT_WORLD_OPTIONS,
   LEGACY_WORLD_KEY,
@@ -57,6 +58,57 @@ class MemoryStorageEvents {
     return this.listeners.size;
   }
 }
+
+function nativePersistenceFixture(worldId: string, recovery: "hydrated" | "empty" = "hydrated") {
+  const operations: string[] = [];
+  const saved = Object.freeze({
+    worldId: `universe:${worldId}@overworld`, saveId: "native.save.fixture", checkpointId: "checkpoint:fixture",
+    checkpointHash: "1".repeat(32), journalSequence: 1, records: 5, commits: 5, requestBytes: 50, responseBytes: 60,
+  });
+  const session = {
+    async initializeNewWorld(createdAt: number) { operations.push(`initialize:${createdAt}`); return saved; },
+    async recoverAndHydrate() {
+      operations.push("hydrate");
+      return recovery === "empty"
+        ? Object.freeze({ status: "empty" as const, worldId: saved.worldId })
+        : Object.freeze({ status: "hydrated" as const, worldId: saved.worldId, checkpointId: saved.checkpointId, fallbackDepth: 0, nativeDomains: 5, checkpointRecords: 5 });
+    },
+    async saveNative(createdAt: number) { operations.push(`save:${createdAt}`); return saved; },
+    async flush() { operations.push("flush"); },
+    async shutdown() { operations.push("shutdown"); },
+  } as unknown as RustNativeWorldPersistenceSessionV1;
+  return { session, operations };
+}
+
+test("WorldStorage binds native create/load/save execution and keeps compatibility-only loads fail-closed", async () => {
+  const storage = new MemoryStorage();
+  let now = 7_000;
+  const worlds = new WorldStorage(storage, { now: () => now, idFactory: () => "native-world", persistenceCoordinator: null });
+  const created = worlds.createWorld({ name: "Native World", save: save("NATIVE") });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const native = nativePersistenceFixture(created.value.id);
+  assert.equal(worlds.bindNativePersistence(created.value.id, native.session).ok, true);
+  assert.equal((await worlds.initializeNativeWorld(created.value.id, now)).ok, true);
+  assert.equal((await worlds.hydrateNativeWorld(created.value.id)).ok, true);
+  assert.equal((await worlds.saveNativeWorld(created.value.id, now + 1)).ok, true);
+
+  now += 2;
+  assert.equal(worlds.saveWorld(created.value.id, { save: save("NATIVE-AUTOSAVE") }).ok, true);
+  await worlds.flushPersistence();
+  assert.deepEqual(native.operations, ["initialize:7000", "hydrate", "save:7001", "save:7002", "flush"]);
+  await worlds.shutdownNativePersistence();
+  assert.equal(native.operations.at(-1), "shutdown");
+  assert.equal((await worlds.saveNativeWorld(created.value.id)).ok, false, "shutdown unbinds the sole native authority session");
+
+  const compatibilityOnly = nativePersistenceFixture(created.value.id, "empty");
+  assert.equal(worlds.bindNativePersistence(created.value.id, compatibilityOnly.session).ok, true);
+  const blocked = await worlds.hydrateNativeWorld(created.value.id);
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) assert.match(blocked.error.message, /lossless migration adapter/u);
+  await worlds.shutdownNativePersistence();
+});
 
 test("browser-primary loads hydrate the Rust journal while preserving the compatibility document", async () => {
   const storage = new MemoryStorage();

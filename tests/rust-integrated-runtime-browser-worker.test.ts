@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { RustIntegratedRuntimeBrowserKernelV1 } from "../app/game/rust-integrated-runtime-browser-worker.ts";
+import {
+  decodeRustIntegratedRuntimeBulkRequestV1,
+  encodeRustIntegratedRuntimeBulkResponseV1,
+  rustIntegratedRuntimeBulkStateV1,
+  type RustIntegratedRuntimeBulkRequestV1,
+} from "../app/game/rust-integrated-runtime-bulk-platform.ts";
 import { encodeRustIntegratedRuntimeResponseV1 } from "../app/game/rust-integrated-runtime-codec.ts";
 import type { RustIntegratedRuntimeIdentityV1, RustIntegratedRuntimeResponseV1 } from "../app/game/rust-integrated-runtime-contract.ts";
 import { RustEngineLoader, type RustEngineWasmExports } from "../app/game/rust-engine-loader.ts";
@@ -24,6 +30,8 @@ function encoded(response: RustIntegratedRuntimeResponseV1) {
 }
 
 test("browser kernel attests the manifest-selected artifact instead of trusting Wasm self-reporting", async () => {
+  const nativeSaveRequests: RustIntegratedRuntimeBulkRequestV1[] = [];
+  let ordinaryBulkCalls = 0;
   const base: RustEngineWasmExports = {
     blockwild_protocol_version: () => RUST_ENGINE_PROTOCOL_VERSION,
     blockwild_schema_version: () => RUST_ENGINE_SCHEMA_VERSION,
@@ -51,7 +59,28 @@ test("browser kernel attests the manifest-selected artifact instead of trusting 
     blockwild_runtime_step_v2: () => new Uint8Array(),
     blockwild_runtime_extract_v2: () => new Uint8Array(),
     blockwild_runtime_export_save_v2: () => new Uint8Array(),
-    blockwild_runtime_bulk_v2: () => new Uint8Array(),
+    blockwild_runtime_initialize_native_save_v2: (_handle: number, control: Uint8Array) => {
+      const request = decodeRustIntegratedRuntimeBulkRequestV1(control);
+      nativeSaveRequests.push(request);
+      if (request.type !== "runtime-bulk-finalize-save-v1") throw new Error("expected translated FinalizeSave control");
+      return encodeRustIntegratedRuntimeBulkResponseV1({
+        type: "runtime-bulk-save-progress-v1",
+        requestId: request.requestId,
+        clientEpoch: request.clientEpoch,
+        workerEpoch: 1,
+        current: rustIntegratedRuntimeBulkStateV1(identity()),
+        stageId: request.stageId,
+        state: "finalized",
+        receivedChunks: 0,
+        chunkCount: 0,
+        receivedBytes: 0,
+        setHash: "1".repeat(32),
+        manifestHash: "2".repeat(32),
+        dispatcherRequestId: 1,
+        remainingDirtyRecords: 5,
+      }).control;
+    },
+    blockwild_runtime_bulk_v2: () => { ordinaryBulkCalls += 1; return new Uint8Array(); },
     blockwild_runtime_bulk_take_attachment_v2: () => new Uint8Array(),
     blockwild_runtime_destroy_v2: () => new Uint8Array(),
   };
@@ -84,4 +113,18 @@ test("browser kernel attests the manifest-selected artifact instead of trusting 
   assert.equal(response.type, "runtime-ready-v1");
   assert.equal(response.type === "runtime-ready-v1" ? response.artifactHash : null, ARTIFACT_HASH);
   assert.equal(response.type === "runtime-ready-v1" ? response.instanceId : null, "native:9");
+
+  const initialized = await kernel.handleBulk({
+    type: "runtime-bulk-initialize-native-save-v1",
+    requestId: 2,
+    clientEpoch: 1,
+    expected: rustIntegratedRuntimeBulkStateV1(identity()),
+    saveId: "native.new.1",
+    createdAt: 10,
+  });
+  assert.equal(initialized.type, "runtime-bulk-save-progress-v1");
+  assert.equal(initialized.type === "runtime-bulk-save-progress-v1" ? initialized.stageId : null, "native.new.1");
+  assert.equal(nativeSaveRequests.length, 1);
+  assert.equal(nativeSaveRequests[0].type, "runtime-bulk-finalize-save-v1");
+  assert.equal(ordinaryBulkCalls, 0, "native initialization never enters the compatibility finalize entrypoint");
 });

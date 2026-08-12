@@ -31,6 +31,7 @@ export type RustIntegratedRuntimeWasmExportsV2 = RustEngineWasmExports & Readonl
   blockwild_runtime_step_v2(handle: number, request: Uint8Array): RustEngineBytes;
   blockwild_runtime_extract_v2(handle: number, request: Uint8Array): RustEngineBytes;
   blockwild_runtime_export_save_v2(handle: number, request: Uint8Array): RustEngineBytes;
+  blockwild_runtime_initialize_native_save_v2(handle: number, control: Uint8Array): RustEngineBytes;
   blockwild_runtime_bulk_v2(handle: number, control: Uint8Array, attachment: Uint8Array): RustEngineBytes;
   blockwild_runtime_bulk_take_attachment_v2(handle: number, transferToken: number): RustEngineBytes;
   blockwild_runtime_destroy_v2(handle: number, request: Uint8Array): RustEngineBytes;
@@ -42,6 +43,7 @@ const integratedExportNames = Object.freeze([
   "blockwild_runtime_step_v2",
   "blockwild_runtime_extract_v2",
   "blockwild_runtime_export_save_v2",
+  "blockwild_runtime_initialize_native_save_v2",
   "blockwild_runtime_bulk_v2",
   "blockwild_runtime_bulk_take_attachment_v2",
   "blockwild_runtime_destroy_v2",
@@ -113,13 +115,20 @@ export class RustIntegratedRuntimeBrowserKernelV1 implements RustIntegratedRunti
 
   async handleBulk(request: RustIntegratedRuntimeBulkRequestV1): Promise<RustIntegratedRuntimeBulkResponseV1> {
     const exports = await this.load();
-    const encoded = encodeRustIntegratedRuntimeBulkRequestV1(request);
-    const control = asBytes(exports.blockwild_runtime_bulk_v2(
-      this.requireHandle(),
-      encoded.control,
-      encoded.attachment,
-    ));
+    const nativeInitialization = request.type === "runtime-bulk-initialize-native-save-v1";
+    const encoded = encodeRustIntegratedRuntimeBulkRequestV1(nativeInitialization ? Object.freeze({
+      type: "runtime-bulk-finalize-save-v1" as const,
+      requestId: request.requestId,
+      clientEpoch: request.clientEpoch,
+      expected: request.expected,
+      stageId: request.saveId,
+      createdAt: request.createdAt,
+    }) : request);
+    const control = asBytes(nativeInitialization
+      ? exports.blockwild_runtime_initialize_native_save_v2(this.requireHandle(), encoded.control)
+      : exports.blockwild_runtime_bulk_v2(this.requireHandle(), encoded.control, encoded.attachment));
     const metadata = inspectRustIntegratedRuntimeBulkResponseAttachmentV1(control);
+    if (nativeInitialization && metadata.attachmentLength !== 0) throw new Error("native save initialization unexpectedly returned a bulk attachment");
     const attachment = metadata.attachmentLength > 0
       ? asBytes(exports.blockwild_runtime_bulk_take_attachment_v2(this.requireHandle(), metadata.transferToken))
       : new Uint8Array();

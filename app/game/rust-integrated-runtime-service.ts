@@ -566,6 +566,36 @@ export class RustIntegratedRuntimeServiceV1 {
     });
   }
 
+  /** Creates or advances a native-only save set through its dedicated Wasm gate. */
+  initializeNativeSave(saveId: string, createdAt: number) {
+    this.requireReady();
+    this.requireNativeSaveCapability();
+    return this.enqueue(async () => {
+      const expected = this.requireIdentity();
+      try {
+        const response = await this.sendBulk({
+          type: "runtime-bulk-initialize-native-save-v1",
+          requestId: this.requestId(),
+          clientEpoch: this.clientEpoch,
+          expected: rustIntegratedRuntimeBulkStateV1(expected),
+          saveId,
+          createdAt,
+        });
+        this.acceptBulkWorkerEpoch(response);
+        if (response.type === "runtime-bulk-error-v1") return this.rejectBulkError(response, expected);
+        if (response.type !== "runtime-bulk-save-progress-v1" || response.state !== "finalized" || response.stageId !== saveId) {
+          throw this.failBulkProtocol("bulk native save initialization returned the wrong receipt");
+        }
+        this.acceptBulkAuthorityAdvance(expected, response.current, "bulk native save initialization");
+        return response;
+      } catch (error) {
+        if (error instanceof RustIntegratedRuntimeServiceError && error.code === "bulk-platform") throw error;
+        this.failClosed(error);
+        throw error;
+      }
+    });
+  }
+
   /** Hydrates every required native domain atomically from an assembled recovery. */
   hydrateCompatibilityRecovery(recoveryId: string) {
     this.requireReady();

@@ -102,6 +102,15 @@ export type RustIntegratedRuntimeBulkRequestV1 =
     clientEpoch: number;
     expected: RustIntegratedRuntimeBulkStateV1;
     stageId: string;
+  }>
+  | Readonly<{
+    /** Routes the normal FinalizeSave control shape to the native-only Wasm entrypoint. */
+    type: "runtime-bulk-initialize-native-save-v1";
+    requestId: number;
+    clientEpoch: number;
+    expected: RustIntegratedRuntimeBulkStateV1;
+    saveId: string;
+    createdAt: number;
   }>;
 
 export type RustIntegratedRuntimeBulkSaveStageStateV1 = "staged" | "finalized" | "cancelled";
@@ -451,6 +460,11 @@ export function encodeRustIntegratedRuntimeBulkRequestV1(request: RustIntegrated
       operation = 7;
       body.string(request.stageId, "bulk save stage id", 180);
       break;
+    case "runtime-bulk-initialize-native-save-v1":
+      operation = 8;
+      body.string(request.saveId, "bulk native save id", 180);
+      body.u64(integer(request.createdAt, 0, U64_MAX_SAFE, "bulk native save creation time"));
+      break;
   }
   return encodeControl(REQUEST_MAGIC, operation, 0, request.requestId, request.clientEpoch, 0, body.finish(), payload);
 }
@@ -492,6 +506,9 @@ export function decodeRustIntegratedRuntimeBulkRequestV1(control: Uint8Array | A
   } else if (envelope.operation === 7) {
     if (envelope.attachment.byteLength !== 0) throw new RustIntegratedRuntimeBulkCodecError("attachment", "bulk save cancel cannot carry an attachment");
     request = Object.freeze({ type: "runtime-bulk-cancel-save-stage-v1", requestId: envelope.requestId, clientEpoch: envelope.clientEpoch, expected, stageId: body.string("bulk save stage id", 180) });
+  } else if (envelope.operation === 8) {
+    if (envelope.attachment.byteLength !== 0) throw new RustIntegratedRuntimeBulkCodecError("attachment", "bulk native save initialization cannot carry an attachment");
+    request = Object.freeze({ type: "runtime-bulk-initialize-native-save-v1", requestId: envelope.requestId, clientEpoch: envelope.clientEpoch, expected, saveId: body.string("bulk native save id", 180), createdAt: body.u64() });
   } else throw new RustIntegratedRuntimeBulkCodecError("operation", "bulk request operation is unknown");
   body.finish();
   return request;
