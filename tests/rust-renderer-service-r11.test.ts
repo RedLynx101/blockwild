@@ -13,6 +13,7 @@ class FakeWorker {
   postMessage(command: RustRendererWorkerCommandR11) { this.commands.push(command); }
   terminate() { this.terminated = true; }
   emit(value: RustRendererWorkerEventR11) { this.onmessage?.({ data: value } as MessageEvent<RustRendererWorkerEventR11>); }
+  crash(message = "synthetic worker crash") { this.onerror?.({ message } as ErrorEvent); }
 }
 
 async function fixture(name: string) {
@@ -72,7 +73,7 @@ test("explicit recovery and resize commands preserve one deterministic replay so
   assert.deepEqual(fake.commands[1], { type: "resize", width: 1280, height: 720 });
   service.requestRecovery("test recreate");
   assert.equal(service.snapshot().state, "recovering");
-  assert.equal(fake.commands.at(-1)?.type, "recover");
+  assert.deepEqual(fake.commands.at(-1), { type: "recover", epoch: frame.epoch });
   fake.emit({ type: "replay-required", epoch: frame.epoch, reason: "device recreated" });
   assert.equal(fake.commands.filter((command) => command.type === "resources").length, 2);
 });
@@ -124,4 +125,42 @@ test("failed capability fallback does not keep encoding or queueing animation fr
   assert.equal(service.present(frame), false);
   assert.equal(service.snapshot().frameBytes, 0);
   assert.equal(fake.commands.filter((command) => command.type === "frame").length, 0);
+});
+
+test("worker crash replacement replays resources but never stale frame history", async () => {
+  const first = new FakeWorker(), replacement = new FakeWorker();
+  const workers = [first, replacement];
+  const service = new RustRendererServiceR11(() => workers.shift() as never);
+  const resources = decodeRenderResourceBatchV2(await fixture("canonical-resources.bwrd"));
+  const frame = decodeRenderFrameV2(await fixture("canonical-frame.bwrf"));
+  service.start({} as OffscreenCanvas, { moduleUrl: "/renderer.js", wasmUrl: "/renderer.wasm" }, frame.epoch, 640, 360);
+  first.emit({ type: "ready", backend: "wgpu", adapter: "first", timestampQuerySupported: false, epoch: frame.epoch });
+  assert.equal(service.applyResources(resources), true);
+  assert.equal(service.present(frame), true);
+  first.crash("GPU process exited");
+  assert.equal(service.snapshot().state, "failed");
+  assert.equal(service.snapshot().lastError, "worker: GPU process exited");
+  assert.equal(service.present(frame), false);
+
+  service.restartSurface({} as OffscreenCanvas, 800, 450);
+  assert.equal(first.terminated, true);
+  assert.equal(replacement.commands[0]?.type, "initialize");
+  replacement.emit({ type: "ready", backend: "wgpu", adapter: "replacement", timestampQuerySupported: true, epoch: frame.epoch });
+  assert.equal(replacement.commands.filter((command) => command.type === "resources").length, 1);
+  assert.equal(replacement.commands.filter((command) => command.type === "frame").length, 0, "a crash must not replay stale presentation history");
+  assert.equal(service.snapshot().workerRestarts, 1);
+  assert.equal(service.snapshot().replayedResourceBytes, 1097, "surface replacement must account for its full durable replay");
+  assert.equal(service.snapshot().adapter, "replacement");
+  assert.equal(service.present(createRenderFrameV2({ ...frame, frameSequence: frame.frameSequence + BigInt(1) })), true);
+  assert.equal(replacement.commands.filter((command) => command.type === "frame").length, 1);
+});
+
+test("worker recovery rejects an epoch substitution before replay", async () => {
+  const fake = new FakeWorker();
+  const service = new RustRendererServiceR11(() => fake as never);
+  const frame = decodeRenderFrameV2(await fixture("canonical-frame.bwrf"));
+  service.start({} as OffscreenCanvas, { moduleUrl: "/renderer.js", wasmUrl: "/renderer.wasm" }, frame.epoch, 640, 360);
+  fake.emit({ type: "ready", backend: "wgpu", adapter: "test", timestampQuerySupported: false, epoch: frame.epoch + BigInt(1) });
+  assert.equal(service.snapshot().state, "failed");
+  assert.match(service.snapshot().lastError ?? "", /epoch mismatch/u);
 });

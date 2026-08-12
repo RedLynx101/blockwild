@@ -1,4 +1,9 @@
 import type { RenderFrameV2, RenderResourceBatchV2 } from "./rust-render-extraction-v2.ts";
+import type {
+  RenderSceneExtractionSinkR10,
+  RustRenderSceneComposerR10,
+  RustRenderSceneComposerOptionsR10,
+} from "./rust-render-scene-composer-r10.ts";
 import { RustRendererServiceR11, supportsRustRendererWorkerR11, type RustRendererArtifactR11 } from "./rust-renderer-service-r11.ts";
 
 export type RendererBackendR11 = Readonly<{
@@ -7,6 +12,7 @@ export type RendererBackendR11 = Readonly<{
   frame(frame: RenderFrameV2 | Uint8Array): boolean;
   resize(width: number, height: number): void;
   requestRecovery(reason?: string): void;
+  restartSurface?(canvas: OffscreenCanvas, width: number, height: number): void;
   dispose(): void;
   diagnostics(): ReturnType<RustRendererServiceR11["snapshot"]>;
 }>;
@@ -44,7 +50,42 @@ export function createRustRendererBackendR11(options: Readonly<{
     frame: (frame: RenderFrameV2 | Uint8Array) => service.present(frame),
     resize: (width: number, height: number) => service.resize(width, height),
     requestRecovery: (reason?: string) => service.requestRecovery(reason),
+    restartSurface: (canvas: OffscreenCanvas, width: number, height: number) => service.restartSurface(canvas, width, height),
     dispose: () => service.stop(),
     diagnostics: () => service.snapshot(),
   });
+}
+
+export type RustRendererComposedRuntimeR10 = Readonly<{
+  backend: RendererBackendR11;
+  composer: RustRenderSceneComposerR10;
+  terrain: RenderSceneExtractionSinkR10;
+}>;
+
+/**
+ * Constructs the renderer-neutral global scene stage above the worker backend.
+ * Live engine ownership is deliberately left to the caller: terrain may be
+ * connected immediately, while BWR6 entity snapshots remain an explicit
+ * separately scheduled input until the authoritative runtime cutover.
+ */
+export async function createRustRendererComposedRuntimeR10(options: Readonly<{
+  backend: RendererBackendR11;
+  composer: Omit<RustRenderSceneComposerOptionsR10, "sink">;
+}>): Promise<RustRendererComposedRuntimeR10> {
+  const { RustRenderSceneComposerR10, rustRenderTerrainSinkR10 } = await import("./rust-render-scene-composer-r10.ts");
+  const sink = Object.freeze({
+    resources: (batch: RenderResourceBatchV2) => {
+      options.backend.resources(batch);
+      return options.backend.diagnostics().state !== "failed";
+    },
+    frame: (frame: RenderFrameV2) => options.backend.frame(frame),
+    resize: (width: number, height: number) => options.backend.resize(width, height),
+    requestRecovery: (reason?: string) => {
+      options.backend.requestRecovery(reason);
+      return options.backend.diagnostics().state !== "failed";
+    },
+    diagnostics: () => options.backend.diagnostics(),
+  });
+  const composer = new RustRenderSceneComposerR10({ ...options.composer, sink });
+  return Object.freeze({ backend: options.backend, composer, terrain: rustRenderTerrainSinkR10(composer) });
 }

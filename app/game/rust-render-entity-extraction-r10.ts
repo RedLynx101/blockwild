@@ -118,6 +118,9 @@ export type RenderEntityExtractionResultR10 = Readonly<{
   extractionRevision: bigint;
   authorityTick: bigint;
   contentManifestHash: Uint8Array;
+  /** Canonical BWM2 identity verified before any model resources are compiled. */
+  modelCatalogHash: string;
+  modelCatalogRevision: bigint;
   /** Null when this frame references only resources already emitted in the epoch. */
   resources: RenderResourceBatchV2 | null;
   frame: RenderFrameV2;
@@ -388,6 +391,14 @@ function cloneCustom(entries: readonly (readonly [string, Uint8Array])[]) {
 function animationFlags(record: RenderEntityAuthoritativeRecordR10, node: RenderEntityCompiledModelNodeR10) {
   const authored = record.simulationTier === "coarse" ? 0 : node.animationFlags & 0xffff;
   return (authored | record.action.phase << RENDER_ENTITY_ACTION_PHASE_SHIFT_R10) >>> 0;
+}
+
+export function decodeRenderEntityAnimationFlagsR10(value: number) {
+  invariant(Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff, "entity animation flags are not u32");
+  return Object.freeze({
+    authoredFlags: value & 0xffff,
+    actionPhase: value >>> RENDER_ENTITY_ACTION_PHASE_SHIFT_R10,
+  });
 }
 
 function cloneAction(action: RenderEntityAuthoritativeRecordR10["action"]) {
@@ -750,6 +761,8 @@ export class RustEntityRenderExtractionR10 {
       extractionRevision: source.extractionRevision,
       authorityTick: source.authorityTick,
       contentManifestHash: Uint8Array.from(source.contentManifestHash),
+      modelCatalogHash: this.catalog.catalogHashHex,
+      modelCatalogRevision: this.catalog.revision,
       resources,
       frame,
       presentations: Object.freeze(presentations),

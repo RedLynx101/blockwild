@@ -38,6 +38,9 @@ export type RustRendererDiagnosticsR11 = Readonly<{
   residentInstanceBytes: number;
   instanceBufferReallocations: number;
   skippedFrames: number;
+  workerRestarts: number;
+  deviceRecoveries: number;
+  lastPresentedSequence: bigint | null;
   latestSkipReason: string | null;
   lastError: string | null;
 }>;
@@ -123,6 +126,9 @@ export class RustRendererServiceR11 {
   private pendingSize: Readonly<{ width: number; height: number }> | null = null;
   private sentResourceRevision = BigInt(0);
   private worker: WorkerLikeR11 | null = null;
+  private artifact: Pick<RustRendererArtifactR11, "moduleUrl" | "wasmUrl"> | null = null;
+  private workerGeneration = 0;
+  private replayOnReady = false;
   private diagnostics: MutableDiagnosticsR11 = {
     state: "idle", epoch: BigInt(0), resourceRevision: BigInt(0), submittedFrames: 0,
     presentedFrames: 0, droppedFrames: 0, staleFrames: 0, resourceBytes: 0, frameBytes: 0,
@@ -130,7 +136,8 @@ export class RustRendererServiceR11 {
     backend: null, adapter: null, timestampQuerySupported: false,
     visibleInstances: 0, culledInstances: 0, drawCalls: 0, transparentDrawCalls: 0,
     geometryBytes: 0, uploadedInstanceBytes: 0, residentInstanceBytes: 0,
-    instanceBufferReallocations: 0, skippedFrames: 0, latestSkipReason: null, lastError: null,
+    instanceBufferReallocations: 0, skippedFrames: 0, workerRestarts: 0, deviceRecoveries: 0,
+    lastPresentedSequence: null, latestSkipReason: null, lastError: null,
   };
 
   constructor(private readonly createWorker: () => WorkerLikeR11 = () => new Worker(new URL("./rust-renderer-worker-r11.ts", import.meta.url), { type: "module", name: "blockwild-r11-renderer" })) {}
@@ -138,18 +145,30 @@ export class RustRendererServiceR11 {
   start(canvas: OffscreenCanvas, artifact: Pick<RustRendererArtifactR11, "moduleUrl" | "wasmUrl">, epoch: bigint, width: number, height: number) {
     if (this.worker) throw new Error("renderer service is already started");
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new RangeError("renderer dimensions must be positive integers");
-    this.worker = this.createWorker();
-    this.worker.onmessage = (event) => this.handle(event.data);
-    this.worker.onerror = (event) => {
-      this.inFlight = false;
-      this.diagnostics.state = "failed";
-      this.diagnostics.lastError = `worker: ${event.message || "renderer worker crashed"}`;
-    };
-    this.diagnostics = { ...this.diagnostics, state: "starting", epoch, lastError: null };
-    this.send({ type: "initialize", canvas, width, height, moduleUrl: artifact.moduleUrl, wasmUrl: artifact.wasmUrl, epoch }, [canvas]);
+    this.artifact = Object.freeze({ ...artifact });
+    this.replayOnReady = false;
+    this.diagnostics = { ...this.diagnostics, state: "starting", epoch, resourceRevision: BigInt(0),
+      resourceBytes: 0, replayedResourceBytes: 0, lastPresentedSequence: null, lastError: null };
+    this.startWorker(canvas, width, height);
+  }
+
+  /**
+   * A crashed worker cannot recover ownership of its transferred canvas. The
+   * platform supplies a replacement OffscreenCanvas; the service then replays
+   * the exact durable BWRD history before accepting a new frame.
+   */
+  restartSurface(canvas: OffscreenCanvas, width: number, height: number) {
+    if (this.diagnostics.state !== "failed" || !this.artifact) throw new Error("renderer surface restart requires a failed initialized service");
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new RangeError("renderer dimensions must be positive integers");
+    this.disposeWorker();
+    this.inFlight = false; this.pending = null; this.pendingSize = null; this.sentResourceRevision = BigInt(0);
+    this.replayOnReady = true;
+    this.diagnostics.state = "starting"; this.diagnostics.lastError = null; this.diagnostics.workerRestarts += 1;
+    this.startWorker(canvas, width, height);
   }
 
   applyResources(value: RenderResourceBatchV2 | Uint8Array) {
+    if (this.diagnostics.state === "failed" || this.diagnostics.state === "stopped") return false;
     const batch = value instanceof Uint8Array ? decodeRenderResourceBatchV2(value) : value;
     const bytes = value instanceof Uint8Array ? value.slice() : encodeRenderResourceBatchV2(batch);
     if (batch.epoch !== this.diagnostics.epoch) throw new Error("renderer resource epoch does not match the active world");
@@ -162,6 +181,7 @@ export class RustRendererServiceR11 {
     this.diagnostics.resourceRevision = batch.revision;
     this.diagnostics.resourceBytes += bytes.byteLength;
     if (this.diagnostics.state === "ready") this.sendUnsentResources();
+    return true;
   }
 
   present(value: RenderFrameV2 | Uint8Array) {
@@ -190,23 +210,27 @@ export class RustRendererServiceR11 {
   }
 
   requestRecovery(reason = "renderer recovery requested") {
-    if (!this.worker) throw new Error("renderer service is not started");
+    if (!this.worker || this.diagnostics.state === "failed" || this.diagnostics.state === "stopped") return false;
     this.inFlight = false;
     this.diagnostics.state = "recovering";
     this.diagnostics.lastError = reason;
-    this.send({ type: "recover" });
+    this.diagnostics.deviceRecoveries += 1;
+    this.send({ type: "recover", epoch: this.diagnostics.epoch });
+    return true;
   }
 
   switchEpoch(epoch: bigint) {
     this.replayPages.clear(); this.pending = null; this.inFlight = false; this.sentResourceRevision = BigInt(0);
-    this.diagnostics = { ...this.diagnostics, epoch, resourceRevision: BigInt(0), state: "recovering" };
-    this.send({ type: "recover" });
+    this.diagnostics = { ...this.diagnostics, epoch, resourceRevision: BigInt(0), resourceBytes: 0,
+      replayedResourceBytes: 0, lastPresentedSequence: null, state: "recovering" };
+    this.diagnostics.deviceRecoveries += 1;
+    this.send({ type: "recover", epoch });
   }
 
   stop() {
     if (!this.worker) return;
     this.send({ type: "shutdown" });
-    this.worker.terminate(); this.worker = null; this.pending = null; this.pendingSize = null; this.inFlight = false; this.replayPages.clear(); this.sentResourceRevision = BigInt(0);
+    this.disposeWorker(); this.pending = null; this.pendingSize = null; this.inFlight = false; this.replayPages.clear(); this.sentResourceRevision = BigInt(0); this.artifact = null; this.replayOnReady = false;
     this.diagnostics.state = "stopped";
   }
 
@@ -214,11 +238,12 @@ export class RustRendererServiceR11 {
 
   private handle(event: RustRendererWorkerEventR11) {
     if (event.type === "ready") {
+      if (event.epoch !== this.diagnostics.epoch) { this.fail(`worker ready epoch mismatch: expected ${this.diagnostics.epoch}, received ${event.epoch}`); return; }
       this.diagnostics.state = "ready";
       this.diagnostics.backend = event.backend;
       this.diagnostics.adapter = event.adapter;
       this.diagnostics.timestampQuerySupported = event.timestampQuerySupported;
-      this.sendPendingSize(); this.sendUnsentResources(); this.flush();
+      this.sendPendingSize(); this.sendUnsentResources(this.replayOnReady); this.replayOnReady = false; this.flush();
     }
     else if (event.type === "frame-presented") {
       this.inFlight = false; this.diagnostics.presentedFrames += 1; this.diagnostics.latestCpuMicros = event.cpuMicros;
@@ -229,19 +254,22 @@ export class RustRendererServiceR11 {
       this.diagnostics.uploadedInstanceBytes = event.instanceBytes;
       this.diagnostics.residentInstanceBytes = event.residentInstanceBytes;
       this.diagnostics.instanceBufferReallocations = event.instanceBufferReallocations;
+      this.diagnostics.lastPresentedSequence = event.sequence;
       this.diagnostics.latestSkipReason = event.skippedReason;
       if (event.skippedReason) this.diagnostics.skippedFrames += 1;
       this.flush();
     } else if (event.type === "device-lost") {
-      this.inFlight = false; this.diagnostics.state = "recovering"; this.diagnostics.lastError = event.reason; this.send({ type: "recover" });
+      this.inFlight = false; this.diagnostics.state = "recovering"; this.diagnostics.lastError = event.reason;
+      this.diagnostics.deviceRecoveries += 1; this.send({ type: "recover", epoch: this.diagnostics.epoch });
     } else if (event.type === "replay-required") {
+      if (event.epoch !== this.diagnostics.epoch) { this.fail(`worker replay epoch mismatch: expected ${this.diagnostics.epoch}, received ${event.epoch}`); return; }
       this.diagnostics.state = "ready";
       this.diagnostics.lastError = null;
       this.sentResourceRevision = BigInt(0);
       this.sendUnsentResources(true);
       this.flush();
     } else if (event.type === "error") {
-      this.inFlight = false; this.diagnostics.state = "failed"; this.diagnostics.lastError = `${event.operation}: ${event.message}`;
+      this.fail(`${event.operation}: ${event.message}`);
     }
   }
 
@@ -280,6 +308,35 @@ export class RustRendererServiceR11 {
   private send(command: RustRendererWorkerCommandR11, transfer: Transferable[] = []) {
     if (!this.worker) throw new Error("renderer service is not started");
     this.worker.postMessage(command, transfer);
+  }
+
+  private startWorker(canvas: OffscreenCanvas, width: number, height: number) {
+    if (!this.artifact) throw new Error("renderer artifact is not installed");
+    const worker = this.createWorker();
+    const generation = ++this.workerGeneration;
+    this.worker = worker;
+    worker.onmessage = (event) => { if (this.worker === worker && generation === this.workerGeneration) this.handle(event.data); };
+    worker.onerror = (event) => {
+      if (this.worker !== worker || generation !== this.workerGeneration) return;
+      this.fail(`worker: ${event.message || "renderer worker crashed"}`);
+    };
+    this.send({ type: "initialize", canvas, width, height, moduleUrl: this.artifact.moduleUrl, wasmUrl: this.artifact.wasmUrl, epoch: this.diagnostics.epoch }, [canvas]);
+  }
+
+  private disposeWorker() {
+    if (!this.worker) return;
+    this.worker.onmessage = null;
+    if ("onerror" in this.worker) this.worker.onerror = null;
+    this.worker.terminate();
+    this.worker = null;
+    this.workerGeneration += 1;
+  }
+
+  private fail(message: string) {
+    this.inFlight = false;
+    this.pending = null;
+    this.diagnostics.state = "failed";
+    this.diagnostics.lastError = message;
   }
 }
 

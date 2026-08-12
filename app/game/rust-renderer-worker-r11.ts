@@ -7,7 +7,7 @@ export type RustRendererWorkerCommandR11 =
   | Readonly<{ type: "resources"; bytes: ArrayBuffer }>
   | Readonly<{ type: "frame"; bytes: ArrayBuffer; sequence: bigint }>
   | Readonly<{ type: "resize"; width: number; height: number }>
-  | Readonly<{ type: "recover" }>
+  | Readonly<{ type: "recover"; epoch: bigint }>
   | Readonly<{ type: "shutdown" }>;
 
 export type RustRendererWorkerEventR11 =
@@ -124,6 +124,7 @@ scope.onmessage = (event: MessageEvent<RustRendererWorkerCommandR11>) => {
       } else if (command.type === "recover") {
         if (typeof surface.recover !== "function") throw new Error("renderer artifact cannot recover its device");
         await surface.recover();
+        epoch = command.epoch;
         message({ type: "replay-required", epoch, reason: "WebGPU device recreated" });
       }
     } catch (error) {
