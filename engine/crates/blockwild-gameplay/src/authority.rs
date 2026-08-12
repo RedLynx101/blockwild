@@ -477,6 +477,11 @@ fn dispatch(
                 InventoryCommand::Transfer(command) => state.inventory.transfer(command)?,
                 InventoryCommand::Craft(command) => state.inventory.craft(command)?,
                 InventoryCommand::AdvanceFurnace(command) => state.inventory.advance_furnace(command)?,
+                InventoryCommand::CreateDropCustody(command) => state.inventory.create_drop_custody(command)?,
+                InventoryCommand::RemoveEmptyDropCustody(command) => {
+                    state.inventory.remove_empty_drop_custody(command)?
+                }
+                InventoryCommand::CreatePlayerCustody(command) => state.inventory.create_player_custody(command)?,
             };
             resource_deltas.extend(deltas);
             touched.insert(Domain::Inventory);
@@ -577,6 +582,13 @@ fn authorize_command(
                     .furnaces
                     .get(&command.furnace_id)
                     .is_some_and(|furnace| owns(&furnace.source) && owns(&furnace.destination)),
+                InventoryCommand::CreateDropCustody(command) => {
+                    owns(&command.source.container)
+                        && command.custody.kind == crate::ContainerKind::Container
+                        && command.custody.owner_id.is_none()
+                }
+                InventoryCommand::RemoveEmptyDropCustody(_) => false,
+                InventoryCommand::CreatePlayerCustody(command) => owns(&command.inventory) && owns(&command.equipment),
             };
             if !allowed {
                 return Err(Rejection::new(

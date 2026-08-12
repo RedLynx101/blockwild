@@ -271,10 +271,36 @@ pub struct FurnaceAdvanceCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateDropCustodyCommand {
+    pub source: SlotRef,
+    pub custody: ContainerKey,
+    pub expected: Option<ExpectedStack>,
+    pub request_hash: CanonicalHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoveEmptyDropCustodyCommand {
+    pub custody: ContainerKey,
+    pub expected_revision: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatePlayerCustodyCommand {
+    pub inventory: ContainerKey,
+    pub inventory_slots: u16,
+    pub equipment: ContainerKey,
+    pub equipment_slots: u16,
+    pub back_slot: Option<u16>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InventoryCommand {
     Transfer(TransferCommand),
     Craft(CraftCommand),
     AdvanceFurnace(FurnaceAdvanceCommand),
+    CreateDropCustody(CreateDropCustodyCommand),
+    RemoveEmptyDropCustody(RemoveEmptyDropCustodyCommand),
+    CreatePlayerCustody(CreatePlayerCustodyCommand),
 }
 
 impl InventoryCommand {
@@ -319,6 +345,34 @@ impl InventoryCommand {
                 }
                 hasher.write_u32(command.fuel_ticks_per_item);
             }
+            Self::CreateDropCustody(command) => {
+                hasher.write_u16(3);
+                command.source.hash_into(hasher);
+                command.custody.hash_into(hasher);
+                match &command.expected {
+                    Some(expected) => {
+                        hasher.write_u16(1);
+                        hasher.write_u32(expected.item_code);
+                        hasher.write_bytes(expected.metadata_hash.as_bytes());
+                        hasher.write_u32(expected.minimum_count);
+                    }
+                    None => hasher.write_u16(0),
+                }
+                hasher.write_bytes(command.request_hash.as_bytes());
+            }
+            Self::RemoveEmptyDropCustody(command) => {
+                hasher.write_u16(4);
+                command.custody.hash_into(hasher);
+                hasher.write_u64(command.expected_revision);
+            }
+            Self::CreatePlayerCustody(command) => {
+                hasher.write_u16(5);
+                command.inventory.hash_into(hasher);
+                hasher.write_u16(command.inventory_slots);
+                command.equipment.hash_into(hasher);
+                hasher.write_u16(command.equipment_slots);
+                write_option_u64(hasher, command.back_slot.map(u64::from));
+            }
         }
     }
 }
@@ -346,6 +400,140 @@ impl InventoryState {
             return Err(Rejection::new(RejectionCode::Conflict, "duplicate container"));
         }
         Ok(())
+    }
+
+    pub fn create_drop_custody(&mut self, command: &CreateDropCustodyCommand) -> Result<Vec<ResourceDelta>, Rejection> {
+        command.source.container.validate()?;
+        command.custody.validate()?;
+        if command.source.expected_container_revision.is_none()
+            || command.custody.kind != ContainerKind::Container
+            || command.custody.owner_id.is_some()
+            || command.source.container == command.custody
+        {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "drop custody requires a revisioned source and a distinct unowned container",
+            ));
+        }
+        if self.containers.contains_key(&command.custody) {
+            return Err(Rejection::new(
+                RejectionCode::Conflict,
+                "drop custody container already exists",
+            ));
+        }
+        let source = self
+            .containers
+            .get(&command.source.container)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "drop source container does not exist"))?;
+        check_container_revision(source, command.source.expected_container_revision)?;
+        let source_stack = source
+            .slots
+            .get(usize::from(command.source.slot))
+            .and_then(Option::as_ref)
+            .ok_or_else(|| Rejection::new(RejectionCode::InsufficientResource, "drop source slot is empty"))?;
+        if let Some(expected) = &command.expected
+            && (source_stack.item_code != expected.item_code
+                || source_stack.metadata_hash != expected.metadata_hash
+                || source_stack.count < expected.minimum_count.max(1))
+        {
+            return Err(Rejection::new(
+                RejectionCode::Conflict,
+                "drop source stack no longer matches the expected item",
+            ));
+        }
+        let mut dropped_stack = source_stack.clone();
+        dropped_stack.count = 1;
+        let source = self
+            .containers
+            .get_mut(&command.source.container)
+            .expect("drop source was validated");
+        let source_stack = source.slots[usize::from(command.source.slot)]
+            .as_mut()
+            .expect("drop source stack was validated");
+        source_stack.count -= 1;
+        if source_stack.count == 0 {
+            source.slots[usize::from(command.source.slot)] = None;
+        }
+        source.revision = source
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| Rejection::new(RejectionCode::Capacity, "drop source revision overflow"))?;
+        let mut custody = Container::new(command.custody.clone(), 1);
+        custody.slots[0] = Some(dropped_stack);
+        self.insert_container(custody)?;
+        Ok(Vec::new())
+    }
+
+    pub fn remove_empty_drop_custody(
+        &mut self,
+        command: &RemoveEmptyDropCustodyCommand,
+    ) -> Result<Vec<ResourceDelta>, Rejection> {
+        command.custody.validate()?;
+        if command.custody.kind != ContainerKind::Container || command.custody.owner_id.is_some() {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "drop custody must be an unowned ordinary container",
+            ));
+        }
+        let custody = self
+            .containers
+            .get(&command.custody)
+            .ok_or_else(|| Rejection::new(RejectionCode::InvalidTarget, "drop custody container does not exist"))?;
+        check_container_revision(custody, Some(command.expected_revision))?;
+        if custody.slots.iter().any(Option::is_some) {
+            return Err(Rejection::new(
+                RejectionCode::Conflict,
+                "nonempty drop custody cannot be removed",
+            ));
+        }
+        if self
+            .furnaces
+            .values()
+            .any(|furnace| furnace.source == command.custody || furnace.destination == command.custody)
+        {
+            return Err(Rejection::new(
+                RejectionCode::Conflict,
+                "drop custody is still referenced by a furnace",
+            ));
+        }
+        self.containers.remove(&command.custody);
+        Ok(Vec::new())
+    }
+
+    pub fn create_player_custody(
+        &mut self,
+        command: &CreatePlayerCustodyCommand,
+    ) -> Result<Vec<ResourceDelta>, Rejection> {
+        command.inventory.validate()?;
+        command.equipment.validate()?;
+        if command.inventory.kind != ContainerKind::Player
+            || command.equipment.kind != ContainerKind::Equipment
+            || command.inventory.owner_id.is_none()
+            || command.inventory.owner_id != command.equipment.owner_id
+            || command.inventory == command.equipment
+            || command.inventory_slots == 0
+            || command.equipment_slots == 0
+            || command.back_slot.is_some_and(|slot| slot >= command.equipment_slots)
+        {
+            return Err(Rejection::new(
+                RejectionCode::InvalidCommand,
+                "player custody container shape is invalid",
+            ));
+        }
+        if self.containers.contains_key(&command.inventory) || self.containers.contains_key(&command.equipment) {
+            return Err(Rejection::new(
+                RejectionCode::Conflict,
+                "player custody container already exists",
+            ));
+        }
+        let inventory = Container::new(command.inventory.clone(), usize::from(command.inventory_slots));
+        let mut equipment = Container::new(command.equipment.clone(), usize::from(command.equipment_slots));
+        if let Some(back_slot) = command.back_slot {
+            equipment.equipment_tags[usize::from(back_slot)] = Some("back".into());
+        }
+        self.insert_container(inventory)?;
+        self.insert_container(equipment)?;
+        Ok(Vec::new())
     }
 
     pub fn register_recipe(&mut self, recipe: Recipe) -> Result<(), Rejection> {

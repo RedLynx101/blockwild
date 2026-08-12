@@ -1,0 +1,2 @@
+schema=1
+player_drop_transaction_hash=abb519ea6b941d89000000000000c8c2

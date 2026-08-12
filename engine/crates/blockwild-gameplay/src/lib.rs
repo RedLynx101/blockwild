@@ -15,6 +15,8 @@ mod machines;
 mod metadata_store;
 mod progression;
 mod snapshot;
+mod world_view;
+mod world_view_snapshot;
 
 pub use authority::{GameplayAuthority, GameplayState, ReplayEntry};
 pub use cardforge::*;
@@ -28,6 +30,11 @@ pub use machines::*;
 pub use metadata_store::*;
 pub use progression::*;
 pub use snapshot::*;
+pub use world_view::*;
+pub use world_view_snapshot::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod world_view_tests;

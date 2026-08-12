@@ -1,0 +1,5 @@
+schema=1
+state_hash=555ca3905324998748cb573604c73919
+replay_hash=d3929d91f3700b71e02aadca3ca883b6
+snapshot_hash=7cafb029baa8e80bf04e09b1bdc11b7d
+snapshot_bytes=1950
