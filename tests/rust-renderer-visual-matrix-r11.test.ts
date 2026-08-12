@@ -25,6 +25,7 @@ test("visual coverage ledger maps every remaining normal-path Three module witho
   const coverage = JSON.parse(await readFile(coveragePath, "utf8")) as {
     threeRetired: boolean;
     normalPathModules: Record<string, { cases: string[]; state: string }>;
+    compatibilityModules: Record<string, { cases: string[]; state: string }>;
     scenes: Record<string, string[]>;
   };
   assert.equal(coverage.threeRetired, false);
@@ -35,6 +36,16 @@ test("visual coverage ledger maps every remaining normal-path Three module witho
     assert.ok(record.state.includes("pending") || record.state.includes("awaiting"), `${module} prematurely claims retirement`);
     for (const visualCase of record.cases) assert.ok(coverage.scenes[visualCase], `${module} refers to unknown case ${visualCase}`);
   }
+  assert.deepEqual(Object.keys(coverage.compatibilityModules), ["app/three-compat/visual-theme-audit.ts"]);
+  const visualThemeOracle = coverage.compatibilityModules["app/three-compat/visual-theme-audit.ts"];
+  assert.equal(visualThemeOracle.state, "tested-build-tool-oracle");
+  for (const visualCase of visualThemeOracle.cases) assert.ok(coverage.scenes[visualCase], `visual-theme oracle refers to unknown case ${visualCase}`);
+  const [auditScript, auditTest] = await Promise.all([
+    readFile(path.join(ROOT, "scripts", "audit-visual-theme.ts"), "utf8"),
+    readFile(path.join(ROOT, "tests", "visual-theme.test.ts"), "utf8"),
+  ]);
+  assert.match(auditScript, /from "\.\.\/app\/three-compat\/visual-theme-audit"/u);
+  assert.match(auditTest, /from "\.\.\/app\/three-compat\/visual-theme-audit"/u);
 });
 
 test("visual coverage ledger records every cutover failure mode", async () => {

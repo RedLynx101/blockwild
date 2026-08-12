@@ -486,7 +486,7 @@ Structures should expose:
 ## 28. Implemented enforcement tools
 
 1. `scripts/render-living-bestiary-cubic-review.ts` renders exact-runtime creature sheets from front three-quarter, front, and side views, including `--all-cubic` coverage.
-2. `app/game/visual-theme-audit.ts` reports mesh and triangle counts, body plan, face and joint detail, distal anatomy, animation parts, contact delta, material effects, style, and reference tier for every registered creature.
+2. `app/three-compat/visual-theme-audit.ts` remains a tested build-tool oracle that reports mesh and triangle counts, body plan, face and joint detail, distal anatomy, animation parts, contact delta, material effects, style, and reference tier for every registered creature without entering the normal renderer path.
 3. `CREATURE_VISUAL_EXCEPTIONS` stores a specific silhouette reason for every approved non-cubic Living Bestiary exception. The strict audit fails an undocumented exception or a non-box mesh in the 33-creature cubic roster.
 4. The block audit reports visual family, top/side/bottom cells, render layer, shape, solidity, hardness, tool, drop/acquisition route, and natural/structure/recipe evidence for every registered block.
 5. `scripts/render-block-style-review.ts` invokes the real `createBlockAtlas()` painter through a deterministic pixel canvas and emits the exact production atlas plus 17 material-family cards with face and 3 x 3 repeat checks.

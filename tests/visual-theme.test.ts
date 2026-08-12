@@ -31,7 +31,7 @@ import {
   itemForBlock,
 } from "../app/game/data";
 import { CUBIC_STORYBOOK_VISUAL_KINDS, FACETED_STORYBOOK_EXCEPTION_KINDS } from "../app/game/living-bestiary-models";
-import { auditCreatureVisual, auditVisualTheme } from "../app/game/visual-theme-audit";
+import { auditCreatureVisual, auditVisualTheme } from "../app/three-compat/visual-theme-audit";
 import {
   BLOCKWILD_VISUAL_THEME,
   BLOCK_VISUAL_FAMILIES,

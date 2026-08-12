@@ -1,9 +1,9 @@
 import * as THREE from "three";
-import { createButterflyVisual } from "./butterflies";
-import { BLOCKS, BLOCK_ITEM_ALIASES, BlockId, ITEMS, itemForBlock, type BlockDefinition } from "./data";
-import { CUBIC_STORYBOOK_VISUAL_KINDS, FACETED_STORYBOOK_EXCEPTION_KINDS } from "./living-bestiary-models";
-import { createMobVisual } from "./mob-models";
-import { MOB_DEFS, type MobKind } from "./mobs";
+import { createButterflyVisual } from "../game/butterflies";
+import { BLOCKS, BLOCK_ITEM_ALIASES, BlockId, ITEMS, itemForBlock, type BlockDefinition } from "../game/data";
+import { CUBIC_STORYBOOK_VISUAL_KINDS, FACETED_STORYBOOK_EXCEPTION_KINDS } from "../game/living-bestiary-models";
+import { createMobVisual } from "../game/mob-models";
+import { MOB_DEFS, type MobKind } from "../game/mobs";
 import {
   BLOCKWILD_VISUAL_THEME,
   CREATURE_REFERENCE_MODELS,
@@ -15,7 +15,7 @@ import {
   type BlockVisualFamilyId,
   type CreatureBodyPlan,
   type CreatureVisualTier,
-} from "./visual-theme";
+} from "../game/visual-theme";
 
 export type VisualAuditIssue = Readonly<{
   code: string;

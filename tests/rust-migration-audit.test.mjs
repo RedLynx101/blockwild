@@ -17,6 +17,9 @@ test("Rust migration completion audit emits a bounded, machine-readable release 
   assert.ok(Array.isArray(report.blockers));
   assert.ok(Array.isArray(report.pendingAuthority));
   assert.ok(Array.isArray(report.normalPathThreeImports));
+  assert.ok(Array.isArray(report.compatibilityThreeImports));
+  assert.ok(report.compatibilityThreeImports.includes("app/three-compat/visual-theme-audit.ts"));
+  assert.ok(!report.normalPathThreeImports.includes("app/three-compat/visual-theme-audit.ts"));
   assert.ok(Array.isArray(report.staticThreeCompatibilityImports));
   assert.ok(Array.isArray(report.legacyAuthoritySymbols));
   assert.ok(Array.isArray(report.missingWasmExports));

@@ -101,13 +101,15 @@ async function audit() {
     "app/renderer-lab/",
   ];
   const normalPathThreeImports = [];
+  const compatibilityThreeImports = [];
   const staticThreeCompatibilityImports = [];
   for (const file of sourceFiles) {
     const source = await text(file);
     const name = relative(file);
     const compatibilityOnly = allowedThreePrefixes.some((prefix) => name.startsWith(prefix));
-    if (!compatibilityOnly && /(?:from\s+["']three["']|import\s*\(["']three["']\))/u.test(source)) {
-      normalPathThreeImports.push(name);
+    if (/(?:from\s+["']three["']|import\s*\(["']three["']\))/u.test(source)) {
+      if (compatibilityOnly) compatibilityThreeImports.push(name);
+      else normalPathThreeImports.push(name);
     }
     if (!compatibilityOnly && /(?:^|\n)\s*import(?:\s+[^;]+?\s+from\s+|\s*)["'][^"']*three-compat[^"']*["']/u.test(source)) {
       staticThreeCompatibilityImports.push(name);
@@ -195,6 +197,7 @@ async function audit() {
       authorityPending: pendingAuthority.length,
       openLogGates: openLogGates.length,
       normalPathThreeImports: normalPathThreeImports.length,
+      compatibilityThreeImports: compatibilityThreeImports.length,
       staticThreeCompatibilityImports: staticThreeCompatibilityImports.length,
       legacyAuthoritySymbols: legacyAuthoritySymbols.length,
       missingWasmExports: missingWasmExports.length,
@@ -214,6 +217,7 @@ async function audit() {
     uncheckedPlanItems,
     openLogGates,
     normalPathThreeImports,
+    compatibilityThreeImports,
     staticThreeCompatibilityImports,
     legacyAuthoritySymbols,
     missingWasmExports,

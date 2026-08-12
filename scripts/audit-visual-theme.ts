@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BLOCKS, BlockId, type BlockId as BlockIdType } from "../app/game/data";
-import { auditVisualTheme, type BlockPlacementEvidence, type VisualThemeAudit } from "../app/game/visual-theme-audit";
+import { auditVisualTheme, type BlockPlacementEvidence, type VisualThemeAudit } from "../app/three-compat/visual-theme-audit";
 
 async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
