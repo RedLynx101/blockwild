@@ -2,9 +2,11 @@
 
 mod runtime;
 mod runtime_domain_wire;
+mod world_view_runtime;
 
 pub use runtime::*;
 pub use runtime_domain_wire::*;
+pub use world_view_runtime::*;
 
 use std::collections::BTreeMap;
 
