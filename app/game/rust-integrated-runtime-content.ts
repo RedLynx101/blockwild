@@ -21,6 +21,12 @@ import { TCG_CATALOG_REVISION, TCG_SCHEMA } from "./tcg/types";
 import { GOLEM_RECIPES } from "./v1-cultures";
 import { WHEAT_MILL_CYCLE_SECONDS, WHEAT_MILL_PROCESS, WHEAT_MILL_SCHEMA, WHEAT_MILL_STACK_CAP } from "./wheat-mill";
 import { rustIntegratedRuntimeWireChecksumV1 } from "./rust-integrated-runtime-codec";
+import {
+  BLOCKWILD_PLAYER_RENDER_PROFILE_V1,
+  PLAYER_RENDER_PROFILE_ID_V1,
+  PLAYER_RENDER_PROFILE_SCHEMA_ID_V1,
+  PLAYER_RENDER_PROFILE_SCHEMA_V1,
+} from "./rust-player-render-profile.ts";
 
 export const RUST_CONTENT_MANIFEST_SCHEMA = 1 as const;
 export const RUST_METADATA_STORE_SCHEMA = 1 as const;
@@ -384,6 +390,18 @@ export function blockwildProductionContentSources(): readonly RustContentSourceE
   for (const [id, status] of objectEntries(CREATURE_STATUSES)) entries.push(source("ability-spell", `status:${id}`, "creature-status", 1, status));
   CREATURE_REACTIONS.forEach((reaction, index) => entries.push(source("ability-spell", `reaction:${index}`, "creature-reaction", 1, reaction)));
   for (const [id, profile] of objectEntries(CREATURE_PROFILES)) entries.push(source("creature-profile", id, "creature-profile", 1, profile));
+  entries.push({
+    domain: "creature-profile",
+    id: PLAYER_RENDER_PROFILE_ID_V1,
+    schemaId: PLAYER_RENDER_PROFILE_SCHEMA_ID_V1,
+    schemaVersion: PLAYER_RENDER_PROFILE_SCHEMA_V1,
+    contentVersion: 1,
+    value: BLOCKWILD_PLAYER_RENDER_PROFILE_V1,
+    aliases: Object.freeze([
+      `creature-profile:${PLAYER_RENDER_PROFILE_ID_V1}`,
+      "player-render-profile:standing",
+    ]),
+  });
   for (const [id, definition] of objectEntries(CREATURE_TYPES)) entries.push(source("creature-type-chart", `type:${id}`, "creature-type", 1, definition));
   for (const [id, chart] of objectEntries(CREATURE_TYPE_CHART)) entries.push(source("creature-type-chart", `chart:${id}`, "creature-type-chart", 1, chart));
   for (const quest of DEFAULT_QUEST_DEFINITIONS) entries.push(source("quest-guild", `quest:${quest.id}`, "quest-definition", QUEST_BOOK_SCHEMA, quest));

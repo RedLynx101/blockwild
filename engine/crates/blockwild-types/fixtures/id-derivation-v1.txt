@@ -1,0 +1,3 @@
+# universe_key|player_key|location_key|player_id_u64|location_id_u64
+blockwild:primary|player:noah|surface:spawn|14972461029504086313|7633287690690585706
+universe:edge|player:🚀|orbit:ad-astra|5208155149373515213|4959152443625442567

@@ -15,7 +15,7 @@ pub use hash::{
 };
 pub use id::{
     BlockId, ChunkId, ContentRevision, CreatureId, EntityId, ItemId, LocationId, MachineId, MobKindId, NetworkId,
-    PlayerId, QuestId, RecipeId, SectionId, StableId, UniverseId,
+    PlayerId, QuestId, RecipeId, SectionId, StableId, UniverseId, derive_location_id_v1, derive_player_id_v1,
 };
 pub use spatial::{
     Aabb, AabbBatchQuery, AabbBatchResult, Ray, RayBatchQuery, RayBatchResult, SpatialEntry, SpatialIndex,

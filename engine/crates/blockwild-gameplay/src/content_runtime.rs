@@ -32,6 +32,7 @@ pub enum ContentSchema {
     CreatureStatus,
     CreatureReaction,
     CreatureProfile,
+    PlayerRenderProfile,
     CreatureType,
     CreatureTypeChart,
     QuestDefinition,
@@ -70,6 +71,7 @@ impl ContentSchema {
             Self::CreatureStatus => "creature-status@1",
             Self::CreatureReaction => "creature-reaction@1",
             Self::CreatureProfile => "creature-profile@1",
+            Self::PlayerRenderProfile => "player-render-profile@1",
             Self::CreatureType => "creature-type@1",
             Self::CreatureTypeChart => "creature-type-chart@1",
             Self::QuestDefinition => "quest-definition@1",
@@ -280,6 +282,25 @@ pub struct ContentCreatureRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentPlayerRenderRecord {
+    pub core: ContentRecordCore,
+    pub catalog_schema: u16,
+    pub catalog_revision: u32,
+    pub catalog_sha256: String,
+    pub catalog_canonical_hash: String,
+    pub catalog_byte_length: u32,
+    pub catalog_model_count: u32,
+    pub catalog_node_count: u32,
+    pub catalog_source: String,
+    pub model_id: String,
+    pub model_label: String,
+    pub model_pose: String,
+    pub model_category: u8,
+    pub model_ground_y_bits: u64,
+    pub model_node_count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentTypedRecord {
     pub core: ContentRecordCore,
 }
@@ -295,6 +316,7 @@ pub struct ContentRuntimeRegistry {
     pub machine_profiles: BTreeMap<String, ContentMachineProfileRecord>,
     pub abilities_spells: BTreeMap<String, ContentAbilityRecord>,
     pub creature_profiles: BTreeMap<String, ContentCreatureRecord>,
+    pub player_render_profiles: BTreeMap<String, ContentPlayerRenderRecord>,
     pub creature_type_chart: BTreeMap<String, ContentTypedRecord>,
     pub quests_guilds: BTreeMap<String, ContentTypedRecord>,
     pub economy: BTreeMap<String, ContentTypedRecord>,
@@ -315,6 +337,7 @@ impl Default for ContentRuntimeRegistry {
             machine_profiles: BTreeMap::new(),
             abilities_spells: BTreeMap::new(),
             creature_profiles: BTreeMap::new(),
+            player_render_profiles: BTreeMap::new(),
             creature_type_chart: BTreeMap::new(),
             quests_guilds: BTreeMap::new(),
             economy: BTreeMap::new(),
@@ -334,6 +357,7 @@ impl ContentRuntimeRegistry {
             + self.machine_profiles.len()
             + self.abilities_spells.len()
             + self.creature_profiles.len()
+            + self.player_render_profiles.len()
             + self.creature_type_chart.len()
             + self.quests_guilds.len()
             + self.economy.len()
@@ -364,7 +388,11 @@ impl ContentRuntimeRegistry {
             ContentDomain::MachineRecipe => self.machine_recipes.get(id).map(|record| &record.core),
             ContentDomain::MachineProfile => self.machine_profiles.get(id).map(|record| &record.core),
             ContentDomain::AbilitySpell => self.abilities_spells.get(id).map(|record| &record.core),
-            ContentDomain::CreatureProfile => self.creature_profiles.get(id).map(|record| &record.core),
+            ContentDomain::CreatureProfile => self
+                .creature_profiles
+                .get(id)
+                .map(|record| &record.core)
+                .or_else(|| self.player_render_profiles.get(id).map(|record| &record.core)),
             ContentDomain::CreatureTypeChart => self.creature_type_chart.get(id).map(|record| &record.core),
             ContentDomain::QuestGuild => self.quests_guilds.get(id).map(|record| &record.core),
             ContentDomain::Economy => self.economy.get(id).map(|record| &record.core),
@@ -416,6 +444,25 @@ struct RecordFacts {
     cooldown_millis: u64,
     natural_types: Vec<String>,
     move_ids: Vec<String>,
+    player_render: Option<PlayerRenderFacts>,
+}
+
+#[derive(Clone, Debug)]
+struct PlayerRenderFacts {
+    catalog_schema: u16,
+    catalog_revision: u32,
+    catalog_sha256: String,
+    catalog_canonical_hash: String,
+    catalog_byte_length: u32,
+    catalog_model_count: u32,
+    catalog_node_count: u32,
+    catalog_source: String,
+    model_id: String,
+    model_label: String,
+    model_pose: String,
+    model_category: u8,
+    model_ground_y_bits: u64,
+    model_node_count: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -1038,6 +1085,7 @@ fn resolve_schema(
         (ContentDomain::AbilitySpell, "creature-status", 1) => ContentSchema::CreatureStatus,
         (ContentDomain::AbilitySpell, "creature-reaction", 1) => ContentSchema::CreatureReaction,
         (ContentDomain::CreatureProfile, "creature-profile", 1) => ContentSchema::CreatureProfile,
+        (ContentDomain::CreatureProfile, "player-render-profile", 1) => ContentSchema::PlayerRenderProfile,
         (ContentDomain::CreatureTypeChart, "creature-type", 1) => ContentSchema::CreatureType,
         (ContentDomain::CreatureTypeChart, "creature-type-chart", 1) => ContentSchema::CreatureTypeChart,
         (ContentDomain::QuestGuild, "quest-definition", 1) => ContentSchema::QuestDefinition,
@@ -1101,6 +1149,7 @@ fn validate_record(record: &DecodedRecord, blockers: &mut Vec<ContentRuntimeBloc
         ContentSchema::CreatureStatus => validate_creature_status(record, object, &mut facts, blockers),
         ContentSchema::CreatureReaction => validate_creature_reaction(record, object, &mut facts, blockers),
         ContentSchema::CreatureProfile => validate_creature(record, object, &mut facts, blockers),
+        ContentSchema::PlayerRenderProfile => validate_player_render_profile(record, object, &mut facts, blockers),
         ContentSchema::CreatureType => validate_creature_type(record, object, blockers),
         ContentSchema::CreatureTypeChart => validate_type_chart(record, object, &mut facts, blockers),
         ContentSchema::QuestDefinition => validate_quest(record, object, &mut facts, blockers),
@@ -1885,6 +1934,115 @@ fn validate_creature(
     }
 }
 
+fn validate_player_render_profile(
+    record: &DecodedRecord,
+    object: &BTreeMap<String, CanonicalJson>,
+    facts: &mut RecordFacts,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) {
+    let root_schema = required_u32(record, object, "schema", 1, 1, blockers);
+    let role = required_exact_string_at(record, object, "role", "$", "player", blockers);
+    if record.id != "player:standing" {
+        invalid_value(record, "$.id", "player:standing content id", &record.id, blockers);
+    }
+
+    let Some(catalog) = required_object(record, object, "catalog", blockers) else {
+        return;
+    };
+    let catalog_schema = required_u32_at(record, catalog, "schema", "$.catalog", 2, 2, blockers);
+    let catalog_format = required_exact_string_at(
+        record,
+        catalog,
+        "format",
+        "$.catalog",
+        "blockwild-compiled-model-catalog-v2",
+        blockers,
+    );
+    let catalog_revision = required_u32_at(record, catalog, "revision", "$.catalog", 1, u32::MAX, blockers);
+    let catalog_sha256 = required_lowercase_hex_at(record, catalog, "sha256", "$.catalog", 64, blockers);
+    let catalog_canonical_hash = required_lowercase_hex_at(record, catalog, "canonicalHash", "$.catalog", 32, blockers);
+    let catalog_byte_length = required_u32_at(record, catalog, "byteLength", "$.catalog", 1, 64 * 1_048_576, blockers);
+    let catalog_model_count = required_u32_at(record, catalog, "modelCount", "$.catalog", 1, 4_096, blockers);
+    let catalog_node_count = required_u32_at(record, catalog, "nodeCount", "$.catalog", 1, u32::MAX, blockers);
+    let catalog_source = required_nonempty_string_at(record, catalog, "source", "$.catalog", blockers);
+
+    let Some(model) = required_object(record, object, "model", blockers) else {
+        return;
+    };
+    let model_id = required_exact_string_at(record, model, "id", "$.model", "player-standing", blockers);
+    let model_label = required_nonempty_string_at(record, model, "label", "$.model", blockers);
+    let model_pose = required_exact_string_at(record, model, "pose", "$.model", "standing", blockers);
+    let model_category = required_u32_at(record, model, "category", "$.model", 2, 2, blockers);
+    let model_ground_y = required_number_at(record, model, "groundY", "$.model", 0.0, 0.0, blockers);
+    let model_node_count = required_u32_at(record, model, "nodeCount", "$.model", 1, 16_384, blockers);
+    if let (Some(model_nodes), Some(catalog_nodes)) = (model_node_count, catalog_node_count)
+        && model_nodes > catalog_nodes
+    {
+        invalid_value(
+            record,
+            "$.model.nodeCount",
+            "no greater than catalog.nodeCount",
+            &model_nodes.to_string(),
+            blockers,
+        );
+    }
+
+    if let (
+        Some(_),
+        Some(_),
+        Some(catalog_schema),
+        Some(_),
+        Some(catalog_revision),
+        Some(catalog_sha256),
+        Some(catalog_canonical_hash),
+        Some(catalog_byte_length),
+        Some(catalog_model_count),
+        Some(catalog_node_count),
+        Some(catalog_source),
+        Some(model_id),
+        Some(model_label),
+        Some(model_pose),
+        Some(model_category),
+        Some(model_ground_y),
+        Some(model_node_count),
+    ) = (
+        root_schema,
+        role,
+        catalog_schema,
+        catalog_format,
+        catalog_revision,
+        catalog_sha256,
+        catalog_canonical_hash,
+        catalog_byte_length,
+        catalog_model_count,
+        catalog_node_count,
+        catalog_source,
+        model_id,
+        model_label,
+        model_pose,
+        model_category,
+        model_ground_y,
+        model_node_count,
+    ) {
+        facts.player_render = Some(PlayerRenderFacts {
+            catalog_schema: u16::try_from(catalog_schema).expect("catalog schema is bounded"),
+            catalog_revision,
+            catalog_sha256: catalog_sha256.to_owned(),
+            catalog_canonical_hash: catalog_canonical_hash.to_owned(),
+            catalog_byte_length,
+            catalog_model_count,
+            catalog_node_count,
+            catalog_source: catalog_source.to_owned(),
+            model_id: model_id.to_owned(),
+            model_label: model_label.to_owned(),
+            model_pose: model_pose.to_owned(),
+            model_category: u8::try_from(model_category).expect("model category is bounded"),
+            model_ground_y_bits: model_ground_y.to_bits(),
+            model_node_count,
+        });
+    }
+}
+
 fn validate_creature_type(
     record: &DecodedRecord,
     object: &BTreeMap<String, CanonicalJson>,
@@ -2364,14 +2522,40 @@ fn insert_record(registry: &mut ContentRuntimeRegistry, record: DecodedRecord, f
             );
         }
         ContentDomain::CreatureProfile => {
-            registry.creature_profiles.insert(
-                id,
-                ContentCreatureRecord {
-                    core,
-                    natural_types: facts.natural_types,
-                    move_ids: facts.move_ids,
-                },
-            );
+            if record.schema == ContentSchema::PlayerRenderProfile {
+                let render = facts
+                    .player_render
+                    .expect("validated player render profile has typed facts");
+                registry.player_render_profiles.insert(
+                    id,
+                    ContentPlayerRenderRecord {
+                        core,
+                        catalog_schema: render.catalog_schema,
+                        catalog_revision: render.catalog_revision,
+                        catalog_sha256: render.catalog_sha256,
+                        catalog_canonical_hash: render.catalog_canonical_hash,
+                        catalog_byte_length: render.catalog_byte_length,
+                        catalog_model_count: render.catalog_model_count,
+                        catalog_node_count: render.catalog_node_count,
+                        catalog_source: render.catalog_source,
+                        model_id: render.model_id,
+                        model_label: render.model_label,
+                        model_pose: render.model_pose,
+                        model_category: render.model_category,
+                        model_ground_y_bits: render.model_ground_y_bits,
+                        model_node_count: render.model_node_count,
+                    },
+                );
+            } else {
+                registry.creature_profiles.insert(
+                    id,
+                    ContentCreatureRecord {
+                        core,
+                        natural_types: facts.natural_types,
+                        move_ids: facts.move_ids,
+                    },
+                );
+            }
         }
         ContentDomain::CreatureTypeChart => {
             registry.creature_type_chart.insert(id, ContentTypedRecord { core });
@@ -2421,7 +2605,16 @@ fn records_for_domain(registry: &ContentRuntimeRegistry, domain: ContentDomain) 
         ContentDomain::MachineRecipe => registry.machine_recipes.values().map(|record| &record.core).collect(),
         ContentDomain::MachineProfile => registry.machine_profiles.values().map(|record| &record.core).collect(),
         ContentDomain::AbilitySpell => registry.abilities_spells.values().map(|record| &record.core).collect(),
-        ContentDomain::CreatureProfile => registry.creature_profiles.values().map(|record| &record.core).collect(),
+        ContentDomain::CreatureProfile => {
+            let mut records = registry
+                .creature_profiles
+                .values()
+                .map(|record| &record.core)
+                .chain(registry.player_render_profiles.values().map(|record| &record.core))
+                .collect::<Vec<_>>();
+            records.sort_by(|left, right| left.id.cmp(&right.id));
+            records
+        }
         ContentDomain::CreatureTypeChart => registry
             .creature_type_chart
             .values()
@@ -2501,6 +2694,48 @@ fn required_nonempty_string_at<'a>(
     };
     if !valid_symbol(value) {
         invalid_value(record, &path, "1..160 non-control characters", value, blockers);
+        return None;
+    }
+    Some(value)
+}
+
+fn required_exact_string_at<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    base: &str,
+    expected: &str,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a str> {
+    let value = required_nonempty_string_at(record, object, field, base, blockers)?;
+    if value != expected {
+        invalid_value(record, &field_path(base, field), expected, value, blockers);
+        return None;
+    }
+    Some(value)
+}
+
+fn required_lowercase_hex_at<'a>(
+    record: &DecodedRecord,
+    object: &'a BTreeMap<String, CanonicalJson>,
+    field: &str,
+    base: &str,
+    length: usize,
+    blockers: &mut Vec<ContentRuntimeBlocker>,
+) -> Option<&'a str> {
+    let value = required_nonempty_string_at(record, object, field, base, blockers)?;
+    if value.len() != length
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        invalid_value(
+            record,
+            &field_path(base, field),
+            &format!("{length} lowercase hexadecimal characters"),
+            value,
+            blockers,
+        );
         return None;
     }
     Some(value)
@@ -3128,7 +3363,11 @@ mod tests {
             content_version: 1,
             aliases: vec![format!("{}:{id}", domain.as_id())],
             canonical_bytes: json.as_bytes().to_vec(),
-            unknown_extension_bytes: if id == "1" { vec![0, 0x80, 0xff, 7] } else { Vec::new() },
+            unknown_extension_bytes: if id == "1" || id == "player:standing" {
+                vec![0, 0x80, 0xff, 7]
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -3182,6 +3421,13 @@ mod tests {
                 "creature-profile",
                 1,
                 r#"{"captureProfile":"gentle","kind":"fox","moves":{"basicMoveId":"gust","unlocks":[{"level":1,"moveId":"gust"}]},"naturalTypes":["wild"],"stats":{"maximumLevel":50}}"#,
+            ),
+            artifact(
+                ContentDomain::CreatureProfile,
+                "player:standing",
+                "player-render-profile",
+                1,
+                r#"{"catalog":{"byteLength":785824,"canonicalHash":"52fd4aebb0c457f3c83af79af6b83c93","format":"blockwild-compiled-model-catalog-v2","modelCount":252,"nodeCount":13121,"revision":1,"schema":2,"sha256":"12c522f880e94c1ae527de701ae3e710fee13701d66fbb0a4ad24895557011b4","source":"renderer-neutral model specs and offline production captures"},"model":{"category":2,"groundY":0,"id":"player-standing","label":"Player · Standing","nodeCount":25,"pose":"standing"},"role":"player","schema":1}"#,
             ),
             artifact(
                 ContentDomain::CreatureTypeChart,
@@ -3270,12 +3516,22 @@ mod tests {
     fn all_domains_materialize_with_exact_opaque_bytes() {
         let (manifest, store) = installed(reference_fixture());
         let (registry, report) = materialize_content_runtime(&manifest, &store).expect("valid registry");
-        assert_eq!(registry.len(), 13);
-        assert_eq!(report.installed_entries, 13);
+        assert_eq!(registry.len(), 14);
+        assert_eq!(report.installed_entries, 14);
         assert_eq!(report.completed_stages, CONTENT_RUNTIME_STAGES);
         assert_eq!(registry.items["1"].core.unknown_extension_bytes, [0, 0x80, 0xff, 7]);
         assert_eq!(registry.crafting_recipes["board"].core.resources.inputs[0].amount, 1);
         assert_eq!(registry.creature_profiles["fox"].natural_types, ["wild"]);
+        let player = &registry.player_render_profiles["player:standing"];
+        assert_eq!(player.model_id, "player-standing");
+        assert_eq!(player.model_label, "Player · Standing");
+        assert_eq!(player.model_pose, "standing");
+        assert_eq!(
+            player.catalog_sha256,
+            "12c522f880e94c1ae527de701ae3e710fee13701d66fbb0a4ad24895557011b4"
+        );
+        assert_eq!(player.core.unknown_extension_bytes, [0, 0x80, 0xff, 7]);
+        assert!(!registry.creature_profiles.contains_key("player:standing"));
         assert_eq!(registry.get_by_alias("item:1").expect("alias").id, "1");
         let exact = include_str!("../fixtures/content-runtime-v1.txt");
         let expected = [
@@ -3310,6 +3566,55 @@ mod tests {
                 .any(|blocker| blocker.code == ContentRuntimeBlockerCode::InvalidJson)
         );
         assert_eq!(registry.registry_hash, original_hash);
+    }
+
+    #[test]
+    fn player_render_profile_is_distinct_and_transactional() {
+        let (manifest, store) = installed(reference_fixture());
+        let mut registry = ContentRuntimeRegistry::default();
+        registry.install(&manifest, &store).expect("initial install");
+        let original = registry.clone();
+
+        let mut invalid = reference_fixture();
+        let player = invalid
+            .iter_mut()
+            .find(|artifact| artifact.schema_id == "player-render-profile")
+            .expect("player render fixture");
+        player.canonical_bytes = String::from_utf8(player.canonical_bytes.clone())
+            .expect("fixture UTF-8")
+            .replace("52fd4aebb0c457f3c83af79af6b83c93", "52FD4AEBB0C457F3C83AF79AF6B83C93")
+            .into_bytes();
+        let (bad_manifest, bad_store) = installed(invalid);
+        let blockers = registry
+            .install(&bad_manifest, &bad_store)
+            .expect_err("uppercase canonical hash rejected");
+        assert!(blockers.iter().any(|blocker| blocker.path == "$.catalog.canonicalHash"));
+        assert_eq!(registry, original);
+        assert!(!registry.creature_profiles.contains_key("player:standing"));
+    }
+
+    #[test]
+    fn player_render_profile_matches_typescript_content_hash() {
+        let mut player = reference_fixture()
+            .into_iter()
+            .find(|artifact| artifact.schema_id == "player-render-profile")
+            .expect("player render fixture");
+        player.aliases = vec![
+            "creature-profile:player:standing".to_owned(),
+            "player-render-profile:standing".to_owned(),
+        ];
+        player.unknown_extension_bytes.clear();
+        let bundle = compile_content_bundle("blockwild-1.12.0+cardforge-3", vec![player]).expect("profile compiles");
+        assert_eq!(
+            bundle.manifest.entries[0].blob_hash.to_hex(),
+            "77f7d6234c83e717c83a571e32b3e97f"
+        );
+        let mut store = MetadataBlobStore::default();
+        install_content_bundle(&bundle, &mut store).expect("profile installs");
+        let (registry, report) = materialize_content_runtime(&bundle.manifest, &store).expect("profile materializes");
+        assert_eq!(report.installed_entries, 1);
+        assert_eq!(registry.player_render_profiles["player:standing"].model_node_count, 25);
+        assert!(registry.creature_profiles.is_empty());
     }
 
     #[test]
