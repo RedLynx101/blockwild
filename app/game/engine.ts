@@ -655,6 +655,20 @@ import {
   type DestructionTombstone,
   type TombstoneBatch,
 } from "./multiplayer";
+import {
+  bindReadyRustMultiplayerRuntimeV1,
+  createRustMultiplayerGuestAuthorityFactoryV1,
+  type RustMultiplayerAuthorityInterestInputV1,
+} from "./rust-multiplayer-runtime-bootstrap";
+import {
+  createRustWorldRuntimeLiveConfigV1,
+  createRustWorldRuntimeSessionIdV1,
+} from "./rust-world-runtime-live-config";
+import {
+  RustWorldRuntimeManagerV1,
+  type RustWorldRuntimeManagedHostV1,
+} from "./rust-world-runtime-manager";
+import { TypeScriptCanonicalHasher } from "./rust-kernel-shadow";
 import { TCG_CATALOG } from "./tcg/catalog";
 import {
   acceptTcgTrade,
@@ -1661,7 +1675,49 @@ export type VoxelEngineOptions = Readonly<{
   agentTestAdmin?: boolean;
   /** Optional R11 presentation sink. Three remains primary unless the shell explicitly selects otherwise. */
   renderExtraction?: RendererShellExtractionPublisherR11;
+  /** Test injection point; production owns one manager for the lifetime of this engine. */
+  rustRuntimeManager?: RustWorldRuntimeManagerV1;
+  /**
+   * R8 owns native save restoration. Existing browser saves must not be
+   * silently treated as a fresh Rust world while that adapter is unavailable.
+   */
+  rustWorldHydration?: RustWorldHydrationHookV1;
 }>;
+
+export type RustWorldHydrationHookV1 = (input: Readonly<{
+  kind: "create" | "load" | "multiplayer-guest";
+  worldId: string;
+  save: WorldSave | null;
+  host: RustWorldRuntimeManagedHostV1;
+}>) => Promise<void>;
+
+export type RustLiveRuntimeDiagnosticsV1 = Readonly<{
+  ready: boolean;
+  operationsBlocked: boolean;
+  transitionGeneration: number;
+  activeWorldId: string | null;
+  activeUniverseId: string | null;
+  activeLocationId: string | null;
+  activeSessionId: string | null;
+  hydration: "new-world" | "restored" | "guest-bootstrap" | "blocked" | "none";
+  manager: ReturnType<RustWorldRuntimeManagerV1["diagnostics"]>;
+  multiplayer: Readonly<{
+    authorityDeltaSequence: number;
+    authorityDeltaApplied: number;
+    authorityResyncs: number;
+    authorityRejections: number;
+    recordProducer: "coarse-legacy-projection";
+    pendingNativeProducer: true;
+    lastStateHash: string | null;
+    lastError: string | null;
+  }>;
+}>;
+
+const failClosedRustWorldHydrationV1: RustWorldHydrationHookV1 = async ({ kind }) => {
+  if (kind === "load") {
+    throw new Error("Native Rust save hydration is not installed for this browser build; the protected browser save was not modified.");
+  }
+};
 
 type VoxelHit = {
   x: number;
@@ -4060,6 +4116,23 @@ export class VoxelEngine {
   spawn = new THREE.Vector3(0, 48, 0);
   velocity = new THREE.Vector3();
   worldStorage = new WorldStorage();
+  readonly rustRuntimeManager: RustWorldRuntimeManagerV1;
+  private readonly rustWorldHydration: RustWorldHydrationHookV1;
+  private rustRuntimeHost: RustWorldRuntimeManagedHostV1 | null = null;
+  private rustRuntimeOperationsBlocked = true;
+  private rustRuntimeTransitionGeneration = 0;
+  private rustRuntimeHydrationState: RustLiveRuntimeDiagnosticsV1["hydration"] = "none";
+  private rustRuntimeShutdown: Promise<void> | null = null;
+  private rustInterestSequence = 0;
+  private readonly rustPeerInterestCenters = new Map<string, string>();
+  private readonly rustPeerDeltaSequences = new Map<string, number>();
+  private readonly rustPeerDeltaInFlight = new Set<string>();
+  private readonly rustAuthorityOperations = new Set<Promise<unknown>>();
+  private rustAuthorityDeltaApplied = 0;
+  private rustAuthorityResyncs = 0;
+  private rustAuthorityRejections = 0;
+  private rustAuthorityLastStateHash: string | null = null;
+  private rustAuthorityLastError: string | null = null;
   activeWorldId: string | null = null;
   worldOptions: WorldOptions = normalizeWorldOptions();
   startingSettlementId: string | null = null;
@@ -4459,6 +4532,10 @@ export class VoxelEngine {
   agentObservationTimer = 0;
   latestAgentObservation: AgentObservationV1 | null = null;
   latestAgentResult: AgentCommandResult | null = null;
+  private readonly pendingAgentCommandReceipts = new Map<string, Readonly<{
+    resolve: (value: Readonly<{ accepted: boolean; code?: string; error?: string }>) => void;
+    timeout: number;
+  }>>();
   agentRuntimeTasks = new Map<string, AgentRuntimeTask>();
   agentBuildPreviews = new Map<string, AgentBuildPreview>();
   agentBuildJobs = new Map<string, AgentBuildJob>();
@@ -4482,6 +4559,8 @@ export class VoxelEngine {
   sleepVotes = new Map<string, SleepTarget>();
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
+    this.rustRuntimeManager = options.rustRuntimeManager ?? new RustWorldRuntimeManagerV1();
+    this.rustWorldHydration = options.rustWorldHydration ?? failClosedRustWorldHydrationV1;
     this.agentMode = options.agentMode === true;
     this.renderExtraction = options.renderExtraction ?? null;
     this.basicWorldRenderer = BASIC_RENDER_DISTANCE_ENABLED && !this.agentMode ? new BasicWorldRenderer(true) : null;
@@ -5221,6 +5300,165 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
+  /** Exact live-Rust state exposed to browser acceptance and lifecycle tests. */
+  getRustRuntimeDiagnostics(): RustLiveRuntimeDiagnosticsV1 {
+    const config = this.rustRuntimeHost?.config ?? null;
+    return Object.freeze({
+      ready: !this.rustRuntimeOperationsBlocked && this.rustRuntimeHost?.diagnostics().state === "ready",
+      operationsBlocked: this.rustRuntimeOperationsBlocked,
+      transitionGeneration: this.rustRuntimeTransitionGeneration,
+      activeWorldId: this.activeWorldId,
+      activeUniverseId: config?.universeId ?? null,
+      activeLocationId: config?.locationId ?? null,
+      activeSessionId: config?.sessionId ?? null,
+      hydration: this.rustRuntimeHydrationState,
+      manager: this.rustRuntimeManager.diagnostics(),
+      multiplayer: Object.freeze({
+        authorityDeltaSequence: Math.max(0, ...this.rustPeerDeltaSequences.values()),
+        authorityDeltaApplied: this.rustAuthorityDeltaApplied,
+        authorityResyncs: this.rustAuthorityResyncs,
+        authorityRejections: this.rustAuthorityRejections,
+        recordProducer: "coarse-legacy-projection" as const,
+        pendingNativeProducer: true as const,
+        lastStateHash: this.rustAuthorityLastStateHash,
+        lastError: this.rustAuthorityLastError,
+      }),
+    });
+  }
+
+  private trackRustAuthorityOperation<T>(operation: Promise<T>) {
+    this.rustAuthorityOperations.add(operation);
+    void operation.finally(() => this.rustAuthorityOperations.delete(operation)).catch(() => undefined);
+    return operation;
+  }
+
+  private async drainRustAuthorityOperations() {
+    while (this.rustAuthorityOperations.size) await Promise.allSettled([...this.rustAuthorityOperations]);
+  }
+
+  private async closeMultiplayerForRustTransition(reason: string) {
+    await this.disconnectMultiplayer(reason);
+    this.rustPeerInterestCenters.clear();
+    this.rustPeerDeltaSequences.clear();
+  }
+
+  private async prepareRustWorldTransition(reason: string) {
+    this.rustRuntimeOperationsBlocked = true;
+    this.rustRuntimeHydrationState = "none";
+    this.running = false;
+    this.paused = true;
+    this.clearInput();
+    if (this.persistent && this.activeWorldId) this.saveNow(false);
+    await this.worldStorage.flushPersistence();
+    await this.closeMultiplayerForRustTransition(reason);
+    await this.drainRustAuthorityOperations();
+  }
+
+  private async activateRustWorldRuntime(
+    generation: number,
+    kind: "create" | "load",
+    worldId: string,
+    worldSeed: string,
+    save: WorldSave | null,
+  ) {
+    const config = createRustWorldRuntimeLiveConfigV1({
+      worldId,
+      worldSeed,
+      sessionId: createRustWorldRuntimeSessionIdV1(),
+    });
+    let host: RustWorldRuntimeManagedHostV1 | null = null;
+    try {
+      host = await this.rustRuntimeManager.activate(config);
+      if (generation !== this.rustRuntimeTransitionGeneration || this.disposed) {
+        throw new Error("Rust world activation was superseded before gameplay became visible");
+      }
+      await this.rustWorldHydration({ kind, worldId, save, host });
+      if (generation !== this.rustRuntimeTransitionGeneration || this.disposed
+        || host.diagnostics().state !== "ready") {
+        throw new Error("Rust world runtime lost readiness during hydration");
+      }
+      this.rustRuntimeHost = host;
+      this.rustRuntimeHydrationState = kind === "create" ? "new-world" : "restored";
+      return host;
+    } catch (error) {
+      this.rustRuntimeHost = null;
+      this.rustRuntimeHydrationState = "blocked";
+      await this.rustRuntimeManager.shutdown().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Production world creation is deliberately asynchronous: the legacy
+   * mirror may allocate its durable browser ID, but controls stay blocked
+   * until the sole integrated Rust worker is authoritative and attested.
+   */
+  async createWorldWithRustRuntime(
+    seed: string,
+    mode: GameMode,
+    options: Partial<WorldOptions> = {},
+    name = "New World",
+    originSearchRadius = DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+    agentTestWorld = false,
+  ) {
+    const generation = ++this.rustRuntimeTransitionGeneration;
+    await this.prepareRustWorldTransition("world-create");
+    const created = this.createWorld(seed, mode, options, name, originSearchRadius, agentTestWorld);
+    this.running = false;
+    this.paused = true;
+    if (!created) {
+      this.rustRuntimeHydrationState = "blocked";
+      throw new Error("Browser world storage could not allocate a durable world ID");
+    }
+    try {
+      await this.activateRustWorldRuntime(generation, "create", created.id, this.world.seedText, null);
+      this.rustRuntimeOperationsBlocked = false;
+      this.running = true;
+      this.paused = false;
+      this.titleMode = false;
+      return created;
+    } catch (error) {
+      this.running = false;
+      this.paused = true;
+      throw error;
+    }
+  }
+
+  /** Existing saves remain protected and unopened if native hydration fails. */
+  async loadWorldWithRustRuntime(
+    save: WorldSave,
+    options: Partial<WorldOptions> = save.options ?? {},
+    worldId: string | null = this.worldStorage.activeWorldId,
+  ) {
+    if (!worldId) throw new Error("A durable world ID is required before Rust save hydration");
+    const generation = ++this.rustRuntimeTransitionGeneration;
+    await this.prepareRustWorldTransition("world-load");
+    await this.activateRustWorldRuntime(generation, "load", worldId, save.seed, save);
+    if (generation !== this.rustRuntimeTransitionGeneration || this.disposed) {
+      this.rustRuntimeOperationsBlocked = true;
+      throw new Error("Rust world load was superseded before the browser mirror could open");
+    }
+    try {
+      this.loadWorld(save, options, worldId);
+      this.rustRuntimeOperationsBlocked = false;
+      return true;
+    } catch (error) {
+      this.rustRuntimeOperationsBlocked = true;
+      this.rustRuntimeHydrationState = "blocked";
+      await this.rustRuntimeManager.shutdown().catch(() => undefined);
+      this.rustRuntimeHost = null;
+      throw error;
+    }
+  }
+
+  async loadStoredWorldWithRustRuntime(id: string) {
+    const loaded = await this.worldStorage.loadWorldAsync(id);
+    if (!loaded.ok) throw new Error(loaded.error.message);
+    await this.loadWorldWithRustRuntime(loaded.value.save, loaded.value.options, id);
+    return loaded;
+  }
+
+  /** Compatibility/audit mirror only. Normal UI and agent flows use the awaited wrapper above. */
   createWorld(
     seed: string,
     mode: GameMode,
@@ -5881,6 +6119,7 @@ export class VoxelEngine {
     }
   }
 
+  /** Compatibility/audit mirror only. Normal UI and agent flows use the awaited wrapper above. */
   loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {
     this.captureSystemDiagnostics = createCaptureSystemDiagnostics();
     this.recordLegacyCaptureMigration(save);
@@ -6141,6 +6380,7 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
+  /** @deprecated Compatibility-only synchronous load; production callers must await loadStoredWorldWithRustRuntime. */
   loadStoredWorld(id: string) {
     const loaded = this.worldStorage.loadWorld(id);
     if (!loaded.ok) {
@@ -6327,9 +6567,14 @@ export class VoxelEngine {
     });
   }
 
-  createAgentTestWorld(input: Readonly<{ seed: string; name?: string; mode?: GameMode; options?: Partial<WorldOptions>; fixture?: string }>) {
+  async createAgentTestWorld(input: Readonly<{ seed: string; name?: string; mode?: GameMode; options?: Partial<WorldOptions>; fixture?: string }>) {
     if (!this.assertLocalAgentTestAdmin()) return { ok: false as const, code: "test_admin_denied" };
-    const created = this.createWorld(input.seed, input.mode === "survival" ? "survival" : "builder", input.options ?? { weather: false }, input.name ?? "Agent Test World", DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS, true);
+    let created: Awaited<ReturnType<VoxelEngine["createWorldWithRustRuntime"]>>;
+    try {
+      created = await this.createWorldWithRustRuntime(input.seed, input.mode === "survival" ? "survival" : "builder", input.options ?? { weather: false }, input.name ?? "Agent Test World", DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS, true);
+    } catch (error) {
+      return { ok: false as const, code: "rust_world_create_failed", error: error instanceof Error ? error.message : String(error) };
+    }
     if (created) switch (input.fixture) {
       case "agent-drone": this.primeAgentDroneAudit(); break;
       case "map-navigation": this.primeMapNavigationAudit(false, false); break;
@@ -6342,11 +6587,14 @@ export class VoxelEngine {
     return created ? { ok: true as const, world: created } : { ok: false as const, code: "world_create_failed" };
   }
 
-  loadAgentTestWorld(worldId: string) {
+  async loadAgentTestWorld(worldId: string) {
     if (!this.assertLocalAgentTestAdmin()) return { ok: false as const, code: "test_admin_denied" };
-    const loaded = this.worldStorage.loadWorld(worldId, false);
+    const loaded = await this.worldStorage.loadWorldAsync(worldId, false);
     if (!loaded.ok || loaded.value.save.agentTestWorld !== true) return { ok: false as const, code: "test_world_not_found" };
-    this.loadWorld(loaded.value.save, loaded.value.options, worldId);
+    try { await this.loadWorldWithRustRuntime(loaded.value.save, loaded.value.options, worldId); }
+    catch (error) {
+      return { ok: false as const, code: "rust_world_load_failed", error: error instanceof Error ? error.message : String(error) };
+    }
     return { ok: true as const, world: { ...loaded.value.metadata } };
   }
 
@@ -6777,8 +7025,78 @@ export class VoxelEngine {
     return createPeerIdentity(cleanName, palette[Math.abs(hash) % palette.length], () => stableId, this.playerVariant);
   }
 
-  private beginMultiplayerSession(name: string) {
-    this.multiplayer?.dispose("new-session");
+  private rustInterestCenter(input: RustMultiplayerAuthorityInterestInputV1) {
+    const localChunkX = Math.floor(this.position.x / CHUNK_SIZE);
+    const localChunkZ = Math.floor(this.position.z / CHUNK_SIZE);
+    const remote = this.remotePlayers.get(input.peer.id)?.target;
+    const centerX = Math.floor((remote?.x ?? this.position.x) / CHUNK_SIZE);
+    const centerZ = Math.floor((remote?.z ?? this.position.z) / CHUNK_SIZE);
+    return { localChunkX, localChunkZ, centerX, centerZ };
+  }
+
+  private rustAuthorityInterestSource(input: RustMultiplayerAuthorityInterestInputV1) {
+    const host = this.rustRuntimeManager.requireReady();
+    const { universeId, locationId } = host.config;
+    const center = this.rustInterestCenter(input);
+    const radius = clamp(this.settings.simulationDistance, 1, 15);
+    const chunks = [] as Array<{ universeId: string; locationId: string; chunkX: number; chunkZ: number }>;
+    const keys = new Set<string>();
+    for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      const chunkX = center.centerX + dx;
+      const chunkZ = center.centerZ + dz;
+      keys.add(`${chunkX},${chunkZ}`);
+      chunks.push({ universeId, locationId, chunkX, chunkZ });
+    }
+    const localKey = `${center.localChunkX},${center.localChunkZ}`;
+    if (!keys.has(localKey)) chunks.push({ universeId, locationId, chunkX: center.localChunkX, chunkZ: center.localChunkZ });
+    this.rustPeerInterestCenters.set(input.peer.id, `${center.centerX},${center.centerZ}|${localKey}`);
+    return Object.freeze({
+      sequence: ++this.rustInterestSequence,
+      chunks: Object.freeze(chunks),
+      entityIds: Object.freeze([`player:${input.local.id}`, `player:${input.peer.id}`]),
+    });
+  }
+
+  private guestRustAuthorityFactory() {
+    const template = createRustWorldRuntimeLiveConfigV1({
+      worldId: this.activeWorldId ?? "guest-bootstrap",
+      worldSeed: this.world.seedText || "guest-bootstrap",
+      sessionId: createRustWorldRuntimeSessionIdV1(),
+    });
+    const factory = createRustMultiplayerGuestAuthorityFactoryV1({
+      manager: this.rustRuntimeManager,
+      generatorHash: template.generatorHash,
+      waterBlockId: template.waterBlockId,
+      directionalBlockIds: template.directionalBlockIds,
+      waterloggedBlockIds: template.waterloggedBlockIds,
+      interest: (input) => this.rustAuthorityInterestSource(input),
+    });
+    return async (input: Parameters<typeof factory>[0]) => {
+      const binding = await factory(input);
+      try {
+        const host = this.rustRuntimeManager.requireReady();
+        await this.rustWorldHydration({ kind: "multiplayer-guest", worldId: input.descriptor.universeId, save: null, host });
+        this.rustRuntimeHost = host;
+        this.rustRuntimeHydrationState = "guest-bootstrap";
+        this.rustRuntimeOperationsBlocked = false;
+        return binding;
+      } catch (error) {
+        await binding.shutdown().catch(() => undefined);
+        this.rustRuntimeHost = null;
+        this.rustRuntimeHydrationState = "blocked";
+        throw error;
+      }
+    };
+  }
+
+  private async beginMultiplayerSession(name: string, role: "host" | "guest") {
+    await this.closeHostRendezvous();
+    const prior = this.multiplayer;
+    if (prior) {
+      await prior.drainAuthority().catch(() => undefined);
+      prior.dispose("new-session");
+      await prior.drainAuthority().catch(() => undefined);
+    }
     this.removeAllRemotePlayers();
     this.agentAuthority = new AgentAuthority();
     (this.agentChat ??= new AgentChatRing()).clear();
@@ -6824,7 +7142,29 @@ export class VoxelEngine {
     }));
     else this.localPlayerModel.setVariant(identity.variant ?? "male").setColors({ shirt: identity.color });
     const artificialLatencyMs = typeof window !== "undefined" ? parseMultiplayerLatencyRange(window.location.search) : undefined;
-    this.multiplayer = new MultiplayerSession({ identity, artificialLatencyMs, onEvent: (event) => this.handleMultiplayerEvent(event) });
+    if (role === "host") {
+      if (this.rustRuntimeOperationsBlocked) throw new Error("Rust world runtime is not ready for multiplayer hosting");
+      const binding = bindReadyRustMultiplayerRuntimeV1(
+        this.rustRuntimeManager.requireReady(),
+        (input) => this.rustAuthorityInterestSource(input),
+      );
+      this.multiplayer = new MultiplayerSession({
+        identity,
+        sessionId: binding.descriptor.runtimeSessionId,
+        rustAuthority: binding.authority,
+        authorityInterest: binding.interest,
+        rustRuntimeDescriptor: binding.descriptor,
+        artificialLatencyMs,
+        onEvent: (event) => this.handleMultiplayerEvent(event),
+      });
+    } else {
+      this.multiplayer = new MultiplayerSession({
+        identity,
+        guestAuthorityFactory: this.guestRustAuthorityFactory(),
+        artificialLatencyMs,
+        onEvent: (event) => this.handleMultiplayerEvent(event),
+      });
+    }
     this.multiplayerState.status = "idle";
     this.multiplayerState.role = null;
     this.multiplayerState.peers = [];
@@ -6899,7 +7239,7 @@ export class VoxelEngine {
     if (!this.running || this.titleMode) throw new Error("Open a world before hosting a multiplayer session.");
     try {
       await this.closeHostRendezvous();
-      const session = this.beginMultiplayerSession(playerName);
+      const session = await this.beginMultiplayerSession(playerName, "host");
       const code = roomCode.trim() || createRoomCode();
       const handle = await hostByRoomCode({
         code,
@@ -6944,7 +7284,7 @@ export class VoxelEngine {
     const joiningFromTitle = this.titleMode;
     try {
       await this.closeHostRendezvous();
-      const session = this.beginMultiplayerSession(playerName);
+      const session = await this.beginMultiplayerSession(playerName, "guest");
       const joined = await joinByRoomCode({
         code: roomCode,
         guestName: session.identity.name,
@@ -6973,7 +7313,7 @@ export class VoxelEngine {
       return { hostName: joined.hostName, seed: this.agentMode ? undefined : this.world.seedText, worldReady: true as const };
     } catch (error) {
       if (isMultiplayerOperationCancellation(error)) {
-        if (joiningFromTitle) this.disconnectMultiplayer();
+        if (joiningFromTitle) await this.disconnectMultiplayer("join-cancelled");
         else {
           this.multiplayerState.error = "";
           this.multiplayerState.rendezvousStatus = "closed";
@@ -6984,7 +7324,7 @@ export class VoxelEngine {
       this.multiplayerState.error = error instanceof Error ? error.message : String(error);
       this.multiplayerState.rendezvousStatus = "error";
       this.multiplayerState.status = "error";
-      if (joiningFromTitle) this.disconnectMultiplayer();
+      if (joiningFromTitle) await this.disconnectMultiplayer("join-failed");
       throw error;
     }
   }
@@ -6994,7 +7334,7 @@ export class VoxelEngine {
     try {
       const session = this.multiplayer?.role === "host" && this.multiplayer.state !== "closed"
         ? this.multiplayer
-        : this.beginMultiplayerSession(playerName);
+        : await this.beginMultiplayerSession(playerName, "host");
       const invite = await session.createHostInvite();
       this.multiplayerState.inviteCode = invite.inviteCode;
       this.multiplayerState.answerCode = "";
@@ -7011,7 +7351,7 @@ export class VoxelEngine {
 
   async joinMultiplayer(inviteCode: string, playerName: string) {
     try {
-      const session = this.beginMultiplayerSession(playerName);
+      const session = await this.beginMultiplayerSession(playerName, "guest");
       const answer = await session.createGuestAnswer(inviteCode.trim());
       this.multiplayerState.answerCode = answer.answerCode;
       this.multiplayerState.inviteCode = inviteCode.trim();
@@ -7040,10 +7380,11 @@ export class VoxelEngine {
     }
   }
 
-  disconnectMultiplayer() {
+  async disconnectMultiplayer(reason = "local-disconnect") {
     const closingSession = this.multiplayer;
+    const closingRole = closingSession?.role ?? null;
     const hadSession = Boolean(closingSession);
-    if (this.hostRendezvous) void this.hostRendezvous.close().catch(() => undefined);
+    const closingRendezvous = this.hostRendezvous;
     this.hostRendezvous = null;
     if (closingSession?.role === "guest" && this.multiplayerProgressionReceived) {
       // A deliberate Leave must not discard journal/map work made since the
@@ -7052,7 +7393,10 @@ export class VoxelEngine {
       this.syncMultiplayerPlayerProgression();
       this.flushPlayerProgressionTransfers(512);
     }
-    closingSession?.dispose("local-disconnect");
+    // Dispose synchronously after the final guest transfer has been queued so
+    // no caller can race another send into the closing session. The authority
+    // drain below remains awaited before a guest-owned Rust runtime is stopped.
+    closingSession?.dispose(reason);
     this.multiplayer = null;
     this.removeAllRemotePlayers();
     const support = detectMultiplayerSupport();
@@ -7087,6 +7431,17 @@ export class VoxelEngine {
     (this.localAgentVoiceGains ??= new Map()).clear();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
+    // Prototype-only compatibility fixtures may omit the post-Rust receipt
+    // map; real engines always construct it as the readonly field above.
+    const pendingAgentReceipts = this.pendingAgentCommandReceipts as Map<string, Readonly<{
+      resolve: (value: Readonly<{ accepted: boolean; code?: string; error?: string }>) => void;
+      timeout: number;
+    }>> | undefined;
+    for (const [commandId, pending] of pendingAgentReceipts ?? []) {
+      window.clearTimeout(pending.timeout);
+      pending.resolve({ accepted: false, code: "session-closed", error: `Command ${commandId} was cancelled because the multiplayer session closed` });
+    }
+    pendingAgentReceipts?.clear();
     this.multiplayerReceivedSnapshot = false;
     this.sleepVotes.clear();
     this.multiplayerContainerAwaiting.clear();
@@ -7103,6 +7458,16 @@ export class VoxelEngine {
     this.multiplayerBoatInputs.clear();
     if (hadSession && !this.titleMode && !this.disposed) this.events.onToast("Multiplayer session closed. The host-device world remains saved locally.");
     if (!this.disposed) this.emitHud(true);
+    await closingRendezvous?.close().catch(() => undefined);
+    if (closingSession) {
+      await closingSession.drainAuthority?.().catch(() => undefined);
+    }
+    if (closingRole === "guest") {
+      await this.rustRuntimeManager?.shutdown().catch(() => undefined);
+      this.rustRuntimeHost = null;
+      this.rustRuntimeOperationsBlocked = true;
+      this.rustRuntimeHydrationState = "none";
+    }
   }
 
   private removeRemotePlayer(id: string) {
@@ -9598,6 +9963,31 @@ export class VoxelEngine {
     else if (event.type === "error") {
       this.multiplayerState.error = event.error.message;
       this.events.onToast(`Multiplayer: ${event.error.message}`);
+    } else if (event.type === "authority-delta") {
+      this.rustAuthorityDeltaApplied += 1;
+      this.rustAuthorityLastStateHash = event.stateHash;
+      this.rustAuthorityLastError = null;
+    } else if (event.type === "authority-rejection") {
+      this.rustAuthorityRejections += 1;
+      this.rustAuthorityLastError = `${event.code}:${event.commandId}`;
+      this.multiplayerState.error = `Rust authority rejected ${event.commandId} (${event.code}).`;
+      if (this.multiplayer?.role === "host" && event.peer.identity) {
+        this.multiplayer.disconnectPeer(event.peer.identity.id, `rust-authority-${event.code}`);
+      } else {
+        this.paused = true;
+        void this.disconnectMultiplayer("rust-authority-rejection");
+      }
+      this.events.onToast(this.multiplayerState.error);
+    } else if (event.type === "authority-resync") {
+      this.rustAuthorityResyncs += 1;
+      this.rustAuthorityLastError = event.code;
+      this.multiplayerState.error = `Rust authority requires a fresh keyframe (${event.code}).`;
+      // No TypeScript fallback may continue after the native receiver rejects
+      // its authoritative stream. Rejoin negotiates a clean keyframe.
+      this.paused = true;
+      void this.disconnectMultiplayer("rust-authority-resync").then(() => {
+        this.events.onMultiplayerEnded?.("The native authority stream lost synchronization. Rejoin to obtain a clean keyframe.");
+      });
     } else if (event.type === "peer") {
       this.multiplayerState.peers = this.multiplayer?.getPeers() ?? [];
       if (event.peer.state === "connected" && this.multiplayer?.role === "host" && event.peer.identity) {
@@ -9652,6 +10042,9 @@ export class VoxelEngine {
             }, event.peer);
             this.events.onToast(`${record.name} requests drone access.`);
           }
+          void this.trackRustAuthorityOperation(this.publishRustAuthorityKeyframe(event.peer.identity.id)).catch((error) => {
+            this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+          });
           this.emitHud(true);
           return;
         }
@@ -9662,6 +10055,9 @@ export class VoxelEngine {
         this.ensureHostPlayerSession(event.peer.identity);
         this.sendHostWorldSnapshot(event.peer.identity.id);
         this.sendAuthoritativePlayerProgression(event.peer.identity);
+        void this.trackRustAuthorityOperation(this.publishRustAuthorityKeyframe(event.peer.identity.id)).catch((error) => {
+          this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+        });
         this.events.onToast(`${event.peer.identity.name} joined the session.`);
       }
       if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) {
@@ -9740,6 +10136,17 @@ export class VoxelEngine {
         }
       } else if (envelope.type === "agent-result" && this.multiplayer?.role === "guest" && this.agentMode) {
         this.latestAgentResult = structuredClone(envelope.payload as AgentCommandResult);
+        const pending = this.pendingAgentCommandReceipts.get(this.latestAgentResult.commandId);
+        if (pending) {
+          window.clearTimeout(pending.timeout);
+          this.pendingAgentCommandReceipts.delete(this.latestAgentResult.commandId);
+          const accepted = !["blocked", "cancelled", "failed"].includes(this.latestAgentResult.status);
+          pending.resolve({
+            accepted,
+            code: this.latestAgentResult.code,
+            ...(!accepted ? { error: this.latestAgentResult.message } : {}),
+          });
+        }
       } else if (envelope.type === "player-pose") {
         let pose = envelope.payload as PlayerPose;
         if (this.multiplayer?.role === "host" && event.peer.identity) {
@@ -9845,6 +10252,110 @@ export class VoxelEngine {
     catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
   }
 
+  private rustReplicationRecord(
+    kind: "world" | "entity" | "gameplay" | "player",
+    recordId: string,
+    revision: number,
+    value: unknown,
+  ) {
+    const payload = new TextEncoder().encode(JSON.stringify(value));
+    return Object.freeze({
+      kind,
+      recordId,
+      revision: Math.max(0, Math.trunc(revision)),
+      payload,
+      payloadHash: new TypeScriptCanonicalHasher("blockwild-network-delta-record-v1").writeBytes(payload).finishHex(),
+    });
+  }
+
+  /**
+   * Temporary bounded producer for the real Rust keyframe transport. These
+   * records are truthful projections of host-owned state; native simulation
+   * record production remains an explicit promotion gate in diagnostics.
+   */
+  private async publishRustAuthorityKeyframe(peerId: string) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host" || this.rustPeerDeltaInFlight.has(peerId)) return;
+    const peer = session.getPeer(peerId);
+    if (peer?.state !== "connected" || !peer.identity) return;
+    this.rustPeerDeltaInFlight.add(peerId);
+    try {
+      const host = this.rustRuntimeManager.requireReady();
+      const authority = host.multiplayerAuthority();
+      const config = host.config;
+      const revision = this.multiplayerTick;
+      const localPose = this.localNetworkPose();
+      const peerState = peer.identity.peerKind === "agent" ? null : this.ensureHostPlayerSession(peer.identity);
+      const records = [
+        {
+          scope: { kind: "location" as const, universeId: config.universeId, locationId: config.locationId },
+          record: this.rustReplicationRecord("world", "coarse:world", revision, {
+            tick: revision,
+            seed: this.world.seedText,
+            mode: this.mode,
+            worldTime: this.worldTime,
+            day: this.day,
+            weather: this.weather,
+            generatorVersion: GENERATOR_VERSION,
+          }),
+        },
+        {
+          scope: { kind: "location" as const, universeId: config.universeId, locationId: config.locationId },
+          record: this.rustReplicationRecord("gameplay", "coarse:nearby", revision, {
+            mobs: peer.identity.peerKind === "agent" ? [] : this.networkMobSnapshotForPeer(peerId),
+            drops: peer.identity.peerKind === "agent" ? [] : this.networkDropSnapshotForPeer(peerId),
+            tombstones: this.activeMultiplayerTombstones(),
+          }),
+        },
+        ...(localPose ? [{
+          scope: { kind: "entity" as const, entityId: `player:${localPose.playerId}` },
+          record: this.rustReplicationRecord("player", `player:${localPose.playerId}`, revision, localPose),
+        }] : []),
+        ...(peerState ? [{
+          scope: { kind: "entity" as const, entityId: `player:${peer.identity.id}` },
+          record: this.rustReplicationRecord("player", `player:${peer.identity.id}`, revision, peerState),
+        }] : []),
+      ];
+      for (const record of records) await authority.upsertReplicationRecord(record);
+      const sequence = (this.rustPeerDeltaSequences.get(peerId) ?? 0) + 1;
+      const to = authority.currentIdentity();
+      await session.sendRustAuthorityDelta({
+        deltaId: `delta_${peerId.replace(/[^A-Za-z0-9_.-]/gu, "_").slice(0, 96)}_${sequence}`,
+        keyframe: true,
+        sequence,
+        acknowledgedCommandSequence: 0,
+        to,
+      }, peerId);
+      this.rustPeerDeltaSequences.set(peerId, sequence);
+      this.rustAuthorityLastError = null;
+    } catch (error) {
+      this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      this.rustPeerDeltaInFlight.delete(peerId);
+    }
+  }
+
+  private refreshRustPeerInterestIfMoved(peer: PeerInfo) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host" || !peer.identity) return;
+    const center = this.rustInterestCenter({
+      sessionId: session.sessionId ?? "",
+      local: session.identity,
+      peer: peer.identity,
+      role: "host",
+    });
+    const next = `${center.centerX},${center.centerZ}|${center.localChunkX},${center.localChunkZ}`;
+    if (this.rustPeerInterestCenters.get(peer.identity.id) === next) return;
+    const operation = session.refreshRustPeerGrant(peer.identity.id)
+      .then(() => this.publishRustAuthorityKeyframe(peer.identity!.id))
+      .catch((error) => {
+        this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+        session.disconnectPeer(peer.identity!.id, "rust-interest-refresh-failed");
+      });
+    void this.trackRustAuthorityOperation(operation);
+  }
+
   updateMultiplayer(dt: number) {
     const session = this.multiplayer;
     if (!session || !session.role || session.state === "closed" || session.state === "error") return;
@@ -9879,6 +10390,7 @@ export class VoxelEngine {
       this.multiplayerWorldTimer = 0.2;
       for (const peer of session.getPeers()) {
         if (peer.state !== "connected" || !peer.identity) continue;
+        this.refreshRustPeerInterestIfMoved(peer);
         if (peer.identity.peerKind === "agent") continue;
         try {
           session.sendMobSnapshot({
@@ -9922,10 +10434,20 @@ export class VoxelEngine {
     if (session.role === "host" && this.multiplayerSnapshotTimer <= 0 && session.getPeers().some((peer) => peer.state === "connected")) {
       this.multiplayerSnapshotTimer = 10;
       this.sendHostWorldSnapshot();
+      for (const peer of session.getPeers()) if (peer.state === "connected" && peer.identity) {
+        void this.trackRustAuthorityOperation(this.publishRustAuthorityKeyframe(peer.identity.id)).catch((error) => {
+          this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+        });
+      }
     }
   }
 
   activate() {
+    if (this.rustRuntimeOperationsBlocked || this.rustRuntimeHost?.diagnostics().state !== "ready") {
+      this.running = false;
+      this.paused = true;
+      throw new Error("Rust world runtime is not ready; gameplay remains blocked");
+    }
     this.running = true;
     this.paused = false;
     this.titleMode = false;
@@ -11531,16 +12053,30 @@ export class VoxelEngine {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
-  quitToTitle() {
+  async quitToTitleAsync() {
+    this.rustRuntimeOperationsBlocked = true;
+    this.rustRuntimeTransitionGeneration += 1;
     this.closeContainer();
     this.saveNow();
-    this.disconnectMultiplayer();
     this.running = false;
     this.paused = true;
     this.titleMode = true;
-    this.persistent = false;
     this.clearInput();
     if (document.pointerLockElement) document.exitPointerLock();
+    await this.worldStorage.flushPersistence();
+    await this.disconnectMultiplayer("quit-to-title");
+    await this.drainRustAuthorityOperations();
+    await this.rustRuntimeManager.shutdown();
+    this.rustRuntimeHost = null;
+    this.rustRuntimeHydrationState = "none";
+    this.persistent = false;
+  }
+
+  /** @deprecated UI callers must await quitToTitleAsync so no worker survives the title transition. */
+  quitToTitle() {
+    void this.quitToTitleAsync().catch((error) => {
+      this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+    });
   }
 
   async toggleFullscreen() {
@@ -32533,9 +33069,31 @@ export class VoxelEngine {
 
   getLatestAgentResult() { return this.latestAgentResult ? structuredClone(this.latestAgentResult) : null; }
 
-  submitAgentCommand(command: AgentCommandEnvelope) {
-    if (!this.multiplayer || this.multiplayer.role !== "guest" || this.multiplayer.identity.peerKind !== "agent") return false;
-    return this.multiplayer.sendAgentCommand(command) > 0;
+  async submitAgentCommand(command: AgentCommandEnvelope) {
+    if (this.rustRuntimeOperationsBlocked) return { accepted: false as const, code: "rust-runtime-not-ready", error: "Rust runtime is not ready" };
+    const session = this.multiplayer;
+    if (!session || session.role !== "guest" || session.identity.peerKind !== "agent") {
+      return { accepted: false as const, code: "agent-session-unavailable", error: "Authoritative agent session is unavailable" };
+    }
+    if (this.pendingAgentCommandReceipts.has(command.commandId)) {
+      return { accepted: false as const, code: "command-pending", error: "Command is already awaiting a Rust-backed host receipt" };
+    }
+    let settle: (value: Readonly<{ accepted: boolean; code?: string; error?: string }>) => void = () => undefined;
+    const receipt = new Promise<Readonly<{ accepted: boolean; code?: string; error?: string }>>((resolve) => { settle = resolve; });
+    const timeoutMs = clamp(command.expiresAt - Date.now(), 1_000, 120_000);
+    const timeout = window.setTimeout(() => {
+      if (!this.pendingAgentCommandReceipts.delete(command.commandId)) return;
+      settle({ accepted: false, code: "authority-timeout", error: "No Rust-backed host result arrived before the command deadline" });
+    }, timeoutMs);
+    this.pendingAgentCommandReceipts.set(command.commandId, { resolve: settle, timeout });
+    try {
+      if (session.sendAgentCommand(command) < 1) throw new Error("Agent command transport is not open");
+    } catch (error) {
+      window.clearTimeout(timeout);
+      this.pendingAgentCommandReceipts.delete(command.commandId);
+      settle({ accepted: false, code: "transport-unavailable", error: error instanceof Error ? error.message : String(error) });
+    }
+    return receipt;
   }
 
   renderGameToText() {
@@ -33237,14 +33795,49 @@ export class VoxelEngine {
     }
   }
 
+  async shutdown() {
+    if (this.rustRuntimeShutdown) return this.rustRuntimeShutdown;
+    this.rustRuntimeShutdown = (async () => {
+      this.rustRuntimeOperationsBlocked = true;
+      this.rustRuntimeTransitionGeneration += 1;
+      this.running = false;
+      this.paused = true;
+      this.clearInput();
+      cancelAnimationFrame(this.animationFrame);
+      this.unbindEvents();
+      let failure: unknown = null;
+      try { this.saveNow(false); }
+      catch (error) { failure = error; }
+      try { await this.worldStorage.flushPersistence(); }
+      catch (error) { failure ??= error; }
+      try { await this.disconnectMultiplayer("engine-shutdown"); }
+      catch (error) { failure ??= error; }
+      try { await this.drainRustAuthorityOperations(); }
+      catch (error) { failure ??= error; }
+      try { await this.rustRuntimeManager.shutdown(); }
+      catch (error) { failure ??= error; }
+      this.rustRuntimeHost = null;
+      this.rustRuntimeHydrationState = "none";
+      this.disposeBrowserResources();
+      if (failure) throw failure;
+    })();
+    return this.rustRuntimeShutdown;
+  }
+
+  /** Compatibility teardown starts the complete asynchronous drain immediately. */
   dispose() {
+    void this.shutdown().catch((error) => {
+      this.rustAuthorityLastError = error instanceof Error ? error.message : String(error);
+    });
+  }
+
+  private disposeBrowserResources() {
+    if (this.disposed) return;
     this.disposed = true;
     this.unlockFullscreenEscape();
-    this.saveNow(false);
     this.worldStorage.dispose();
     this.creatureArticulatedBatcher.dispose();
     this.creatureLodBatcher.dispose();
-    cancelAnimationFrame(this.animationFrame);
     window.clearTimeout(this.saveTimer);
     if (this.autoSaveIdleHandle) {
       const idleWindow = window as Window & { cancelIdleCallback?: (handle: number) => void };
@@ -33252,10 +33845,8 @@ export class VoxelEngine {
       else window.clearTimeout(this.autoSaveIdleHandle);
       this.autoSaveIdleHandle = 0;
     }
-    this.unbindEvents();
     this.resizeObserver?.disconnect();
     this.audio.dispose();
-    this.disconnectMultiplayer();
     this.clearEntities();
     this.hideChestModel(true);
     this.disposeObject(this.heldRoot);

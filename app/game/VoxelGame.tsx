@@ -1988,6 +1988,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const lookPointerRef = useRef<{ id: number; x: number; y: number } | null>(null);
   const activePetDraftIdRef = useRef<number | null>(null);
   const multiplayerFlightRef = useRef<Promise<unknown> | null>(null);
+  const worldFlightRef = useRef<Promise<unknown> | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatOpenRef = useRef(false);
   const slotInteractionReadyAtRef = useRef(0);
@@ -2028,6 +2029,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const [originPreviewPending, setOriginPreviewPending] = useState(false);
   const [originSearchRadius, setOriginSearchRadius] = useState(DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS);
   const [worldNotice, setWorldNotice] = useState("");
+  const [worldBusy, setWorldBusy] = useState(false);
   const [seed, setSeed] = useState("WILDERNESS");
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
   const [mode, setMode] = useState<GameMode>("survival");
@@ -2378,10 +2380,11 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           window.setTimeout(() => setSavedPulse(false), 1300);
         },
         onMultiplayerEnded: (reason) => {
-          window.queueMicrotask(() => {
+          window.queueMicrotask(() => { void (async () => {
             if (engineRef.current !== engine) return;
             clearFirstPersonHeldPresentation(engine);
-            engine.quitToTitle();
+            await engine.quitToTitleAsync();
+            if (engineRef.current !== engine) return;
             engine.previewWorld("WILDERNESS");
             startedRef.current = false;
             setStarted(false);
@@ -2390,7 +2393,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             setMultiplayerRoomCode("");
             setOverlay("title");
             showToast(reason);
-          });
+          })(); });
         },
         onRendererState: (lost) => setWebglError(lost),
       }, settings, {
@@ -2416,6 +2419,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       blockwildAgent?: AgentBrowserBridge;
       set_game_key?: (code: string, down: boolean) => void;
       render_renderer_cutover_to_text?: () => string;
+      render_rust_runtime_to_text?: () => string;
       request_renderer_recovery?: (reason?: string) => boolean;
       freeze_renderer_evidence?: (frozen: boolean) => number | null;
     };
@@ -2431,6 +2435,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       engineErrors: engine.renderExtractionErrors,
       engineLastError: engine.renderExtractionLastError,
     }, (_, value) => typeof value === "bigint" ? value.toString() : value);
+    automationWindow.render_rust_runtime_to_text = () => JSON.stringify(engine.getRustRuntimeDiagnostics());
     automationWindow.request_renderer_recovery = (reason) => rendererCutover.requestRecovery(reason);
     automationWindow.freeze_renderer_evidence = (frozen) => engine.setRendererEvidenceFreezeR11(frozen);
     if (agentMode) automationWindow.blockwildAgent = createAgentBrowserBridge({
@@ -2507,7 +2512,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || generatedPoiAudit || chestAudit || caveLiquidAudit || waterPhysicsAudit || iceWaterAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || treeFallAudit || agentDroneAudit || cardforgeAudit || settlementOriginAudit || itemGuideAudit;
     let treeFallTimer: number | undefined;
     if (placementAudit) {
-      engine.createWorld(
+      void engine.createWorldWithRustRuntime(
         settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : iceWaterAudit ? "ICE-WATER-AUDIT" : waterPhysicsAudit ? "WATER-PHYSICS-AUDIT" : oceanFloraAudit ? "OCEAN-FLORA-AUDIT" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : moonfeltAudit ? "MOONFELT-MYCELIUM-AUDIT" : treeFallAudit ? "TREE-FALL-LIGHT-AUDIT" : generatedPoiAudit ? "GENERATED-POI-METADATA-AUDIT" : cardforgeAudit ? "CARDFORGE-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
         "builder",
         settlementOriginAudit ? {
@@ -2526,7 +2531,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
         } : { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
         settlementOriginAudit ? "Remote Wood Elf Origin Audit" : caveLiquidAudit ? "Cave Liquid Audit" : iceWaterAudit ? "Ice Water Audit" : waterPhysicsAudit ? "Water Physics Audit" : oceanFloraAudit ? "Ocean Flora Audit" : creatureCollisionAudit ? "Creature Collision Audit" : moonfeltAudit ? "Moonfelt Mycelium Audit" : treeFallAudit ? "Tree Fall Light Audit" : generatedPoiAudit ? "Generated POI Metadata Audit" : cardforgeAudit ? "Cardforge Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
         settlementOriginAudit ? MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS : DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
-      );
+      ).then(() => {
+      if (engineRef.current !== engine) return;
       const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
       if (generatedPoiAudit) engine.primeGeneratedPoiAudit();
       const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !generatedPoiAudit && !caveLiquidAudit && !waterPhysicsAudit && !oceanFloraAudit && !creatureCollisionAudit && !moonfeltAudit && !treeFallAudit && !agentDroneAudit && !cardforgeAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
@@ -2561,6 +2567,9 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           setItemGuideVisible(true);
         }
       });
+      }).catch((error) => {
+        if (engineRef.current === engine) setWorldNotice(error instanceof Error ? error.message : "The Rust audit world could not start.");
+      });
     } else if (agentMode) {
       engine.previewWorld("AGENT-CLIENT-PREVIEW");
       overlayRef.current = "multiplayer";
@@ -2573,7 +2582,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     return () => {
       window.clearTimeout(toastTimerRef.current);
       if (treeFallTimer !== undefined) window.clearTimeout(treeFallTimer);
-      engine.dispose();
+      void engine.shutdown().catch(() => undefined);
       rendererCutover.stop();
       engineRef.current = null;
       worldStorageRef.current = null;
@@ -2583,6 +2592,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       delete automationWindow.blockwildAgent;
       delete automationWindow.set_game_key;
       delete automationWindow.render_renderer_cutover_to_text;
+      delete automationWindow.render_rust_runtime_to_text;
       delete automationWindow.request_renderer_recovery;
       delete automationWindow.freeze_renderer_evidence;
     };
@@ -2892,53 +2902,74 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     setOverlay("new");
   };
 
-  const createWorld = () => {
+  const createWorld = async () => {
     const engine = engineRef.current;
-    if (!engine) return;
-    prepareFirstPersonHeldPresentation(engine);
-    applyCharacterProfile(activeCharacterProfile);
-    const created = engine.createWorld(seed, mode, worldOptions, worldName, originSearchRadius);
-    const storage = worldStorageRef.current;
-    if (created) {
-      activeWorldIdRef.current = created.id;
-      setSelectedWorldId(created.id);
-      refreshWorldCatalog(storage);
-    } else {
-      activeWorldIdRef.current = null;
-      setWorldNotice("Browser world storage is unavailable; this session cannot be added to the local catalog.");
-    }
-    setCurrentWorldSeed(engine.world.seedText);
-    startedRef.current = true;
-    setStarted(true);
-    setOverlay(null);
-    engine.activate();
-    showToast("WASD move · Space jump/swim · Shift crouch · Ctrl sprint · V camera · Left harvest/attack · Right use/build · E inventory · Esc menu", 8500);
+    if (!engine || worldFlightRef.current) return;
+    const operation = (async () => {
+      setWorldBusy(true);
+      setWorldNotice("");
+      try {
+        prepareFirstPersonHeldPresentation(engine);
+        applyCharacterProfile(activeCharacterProfile);
+        const created = await engine.createWorldWithRustRuntime(seed, mode, worldOptions, worldName, originSearchRadius);
+        if (engineRef.current !== engine) return;
+        const storage = worldStorageRef.current;
+        activeWorldIdRef.current = created.id;
+        setSelectedWorldId(created.id);
+        refreshWorldCatalog(storage);
+        setCurrentWorldSeed(engine.world.seedText);
+        startedRef.current = true;
+        setStarted(true);
+        setOverlay(null);
+        engine.activate();
+        showToast("WASD move · Space jump/swim · Shift crouch · Ctrl sprint · V camera · Left harvest/attack · Right use/build · E inventory · Esc menu", 8500);
+      } catch (error) {
+        activeWorldIdRef.current = null;
+        setWorldNotice(error instanceof Error ? error.message : "The Rust world runtime could not start.");
+      } finally {
+        if (engineRef.current === engine) setWorldBusy(false);
+      }
+    })();
+    worldFlightRef.current = operation;
+    try { await operation; }
+    finally { if (worldFlightRef.current === operation) worldFlightRef.current = null; }
   };
 
   const playWorld = async (worldId: string) => {
     const engine = engineRef.current;
     const storage = worldStorageRef.current;
-    if (!engine || !storage) return;
-    const loaded = await storage.loadWorldAsync(worldId);
-    if (!loaded.ok) {
-      setWorldNotice(loaded.error.message);
-      return;
-    }
-    engine.loadWorld(loaded.value.save, loaded.value.options, worldId);
-    prepareFirstPersonHeldPresentation(engine);
-    applyCharacterProfile(activeCharacterProfile);
-    activeWorldIdRef.current = worldId;
-    setSelectedWorldId(worldId);
-    setMode(loaded.value.metadata.mode);
-    setWorldOptions(loaded.value.options);
-    setCurrentWorldSeed(loaded.value.save.seed);
-    startedRef.current = true;
-    setStarted(true);
-    setOverlay(null);
-    engine.activate();
-    refreshWorldCatalog(storage);
-    if (loaded.warnings?.length) setWorldNotice(loaded.warnings.map((warning) => warning.message).join(" "));
-    showToast(`Welcome back to ${loaded.value.metadata.name}. The horizon kept going without you.`);
+    if (!engine || !storage || worldFlightRef.current) return;
+    const operation = (async () => {
+      setWorldBusy(true);
+      setWorldNotice("");
+      try {
+        const loaded = await storage.loadWorldAsync(worldId);
+        if (!loaded.ok) throw new Error(loaded.error.message);
+        await engine.loadWorldWithRustRuntime(loaded.value.save, loaded.value.options, worldId);
+        if (engineRef.current !== engine) return;
+        prepareFirstPersonHeldPresentation(engine);
+        applyCharacterProfile(activeCharacterProfile);
+        activeWorldIdRef.current = worldId;
+        setSelectedWorldId(worldId);
+        setMode(loaded.value.metadata.mode);
+        setWorldOptions(loaded.value.options);
+        setCurrentWorldSeed(loaded.value.save.seed);
+        startedRef.current = true;
+        setStarted(true);
+        setOverlay(null);
+        engine.activate();
+        refreshWorldCatalog(storage);
+        if (loaded.warnings?.length) setWorldNotice(loaded.warnings.map((warning) => warning.message).join(" "));
+        showToast(`Welcome back to ${loaded.value.metadata.name}. The horizon kept going without you.`);
+      } catch (error) {
+        setWorldNotice(error instanceof Error ? error.message : "The Rust world runtime could not restore this world.");
+      } finally {
+        if (engineRef.current === engine) setWorldBusy(false);
+      }
+    })();
+    worldFlightRef.current = operation;
+    try { await operation; }
+    finally { if (worldFlightRef.current === operation) worldFlightRef.current = null; }
   };
 
   const continueWorld = () => {
@@ -3068,12 +3099,13 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     engine.activate();
   };
 
-  const saveAndQuit = () => {
+  const saveAndQuit = async () => {
     const engine = engineRef.current;
     if (!engine) return;
     if (telemetryLogRef.current.running) stopTelemetry("save-and-quit");
     clearFirstPersonHeldPresentation(engine);
-    engine.quitToTitle();
+    await engine.quitToTitleAsync();
+    if (engineRef.current !== engine) return;
     startedRef.current = false;
     setStarted(false);
     activeWorldIdRef.current = null;
@@ -3309,8 +3341,10 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       setDroneVoiceVolumes({});
       if (wasGuest && engineRef.current) {
         clearFirstPersonHeldPresentation(engineRef.current);
-        engineRef.current.quitToTitle();
-        engineRef.current.previewWorld("WILDERNESS");
+        const engine = engineRef.current;
+        await engine.quitToTitleAsync();
+        if (engineRef.current !== engine) return;
+        engine.previewWorld("WILDERNESS");
         startedRef.current = false;
         setStarted(false);
         activeWorldIdRef.current = null;
@@ -4440,7 +4474,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             </div>
             <div className={`title-menu-layout title-${titleMenuView}-layout`}>
               {titleMenuView === "main" && <nav className="main-menu-buttons title-main-menu" aria-label="Main menu">
-                <PixelButton className="primary-menu-button title-menu-choice" disabled={!hasSave || !selectedWorld} onClick={continueWorld}>
+                <PixelButton className="primary-menu-button title-menu-choice" disabled={worldBusy || !hasSave || !selectedWorld} onClick={continueWorld}>
                   <strong>Continue</strong><small>{selectedWorld?.name ?? "No local world selected"}</small>
                 </PixelButton>
                 <PixelButton className="title-menu-choice" onClick={beginNewWorld}><strong>Create New World</strong><small>Begin a fresh endless world</small></PixelButton>
@@ -4671,7 +4705,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
               <PixelButton className="secondary-button" onClick={() => setOverlay("title")}>Cancel</PixelButton>
-              <PixelButton className="gold-button" disabled={worldOptions.origin.mode !== "wilderness" && (originPreviewPending || !originPreview)} onClick={createWorld}>Generate World</PixelButton>
+              <PixelButton className="gold-button" disabled={worldBusy || (worldOptions.origin.mode !== "wilderness" && (originPreviewPending || !originPreview))} onClick={() => void createWorld()}>{worldBusy ? "Starting Rust Runtime…" : "Generate World"}</PixelButton>
             </div>
           </div>
         </section>
