@@ -4,7 +4,9 @@ import type { RustWorldRuntimeHostConfigV1 } from "./rust-world-runtime-host";
 import { GENERATOR_VERSION } from "./world";
 
 const WORLD_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/u;
-const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u;
+// Runtime sessions are also multiplayer session IDs. Keep this contract in
+// the exact portable ID alphabet accepted by signaling and invite payloads.
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{8,160}$/u;
 const LOCATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$/u;
 
 export type RustWorldRuntimeLiveConfigInputV1 = Readonly<{
@@ -17,7 +19,7 @@ export type RustWorldRuntimeLiveConfigInputV1 = Readonly<{
 export function createRustWorldRuntimeSessionIdV1(randomUuid?: () => string) {
   const uuid = randomUuid?.() ?? globalThis.crypto?.randomUUID?.();
   if (!uuid) throw new Error("Secure random UUID generation is unavailable for the Rust runtime session");
-  const sessionId = `runtime:${uuid}`;
+  const sessionId = `runtime.${uuid}`;
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error("Rust runtime session ID is invalid");
   return sessionId;
 }
