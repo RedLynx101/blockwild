@@ -2315,7 +2315,10 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     void rendererCutover.start();
     let browserStorage: Storage | null = null;
     try { browserStorage = window.localStorage; } catch { /* WorldStorage reports browser storage unavailability. */ }
-    const storage = new WorldStorage(browserStorage);
+    // Native R8 owns durable world domains. This one compatibility catalog is
+    // transferred to VoxelEngine; no legacy journal or second storage owner is
+    // allowed to race the live Rust checkpoint.
+    const storage = new WorldStorage(browserStorage, { persistenceCoordinator: null });
     const characterStore = new CharacterProfileStore(browserStorage);
     characterStoreRef.current = characterStore;
     let selectedCharacter = characterStore.selectedProfile;
@@ -2400,16 +2403,14 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
         agentMode,
         agentTestAdmin: agentMode && new URLSearchParams(window.location.search).get("testAdmin") === "1",
         renderExtraction: renderExtraction ?? undefined,
+        worldStorage: storage,
       });
     } catch {
+      storage.dispose();
       rendererCutover.stop();
       window.queueMicrotask(() => setWebglError(true));
       return;
     }
-    // React and the engine share one in-memory catalog so browser-local CRUD,
-    // autosaves, and play-time accounting cannot diverge or double-commit.
-    engine.worldStorage.dispose();
-    engine.worldStorage = storage;
     (engine as VoxelEngine & { setCharacterProfile?: (profile: CharacterProfile) => void }).setCharacterProfile?.(selectedCharacter);
     engine.localPlayerModel.setAppearance(selectedCharacter.appearance).setPlayerName(selectedCharacter.name);
     engineRef.current = engine;
@@ -2943,9 +2944,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       setWorldBusy(true);
       setWorldNotice("");
       try {
-        const loaded = await storage.loadWorldAsync(worldId);
-        if (!loaded.ok) throw new Error(loaded.error.message);
-        await engine.loadWorldWithRustRuntime(loaded.value.save, loaded.value.options, worldId);
+        const loaded = await engine.loadStoredWorldWithRustRuntime(worldId);
         if (engineRef.current !== engine) return;
         prepareFirstPersonHeldPresentation(engine);
         applyCharacterProfile(activeCharacterProfile);
@@ -3016,11 +3015,12 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     }
   };
 
-  const deleteSelectedWorld = () => {
+  const deleteSelectedWorld = async () => {
+    const engine = engineRef.current;
     const storage = worldStorageRef.current;
     const world = worlds.find((candidate) => candidate.id === selectedWorldId);
-    if (!storage || !world || !window.confirm(`Delete “${world.name}” from this browser? This cannot be undone unless you exported it.`)) return;
-    const deleted = storage.deleteWorld(world.id);
+    if (!engine || !storage || !world || !window.confirm(`Delete “${world.name}” from this browser? This cannot be undone unless you exported it.`)) return;
+    const deleted = await engine.deleteStoredWorldWithRustRuntime(world.id);
     if (!deleted.ok) setWorldNotice(deleted.error.message);
     else {
       setWorldNotice(`Deleted ${deleted.value.name} from this browser.`);

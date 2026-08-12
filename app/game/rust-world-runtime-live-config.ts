@@ -42,6 +42,7 @@ export function createRustWorldRuntimeLiveConfigV1(
     universeId: `world:${input.worldId}`,
     locationId,
     sessionId: input.sessionId,
+    catalogWorldId: input.worldId,
     generatorHash: legacyTerrainGeneratorHashV2(`g${GENERATOR_VERSION}`),
     waterBlockId: catalog.waterBlockId,
     directionalBlockIds: catalog.directionalBlocks,

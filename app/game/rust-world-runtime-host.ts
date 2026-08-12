@@ -10,6 +10,12 @@ import {
   RustIntegratedRuntimeBrowserAdapterV1,
   type RustIntegratedRuntimeBrowserAdapterOptionsV1,
 } from "./rust-integrated-runtime-adapter";
+import { RustIntegratedPersistencePumpV1 } from "./rust-integrated-persistence-pump";
+import { RustIntegratedPersistenceRuntimePortV1 } from "./rust-integrated-runtime-persistence";
+import { RustNativeWorldPersistenceSessionV1 } from "./rust-native-world-persistence";
+import { IndexedDbPersistenceAdapterV1 } from "./indexeddb-persistence-adapter";
+import { RustPersistenceBrowserRuntimeV1 } from "./rust-persistence-runtime-adapter";
+import type { RustIntegratedRuntimeServiceV1 } from "./rust-integrated-runtime-service";
 import {
   requireBlockwildProductionContent,
   type RustContentInstallReceiptV1,
@@ -37,6 +43,8 @@ export type RustWorldRuntimeHostConfigV1 = Readonly<{
   universeId: string;
   locationId: string;
   sessionId: string;
+  /** Browser catalog identity. Multiplayer guests intentionally omit it. */
+  catalogWorldId?: string | null;
   generatorHash: string;
   waterBlockId: number;
   directionalBlockIds: readonly number[];
@@ -68,6 +76,15 @@ export type RustWorldRuntimeHostDependenciesV1 = Readonly<{
     contentHash: string,
     generatorHash: string,
   ) => RustMultiplayerAuthorityV1;
+  persistenceFactory?: (input: Readonly<{
+    worldId: string;
+    adapter: RustWorldRuntimeAdapterV1;
+  }>) => RustWorldNativePersistenceBindingV1;
+}>;
+
+export type RustWorldNativePersistenceBindingV1 = Readonly<{
+  session: RustNativeWorldPersistenceSessionV1;
+  closePlatform(): Promise<void>;
 }>;
 
 export type RustWorldRuntimeHostDiagnosticsV1 = Readonly<{
@@ -77,6 +94,7 @@ export type RustWorldRuntimeHostDiagnosticsV1 = Readonly<{
   generatorHash: string;
   identity: RustIntegratedRuntimeIdentityV1 | null;
   adapter: ReturnType<RustWorldRuntimeAdapterV1["diagnostics"]> | null;
+  nativePersistence?: ReturnType<RustNativeWorldPersistenceSessionV1["diagnostics"]> | null;
   lastError: string | null;
 }>;
 
@@ -175,6 +193,34 @@ function productionAuthority(
   });
 }
 
+function productionRuntimeService(adapter: RustWorldRuntimeAdapterV1) {
+  const service = (adapter as RustWorldRuntimeAdapterV1 & { service?: RustIntegratedRuntimeServiceV1 }).service;
+  if (!service) throw new Error("Production Rust runtime adapter does not expose its sole worker service");
+  return service;
+}
+
+/**
+ * Builds the browser half of R8 around the service already owned by the sole
+ * integrated runtime adapter. This function must never construct a worker.
+ */
+function productionNativePersistence(
+  input: Readonly<{ worldId: string; adapter: RustWorldRuntimeAdapterV1 }>,
+): RustWorldNativePersistenceBindingV1 {
+  const service = productionRuntimeService(input.adapter);
+  const platform = new IndexedDbPersistenceAdapterV1();
+  const browserRuntime = new RustPersistenceBrowserRuntimeV1(platform);
+  const port = new RustIntegratedPersistenceRuntimePortV1(service);
+  const pump = new RustIntegratedPersistencePumpV1(service, browserRuntime);
+  const session = new RustNativeWorldPersistenceSessionV1({
+    worldId: input.worldId,
+    runtime: service,
+    port,
+    pump,
+    checkpoints: platform,
+  });
+  return Object.freeze({ session, closePlatform: () => platform.close() });
+}
+
 /**
  * Owns exactly one integrated Rust worker for one active world/session.
  * Consumers receive only awaited authority and renderer/persistence ports; no
@@ -184,6 +230,7 @@ export class RustWorldRuntimeHostV1 {
   private state: RustWorldRuntimeHostStateV1 = "idle";
   private adapter: RustWorldRuntimeAdapterV1 | null = null;
   private authority: RustMultiplayerAuthorityV1 | null = null;
+  private nativePersistence: RustWorldNativePersistenceBindingV1 | null = null;
   private artifactHash: string | null = null;
   private contentHash: string | null = null;
   private identityValue: RustIntegratedRuntimeIdentityV1 | null = null;
@@ -204,6 +251,7 @@ export class RustWorldRuntimeHostV1 {
       this.state = "starting";
       this.lastError = null;
       let adapter: RustWorldRuntimeAdapterV1 | null = null;
+      let nativePersistence: RustWorldNativePersistenceBindingV1 | null = null;
       try {
         const bundle = (this.dependencies.contentFactory ?? productionContentBundle)();
         if (!bundle.manifest || bundle.blockers.length) throw new Error("Rust production content contains unresolved blockers");
@@ -223,7 +271,17 @@ export class RustWorldRuntimeHostV1 {
           || diagnostics.contentManifestHash !== bundle.manifest.manifestHash) {
           throw new Error("Rust runtime remained non-authoritative after content installation");
         }
+        nativePersistence = this.config.catalogWorldId
+          ? (this.dependencies.persistenceFactory ?? productionNativePersistence)({
+            worldId: this.config.catalogWorldId,
+            adapter,
+          })
+          : null;
+        if (nativePersistence && nativePersistence.session.worldId !== this.config.catalogWorldId) {
+          throw new Error("Rust native persistence session does not match its browser catalog world");
+        }
         this.adapter = adapter;
+        this.nativePersistence = nativePersistence;
         this.artifactHash = artifactHash;
         this.contentHash = bundle.manifest.manifestHash;
         this.identityValue = created;
@@ -241,10 +299,16 @@ export class RustWorldRuntimeHostV1 {
       } catch (error) {
         this.state = "failed";
         this.lastError = error instanceof Error ? error.message : String(error);
+        const failedPersistence = this.nativePersistence ?? nativePersistence;
+        if (failedPersistence) {
+          try { await failedPersistence.session.shutdown(); } catch { /* Preserve the primary startup failure. */ }
+          try { await failedPersistence.closePlatform(); } catch { /* Preserve the primary startup failure. */ }
+        }
         if (adapter) {
           try { await adapter.shutdown(); } catch { /* Preserve the primary startup failure. */ }
         }
         this.adapter = null;
+        this.nativePersistence = null;
         this.authority = null;
         this.identityValue = null;
         throw error;
@@ -258,11 +322,17 @@ export class RustWorldRuntimeHostV1 {
       this.state = "stopping";
       const authority = this.authority;
       const adapter = this.adapter;
+      const nativePersistence = this.nativePersistence;
       this.authority = null;
       this.adapter = null;
+      this.nativePersistence = null;
       let failure: unknown = null;
       try { await authority?.drain(); }
       catch (error) { failure = error; }
+      try { await nativePersistence?.session.shutdown(); }
+      catch (error) { failure ??= error; }
+      try { await nativePersistence?.closePlatform(); }
+      catch (error) { failure ??= error; }
       try { await adapter?.shutdown(); }
       catch (error) { failure ??= error; }
       if (failure) {
@@ -294,6 +364,11 @@ export class RustWorldRuntimeHostV1 {
 
   runtimeAdapter() { return this.requireAdapter(); }
 
+  nativePersistenceSession() {
+    if (this.state !== "ready") throw new Error("Rust world runtime is not ready");
+    return this.nativePersistence?.session ?? null;
+  }
+
   diagnostics(): RustWorldRuntimeHostDiagnosticsV1 {
     return Object.freeze({
       state: this.state,
@@ -302,6 +377,7 @@ export class RustWorldRuntimeHostV1 {
       generatorHash: this.config.generatorHash,
       identity: this.identityValue,
       adapter: this.adapter?.diagnostics() ?? null,
+      nativePersistence: this.nativePersistence?.session.diagnostics() ?? null,
       lastError: this.lastError,
     });
   }

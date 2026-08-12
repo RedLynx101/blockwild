@@ -25,6 +25,7 @@ function readyHost(config: RustWorldRuntimeHostConfigV1): RustWorldRuntimeManage
     multiplayerAuthority() { return {} as ReturnType<RustWorldRuntimeManagedHostV1["multiplayerAuthority"]>; },
     authorityInterest() { return {} as ReturnType<RustWorldRuntimeManagedHostV1["authorityInterest"]>; },
     runtimeAdapter() { return {} as ReturnType<RustWorldRuntimeManagedHostV1["runtimeAdapter"]>; },
+    nativePersistenceSession() { return null; },
     diagnostics() {
       return {
         state: "ready" as const,
@@ -170,9 +171,12 @@ test("browser entry points bind host and guest Rust authority and never call syn
   assert.match(engineSource, /createRustMultiplayerGuestAuthorityFactoryV1\(\{/u);
   assert.match(engineSource, /async submitAgentCommand\([\s\S]*pendingAgentCommandReceipts/u);
   assert.match(shellSource, /await engine\.createWorldWithRustRuntime/u);
-  assert.match(shellSource, /await engine\.loadWorldWithRustRuntime/u);
+  assert.match(shellSource, /await engine\.loadStoredWorldWithRustRuntime\(worldId\)/u);
   assert.doesNotMatch(shellSource, /const created = engine\.createWorld\(/u);
   assert.doesNotMatch(shellSource, /engine\.loadWorld\(loaded\.value/u);
+  assert.doesNotMatch(shellSource, /storage\.loadWorldAsync\(worldId\)/u);
+  assert.doesNotMatch(shellSource, /engine\.worldStorage\.dispose\(\)/u);
+  assert.doesNotMatch(shellSource, /engine\.worldStorage\s*=\s*storage/u);
 });
 
 test("shutdown orders save, persistence, multiplayer drain, manager stop, then browser resources", async () => {
@@ -184,7 +188,10 @@ test("shutdown orders save, persistence, multiplayer drain, manager stop, then b
     clearInput: () => calls.push("block"),
     unbindEvents: () => calls.push("unbind"),
     saveNow: () => calls.push("save"),
-    worldStorage: { flushPersistence: async () => { calls.push("flush"); } },
+    worldStorage: {
+      flushPersistence: async () => { calls.push("flush"); },
+      shutdownNativePersistence: async () => { calls.push("native"); },
+    },
     disconnectMultiplayer: async () => { calls.push("multiplayer"); },
     drainRustAuthorityOperations: async () => { calls.push("authority"); },
     disposeBrowserResources: () => { calls.push("resources"); },
@@ -194,5 +201,5 @@ test("shutdown orders save, persistence, multiplayer drain, manager stop, then b
   globalThis.cancelAnimationFrame = () => undefined;
   try { await engine.shutdown(); }
   finally { globalThis.cancelAnimationFrame = priorCancel; }
-  assert.deepEqual(calls, ["block", "unbind", "save", "flush", "multiplayer", "authority", "manager", "resources"]);
+  assert.deepEqual(calls, ["block", "unbind", "save", "flush", "multiplayer", "authority", "native", "manager", "resources"]);
 });

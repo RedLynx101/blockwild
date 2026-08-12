@@ -1677,6 +1677,8 @@ export type VoxelEngineOptions = Readonly<{
   renderExtraction?: RendererShellExtractionPublisherR11;
   /** Test injection point; production owns one manager for the lifetime of this engine. */
   rustRuntimeManager?: RustWorldRuntimeManagerV1;
+  /** Sole browser catalog owner, transferred from the React shell at construction. */
+  worldStorage?: WorldStorage;
   /**
    * R8 owns native save restoration. Existing browser saves must not be
    * silently treated as a fresh Rust world while that adapter is unavailable.
@@ -1699,6 +1701,7 @@ export type RustLiveRuntimeDiagnosticsV1 = Readonly<{
   activeUniverseId: string | null;
   activeLocationId: string | null;
   activeSessionId: string | null;
+  nativePersistenceWorldId: string | null;
   hydration: "new-world" | "restored" | "guest-bootstrap" | "blocked" | "none";
   manager: ReturnType<RustWorldRuntimeManagerV1["diagnostics"]>;
   multiplayer: Readonly<{
@@ -1712,12 +1715,6 @@ export type RustLiveRuntimeDiagnosticsV1 = Readonly<{
     lastError: string | null;
   }>;
 }>;
-
-const failClosedRustWorldHydrationV1: RustWorldHydrationHookV1 = async ({ kind }) => {
-  if (kind === "load") {
-    throw new Error("Native Rust save hydration is not installed for this browser build; the protected browser save was not modified.");
-  }
-};
 
 type VoxelHit = {
   x: number;
@@ -4115,13 +4112,14 @@ export class VoxelEngine {
   position = new THREE.Vector3(0, 48, 0);
   spawn = new THREE.Vector3(0, 48, 0);
   velocity = new THREE.Vector3();
-  worldStorage = new WorldStorage();
+  worldStorage: WorldStorage;
   readonly rustRuntimeManager: RustWorldRuntimeManagerV1;
   private readonly rustWorldHydration: RustWorldHydrationHookV1;
   private rustRuntimeHost: RustWorldRuntimeManagedHostV1 | null = null;
   private rustRuntimeOperationsBlocked = true;
   private rustRuntimeTransitionGeneration = 0;
   private rustRuntimeHydrationState: RustLiveRuntimeDiagnosticsV1["hydration"] = "none";
+  private rustNativePersistenceWorldId: string | null = null;
   private rustRuntimeShutdown: Promise<void> | null = null;
   private rustInterestSequence = 0;
   private readonly rustPeerInterestCenters = new Map<string, string>();
@@ -4559,8 +4557,11 @@ export class VoxelEngine {
   sleepVotes = new Map<string, SleepTarget>();
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
+    // The shell transfers its already-read catalog here. Constructing another
+    // instance would duplicate storage listeners, caches, and save scheduling.
+    this.worldStorage = options.worldStorage ?? new WorldStorage(undefined, { persistenceCoordinator: null });
     this.rustRuntimeManager = options.rustRuntimeManager ?? new RustWorldRuntimeManagerV1();
-    this.rustWorldHydration = options.rustWorldHydration ?? failClosedRustWorldHydrationV1;
+    this.rustWorldHydration = options.rustWorldHydration ?? ((input) => this.hydrateRustWorldPersistence(input));
     this.agentMode = options.agentMode === true;
     this.renderExtraction = options.renderExtraction ?? null;
     this.basicWorldRenderer = BASIC_RENDER_DISTANCE_ENABLED && !this.agentMode ? new BasicWorldRenderer(true) : null;
@@ -5311,6 +5312,7 @@ export class VoxelEngine {
       activeUniverseId: config?.universeId ?? null,
       activeLocationId: config?.locationId ?? null,
       activeSessionId: config?.sessionId ?? null,
+      nativePersistenceWorldId: this.rustNativePersistenceWorldId,
       hydration: this.rustRuntimeHydrationState,
       manager: this.rustRuntimeManager.diagnostics(),
       multiplayer: Object.freeze({
@@ -5330,6 +5332,37 @@ export class VoxelEngine {
     this.rustAuthorityOperations.add(operation);
     void operation.finally(() => this.rustAuthorityOperations.delete(operation)).catch(() => undefined);
     return operation;
+  }
+
+  /**
+   * Binds the catalog to the persistence port created around the already-live
+   * integrated worker. Local compatibility bytes are read only after Rust has
+   * accepted an exact native checkpoint. Multiplayer guests own no local save.
+   */
+  private async hydrateRustWorldPersistence(input: Parameters<RustWorldHydrationHookV1>[0]) {
+    if (input.kind === "multiplayer-guest") return;
+    const session = input.host.nativePersistenceSession?.() ?? null;
+    if (!session) {
+      throw new Error("The live Rust worker has no native browser persistence session; the protected browser world was not opened.");
+    }
+    if (session.worldId !== input.worldId) {
+      throw new Error("The live Rust persistence session belongs to a different browser world.");
+    }
+    const bound = this.worldStorage.bindNativePersistence(input.worldId, session);
+    if (!bound.ok) throw new Error(bound.error.message);
+    this.rustNativePersistenceWorldId = input.worldId;
+    const result = input.kind === "create"
+      ? await this.worldStorage.initializeNativeWorld(input.worldId)
+      : await this.worldStorage.hydrateNativeWorld(input.worldId);
+    if (!result.ok) throw new Error(result.error.message);
+  }
+
+  private async shutdownBoundNativePersistence() {
+    this.rustNativePersistenceWorldId = null;
+    // Optional only for deliberately partial lifecycle harnesses; every real
+    // WorldStorage implements this awaited native drain.
+    await (this.worldStorage as WorldStorage & { shutdownNativePersistence?: () => Promise<void> })
+      .shutdownNativePersistence?.();
   }
 
   private async drainRustAuthorityOperations() {
@@ -5352,6 +5385,7 @@ export class VoxelEngine {
     await this.worldStorage.flushPersistence();
     await this.closeMultiplayerForRustTransition(reason);
     await this.drainRustAuthorityOperations();
+    await this.shutdownBoundNativePersistence();
   }
 
   private async activateRustWorldRuntime(
@@ -5383,6 +5417,7 @@ export class VoxelEngine {
     } catch (error) {
       this.rustRuntimeHost = null;
       this.rustRuntimeHydrationState = "blocked";
+      await this.shutdownBoundNativePersistence().catch(() => undefined);
       await this.rustRuntimeManager.shutdown().catch(() => undefined);
       throw error;
     }
@@ -5445,6 +5480,7 @@ export class VoxelEngine {
     } catch (error) {
       this.rustRuntimeOperationsBlocked = true;
       this.rustRuntimeHydrationState = "blocked";
+      await this.shutdownBoundNativePersistence().catch(() => undefined);
       await this.rustRuntimeManager.shutdown().catch(() => undefined);
       this.rustRuntimeHost = null;
       throw error;
@@ -5452,10 +5488,49 @@ export class VoxelEngine {
   }
 
   async loadStoredWorldWithRustRuntime(id: string) {
-    const loaded = await this.worldStorage.loadWorldAsync(id);
-    if (!loaded.ok) throw new Error(loaded.error.message);
-    await this.loadWorldWithRustRuntime(loaded.value.save, loaded.value.options, id);
-    return loaded;
+    const metadata = this.worldStorage.listWorlds().find((world) => world.id === id);
+    if (!metadata) throw new Error("That world does not exist on this device.");
+    const generation = ++this.rustRuntimeTransitionGeneration;
+    await this.prepareRustWorldTransition("world-load");
+    // Recover and hydrate before parsing or presenting the compatibility
+    // document. A legacy-only rich save therefore remains byte-for-byte
+    // protected when no lossless native migration adapter exists.
+    await this.activateRustWorldRuntime(generation, "load", id, metadata.seed, null);
+    if (generation !== this.rustRuntimeTransitionGeneration || this.disposed) {
+      this.rustRuntimeOperationsBlocked = true;
+      throw new Error("Rust world load was superseded before the browser mirror could open");
+    }
+    try {
+      const loaded = this.worldStorage.loadWorld(id);
+      if (!loaded.ok) throw new Error(loaded.error.message);
+      this.loadWorld(loaded.value.save, loaded.value.options, id);
+      this.rustRuntimeOperationsBlocked = false;
+      return loaded;
+    } catch (error) {
+      this.rustRuntimeOperationsBlocked = true;
+      this.rustRuntimeHydrationState = "blocked";
+      await this.shutdownBoundNativePersistence().catch(() => undefined);
+      await this.rustRuntimeManager.shutdown().catch(() => undefined);
+      this.rustRuntimeHost = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Synchronous catalog deletion is forbidden for the bound native world.
+   * The future delete path must first await the Rust-issued IndexedDB
+   * tombstone transaction, then remove the compatibility mirror.
+   */
+  async deleteStoredWorldWithRustRuntime(id: string) {
+    if (this.rustNativePersistenceWorldId === id) return {
+      ok: false as const,
+      error: {
+        code: "invalid" as const,
+        message: "Quit this world before deleting it. Live native worlds require an awaited Rust tombstone before their browser mirror can be removed.",
+        key: id,
+      },
+    };
+    return this.worldStorage.deleteWorld(id);
   }
 
   /** Compatibility/audit mirror only. Normal UI and agent flows use the awaited wrapper above. */
@@ -12066,6 +12141,7 @@ export class VoxelEngine {
     await this.worldStorage.flushPersistence();
     await this.disconnectMultiplayer("quit-to-title");
     await this.drainRustAuthorityOperations();
+    await this.shutdownBoundNativePersistence();
     await this.rustRuntimeManager.shutdown();
     this.rustRuntimeHost = null;
     this.rustRuntimeHydrationState = "none";
@@ -33813,6 +33889,8 @@ export class VoxelEngine {
       try { await this.disconnectMultiplayer("engine-shutdown"); }
       catch (error) { failure ??= error; }
       try { await this.drainRustAuthorityOperations(); }
+      catch (error) { failure ??= error; }
+      try { await this.shutdownBoundNativePersistence(); }
       catch (error) { failure ??= error; }
       try { await this.rustRuntimeManager.shutdown(); }
       catch (error) { failure ??= error; }

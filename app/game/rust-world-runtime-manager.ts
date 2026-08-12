@@ -6,6 +6,7 @@ import {
 } from "./rust-world-runtime-host";
 import type { NetworkInterestSetSourceV1, NetworkInterestSetV1 } from "./network-authority-contract";
 import type { RustMultiplayerAuthorityV1 } from "./rust-multiplayer-authority";
+import type { RustNativeWorldPersistenceSessionV1 } from "./rust-native-world-persistence";
 
 export type RustWorldRuntimeManagerStateV1 =
   | "idle"
@@ -23,6 +24,7 @@ export interface RustWorldRuntimeManagedHostV1 {
   multiplayerAuthority(): RustMultiplayerAuthorityV1;
   authorityInterest(source: NetworkInterestSetSourceV1): NetworkInterestSetV1;
   runtimeAdapter(): RustWorldRuntimeAdapterV1;
+  nativePersistenceSession?(): RustNativeWorldPersistenceSessionV1 | null;
   diagnostics(): RustWorldRuntimeHostDiagnosticsV1;
 }
 
@@ -62,6 +64,7 @@ export function rustWorldRuntimeFingerprintV1(config: RustWorldRuntimeHostConfig
     universeId: config.universeId,
     locationId: config.locationId,
     sessionId: config.sessionId,
+    catalogWorldId: config.catalogWorldId ?? null,
     generatorHash: config.generatorHash,
     waterBlockId: config.waterBlockId,
     directionalBlockIds: normalizedIds(config.directionalBlockIds),
